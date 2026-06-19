@@ -1,5 +1,48 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
+from core.config import CORS_ORIGINS, REDIS_URL, ENVIRONMENT
+
+logger = logging.getLogger(__name__)
+
+limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
+
+
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={
+            "data": None,
+            "error": {"code": 429, "message": "Rate limit exceeded. Please try again later."},
+            "meta": None,
+        },
+    )
+
+
+app = FastAPI(
+    title="Creo API",
+    description="Digital Marketing Agency Platform — Backend API",
+    version="0.1.0",
+    docs_url="/docs" if ENVIRONMENT != "production" else None,
+    redoc_url="/redoc" if ENVIRONMENT != "production" else None,
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 from routers.auth import router as auth_router
 from routers.plans import router as plans_router
@@ -32,21 +75,19 @@ from routers.admin_kpi import router as admin_kpi_router
 from routers.admin_sales import router as admin_sales_router
 from routers.webhooks import router as webhooks_router
 
-app = FastAPI(
-    title="Creo API",
-    description="Digital Marketing Agency Platform — Backend API",
-    version="0.1.0",
-)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", 
-    "http://127.0.0.1:3000",
-    "http://192.168.29.212:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+AUTH_RATE_LIMIT = "5/minute"
+WEBHOOK_RATE_LIMIT = "30/second"
+
+
+def _apply_rate_limits(router_obj, rate_limit: str):
+    for route in router_obj.routes:
+        if hasattr(route, "endpoint"):
+            route.endpoint = limiter.limit(rate_limit)(route.endpoint)
+
+
+_apply_rate_limits(auth_router, AUTH_RATE_LIMIT)
+_apply_rate_limits(webhooks_router, WEBHOOK_RATE_LIMIT)
 
 app.include_router(auth_router)
 app.include_router(plans_router)

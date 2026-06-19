@@ -1,35 +1,71 @@
-from pydantic_settings import BaseSettings
+import os
 
 
-class Settings(BaseSettings):
-    DATABASE_URL: str = ""
-    SUPABASE_URL: str = ""
-    SUPABASE_SERVICE_ROLE_KEY: str = ""
-    SUPABASE_JWT_SECRET: str = ""
-    RAZORPAY_KEY_ID: str = ""
-    RAZORPAY_KEY_SECRET: str = ""
-    RAZORPAY_WEBHOOK_SECRET: str = ""
-    STRIPE_SECRET_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = ""
-    RAZORPAY_STARTER_PLAN_ID: str = ""
-    RAZORPAY_GROWTH_PLAN_ID: str = ""
-    RAZORPAY_PRO_PLAN_ID: str = ""
-    MSG91_AUTH_KEY: str = ""
-    MSG91_SENDER_ID: str = ""
-    MSG91_WHATSAPP_NUMBER: str = ""
-    RESEND_API_KEY: str = ""
-    RESEND_FROM_EMAIL: str = ""
-    OPENAI_API_KEY: str = ""
-    INSTAGRAM_APP_ID: str = ""
-    INSTAGRAM_APP_SECRET: str = ""
-    INSTAGRAM_REDIRECT_URI: str = ""
-    ENCRYPTION_KEY: str = ""
-    REDIS_URL: str = "redis://localhost:6379/0"
-    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
-    SECRET_KEY: str = ""
-    ENVIRONMENT: str = "development"
-
-    model_config = {"env_file": ".env", "extra": "ignore"}
+def _parse_cors(origins_str: str) -> list[str]:
+    return [o.strip() for o in origins_str.split(",") if o.strip()]
 
 
-settings = Settings()
+CORS_ORIGINS: list[str] = _parse_cors(os.getenv("CORS_ORIGINS", "http://localhost:3000"))
+
+DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
+
+RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "")
+RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+
+STRIPE_SECRET_KEY: str = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+MSG91_AUTH_KEY: str = os.getenv("MSG91_AUTH_KEY", "")
+MSG91_SENDER_ID: str = os.getenv("MSG91_SENDER_ID", "")
+MSG91_WHATSAPP_NUMBER: str = os.getenv("MSG91_WHATSAPP_NUMBER", "")
+
+RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL: str = os.getenv("RESEND_FROM_EMAIL", "")
+
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+INSTAGRAM_APP_ID: str = os.getenv("INSTAGRAM_APP_ID", "")
+INSTAGRAM_APP_SECRET: str = os.getenv("INSTAGRAM_APP_SECRET", "")
+INSTAGRAM_REDIRECT_URI: str = os.getenv("INSTAGRAM_REDIRECT_URI", "")
+
+ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "")
+CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+SECRET_KEY: str = os.getenv("SECRET_KEY", "")
+ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+
+class _SettingsNamespace:
+    DATABASE_URL = DATABASE_URL
+    REDIS_URL = REDIS_URL
+    CORS_ORIGINS = ",".join(CORS_ORIGINS)
+    cors_origin_list = CORS_ORIGINS
+    SUPABASE_URL = SUPABASE_URL
+    SUPABASE_SERVICE_ROLE_KEY = SUPABASE_SERVICE_ROLE_KEY
+    SUPABASE_JWT_SECRET = SUPABASE_JWT_SECRET
+    RAZORPAY_KEY_ID = RAZORPAY_KEY_ID
+    RAZORPAY_KEY_SECRET = RAZORPAY_KEY_SECRET
+    RAZORPAY_WEBHOOK_SECRET = RAZORPAY_WEBHOOK_SECRET
+    STRIPE_SECRET_KEY = STRIPE_SECRET_KEY
+    STRIPE_WEBHOOK_SECRET = STRIPE_WEBHOOK_SECRET
+    MSG91_AUTH_KEY = MSG91_AUTH_KEY
+    MSG91_SENDER_ID = MSG91_SENDER_ID
+    MSG91_WHATSAPP_NUMBER = MSG91_WHATSAPP_NUMBER
+    RESEND_API_KEY = RESEND_API_KEY
+    RESEND_FROM_EMAIL = RESEND_FROM_EMAIL
+    OPENAI_API_KEY = OPENAI_API_KEY
+    INSTAGRAM_APP_ID = INSTAGRAM_APP_ID
+    INSTAGRAM_APP_SECRET = INSTAGRAM_APP_SECRET
+    INSTAGRAM_REDIRECT_URI = INSTAGRAM_REDIRECT_URI
+    ENCRYPTION_KEY = ENCRYPTION_KEY
+    CELERY_BROKER_URL = CELERY_BROKER_URL
+    SECRET_KEY = SECRET_KEY
+    ENVIRONMENT = ENVIRONMENT
+
+
+settings = _SettingsNamespace()

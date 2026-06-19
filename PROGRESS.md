@@ -230,7 +230,7 @@
 
 - [ ] 10.1 Add global error boundary in Next.js
 - [ ] 10.2 Add FastAPI global exception handler
-- [ ] 10.3 Implement rate limiting on auth endpoints
+- [x] 10.3 Implement rate limiting on auth endpoints
 - [ ] 10.4 Audit all API endpoints — role dependencies
 - [ ] 10.5 Add webhook signature validation tests
 - [ ] 10.6 Encrypt Instagram access tokens at rest
@@ -241,6 +241,7 @@
 - [ ] 10.11 Write Playwright E2E tests
 - [x] 10.12 Manual QA pass — all 7 user journeys
 - [ ] 10.13 Set up Vercel project
+- [x] Task 10.13: Pre-QA Hardening (Rate Limiting & DB Seeding)
 - [ ] 10.14 Set up Railway project
 - [ ] 10.15 Configure Railway Redis service
 - [ ] 10.16 Update GitHub Actions CI — Railway deploy step
@@ -253,6 +254,7 @@
 - [ ] 10.23 Set up Celery beat scheduler in Railway
 - [ ] 10.24 Deploy to production
 - [ ] 10.25 Post-deploy smoke test
+- [x] Task 10.26: Pre-QA Hardening (Rate Limiting & DB Seeding)
 
 ## Integration Point 1: PR Review Fixes
 
