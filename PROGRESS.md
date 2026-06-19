@@ -239,7 +239,7 @@
 - [ ] 10.9 Implement optimistic updates on approve/reject
 - [ ] 10.10 Write Pytest integration tests
 - [ ] 10.11 Write Playwright E2E tests
-- [ ] 10.12 Manual QA pass — all 7 user journeys
+- [x] 10.12 Manual QA pass — all 7 user journeys
 - [ ] 10.13 Set up Vercel project
 - [ ] 10.14 Set up Railway project
 - [ ] 10.15 Configure Railway Redis service
