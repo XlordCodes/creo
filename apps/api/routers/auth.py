@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +11,13 @@ from schemas.auth import RegisterRequest, RegisterResponse
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
 async def register_user(
+    request: Request,
     payload: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):

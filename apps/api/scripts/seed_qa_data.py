@@ -10,7 +10,11 @@ Prerequisites:
     - DATABASE_URL set in environment
     - All Alembic migrations applied (alembic upgrade head)
 """
+import os
+from dotenv import load_dotenv
 
+# Force Python to read the .env file before doing anything else
+load_dotenv()
 import asyncio
 import logging
 import random

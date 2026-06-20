@@ -2,6 +2,8 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -16,6 +18,8 @@ from services.payments import verify_razorpay_signature, verify_stripe_signature
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+limiter = Limiter(key_func=get_remote_address)
 
 
 async def _get_db():
@@ -71,6 +75,7 @@ async def _find_subscription_by_user_id_and_status(
 
 
 @router.post("/razorpay")
+@limiter.limit("30/second")
 async def razorpay_webhook(request: Request):
     payload_body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
@@ -139,6 +144,7 @@ async def razorpay_webhook(request: Request):
 
 
 @router.post("/stripe")
+@limiter.limit("30/second")
 async def stripe_webhook(request: Request):
     payload_body = await request.body()
     sig_header = request.headers.get("Stripe-Signature", "")

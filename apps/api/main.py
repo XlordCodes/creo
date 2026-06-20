@@ -76,19 +76,6 @@ from routers.admin_sales import router as admin_sales_router
 from routers.webhooks import router as webhooks_router
 
 
-AUTH_RATE_LIMIT = "5/minute"
-WEBHOOK_RATE_LIMIT = "30/second"
-
-
-def _apply_rate_limits(router_obj, rate_limit: str):
-    for route in router_obj.routes:
-        if hasattr(route, "endpoint"):
-            route.endpoint = limiter.limit(rate_limit)(route.endpoint)
-
-
-_apply_rate_limits(auth_router, AUTH_RATE_LIMIT)
-_apply_rate_limits(webhooks_router, WEBHOOK_RATE_LIMIT)
-
 app.include_router(auth_router)
 app.include_router(plans_router)
 app.include_router(public_settings_router)

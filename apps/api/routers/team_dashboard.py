@@ -12,7 +12,7 @@ from models.leave import LeaveRequest
 from models.task import Task
 from models.team import TeamMember
 from models.user import User
-from schemas.team_dashboard import DailyMetrics, TeamDashboardResponse
+from schemas.team_dashboard import DailyMetrics, TeamDashboardResponse, TodayTask
 
 router = APIRouter(prefix="/api/v1/dashboard/team", tags=["team-dashboard"])
 
@@ -40,6 +40,7 @@ async def get_team_dashboard(
             active_tasks_count=0,
             overdue_tasks_count=0,
             pending_leave_requests=False,
+            today_tasks=[],
         )
 
     today = date.today()
@@ -117,9 +118,34 @@ async def get_team_dashboard(
     pending_leave_count = leave_result.scalar() or 0
     pending_leave_requests = pending_leave_count > 0
 
+    today_tasks_result = await db.execute(
+        select(Task, User.full_name)
+        .join(User, Task.client_id == User.id, isouter=True)
+        .where(
+            and_(
+                Task.assigned_to == team_member.id,
+                Task.status.in_([TaskStatus.pending, TaskStatus.in_progress]),
+            )
+        )
+        .order_by(Task.priority.asc(), Task.created_at.asc())
+        .limit(10)
+    )
+    today_tasks = [
+        TodayTask(
+            id=str(task.id),
+            deliverable_type=task.deliverable_type.value,
+            status=task.status.value,
+            priority=task.priority,
+            due_date=task.due_date.isoformat() if task.due_date else None,
+            client_name=client_name,
+        )
+        for task, client_name in today_tasks_result.all()
+    ]
+
     return TeamDashboardResponse(
         daily_metrics=daily_metrics,
         active_tasks_count=active_tasks_count,
         overdue_tasks_count=overdue_tasks_count,
         pending_leave_requests=pending_leave_requests,
+        today_tasks=today_tasks,
     )

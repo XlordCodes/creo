@@ -1,7 +1,17 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, CheckCircle, Clock } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  FileImage,
+  Film,
+  BookOpen,
+  Inbox,
+} from "lucide-react";
 
 interface DailyMetrics {
   posters_completed: number;
@@ -12,11 +22,21 @@ interface DailyMetrics {
   stories_cap: number;
 }
 
+interface TodayTask {
+  id: string;
+  deliverable_type: string;
+  status: string;
+  priority: number;
+  due_date: string | null;
+  client_name: string | null;
+}
+
 interface TeamDashboardData {
   daily_metrics: DailyMetrics;
   active_tasks_count: number;
   overdue_tasks_count: number;
   pending_leave_requests: boolean;
+  today_tasks: TodayTask[];
 }
 
 async function getDashboardData(): Promise<TeamDashboardData> {
@@ -48,6 +68,7 @@ async function getDashboardData(): Promise<TeamDashboardData> {
       active_tasks_count: 0,
       overdue_tasks_count: 0,
       pending_leave_requests: false,
+      today_tasks: [],
     };
   }
   return res.json();
@@ -81,9 +102,15 @@ function ProgressMetric({
   );
 }
 
+const STATUS_STYLES: Record<string, string> = {
+  pending: "bg-yellow-100 text-yellow-800",
+  in_progress: "bg-blue-100 text-blue-800",
+  overdue: "bg-red-100 text-red-800",
+};
+
 export default async function DashboardPage() {
   const data = await getDashboardData();
-  const { daily_metrics, active_tasks_count, overdue_tasks_count } = data;
+  const { daily_metrics, active_tasks_count, overdue_tasks_count, today_tasks } = data;
 
   return (
     <div className="space-y-6 p-6">
@@ -176,11 +203,59 @@ export default async function DashboardPage() {
           <CardTitle>Today&apos;s Tasks</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)]">
-            <p className="text-sm text-[var(--color-text-muted)]">
-              Tasks will appear here once assigned.
-            </p>
-          </div>
+          {today_tasks.length === 0 ? (
+            <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)]">
+              <div className="text-center">
+                <Inbox size={32} className="mx-auto mb-2 text-[var(--color-text-muted)]" />
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  No active tasks assigned yet.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {today_tasks.map((task) => {
+                const taskType = task.deliverable_type;
+                const IconComp =
+                  taskType === "reel"
+                    ? Film
+                    : taskType === "story"
+                      ? BookOpen
+                      : FileImage;
+                return (
+                  <Link
+                    key={task.id}
+                    href={`/dashboard/tasks/${task.id}`}
+                    className="flex items-center gap-4 rounded-lg border border-[var(--color-border)] p-3 transition-colors hover:bg-[var(--color-brand-light)]"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand-light)]">
+                      <IconComp size={18} className="text-[var(--color-brand)]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[var(--color-brand-dark)] truncate">
+                        {taskType.charAt(0).toUpperCase() +
+                          taskType.slice(1)}{" "}
+                        for {task.client_name ?? "Client"}
+                      </p>
+                      {task.due_date && (
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                          Due {task.due_date}
+                        </p>
+                      )}
+                    </div>
+                    <Badge
+                      className={cn(
+                        "text-xs",
+                        STATUS_STYLES[task.status] ?? "bg-gray-100 text-gray-800"
+                      )}
+                    >
+                      {task.status.replace("_", " ")}
+                    </Badge>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

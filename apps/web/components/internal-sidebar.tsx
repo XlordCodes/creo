@@ -12,6 +12,7 @@ import {
   LogOut,
   FileText,
   DollarSign,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +59,12 @@ const NAV_ITEMS: NavItem[] = [
     href: "/dashboard/sales",
     icon: DollarSign,
     roles: ["team_lead", "sales"],
+  },
+  {
+    label: "Live Chat",
+    href: "/dashboard/chat",
+    icon: MessageSquare,
+    roles: ["team_member", "team_lead"],
   },
 ];
 

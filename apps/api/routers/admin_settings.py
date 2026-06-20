@@ -51,6 +51,8 @@ async def update_platform_settings(
         settings.sla_delivery_days = payload.sla_delivery_days
     if payload.sla_revision_hours is not None:
         settings.sla_revision_hours = payload.sla_revision_hours
+    if payload.scarcity_slots_available is not None:
+        settings.scarcity_slots_available = payload.scarcity_slots_available
 
     await db.commit()
     await db.refresh(settings)

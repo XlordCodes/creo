@@ -54,6 +54,7 @@ class User(Base):
     instagram_user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     razorpay_customer_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    terms_accepted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     two_fa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

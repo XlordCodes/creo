@@ -20,7 +20,10 @@ async def accept_terms(
     await db.execute(
         update(User)
         .where(User.id == current_user.id)
-        .values(updated_at=datetime.now(timezone.utc))
+        .values(
+            terms_accepted=True,
+            updated_at=datetime.now(timezone.utc),
+        )
     )
     await db.commit()
 
