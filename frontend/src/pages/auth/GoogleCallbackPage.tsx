@@ -11,7 +11,7 @@ import { getPostLoginRedirect } from "../../lib/useRouteMemory";
 export function GoogleCallbackPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { refresh, setSession } = useAuth();
+  const { refresh } = useAuth();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthUser | null>(null);
@@ -23,9 +23,9 @@ export function GoogleCallbackPage() {
   const hasExchangedRef = useRef(false);
 
   useEffect(() => {
-    // Quick, snappy handshake progression
-    const t1 = setTimeout(() => setStep(2), 150);
-    const t2 = setTimeout(() => setStep(3), 350);
+    // Cycle through subtle handshake steps for visual polish
+    const t1 = setTimeout(() => setStep(2), 600);
+    const t2 = setTimeout(() => setStep(3), 1200);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -36,11 +36,18 @@ export function GoogleCallbackPage() {
     const token = searchParams.get("token");
     if (token) {
       setAuthToken(token);
-      refresh().finally(() => {
+      refresh().then(() => {
         setStatus("success");
-        setStep(3);
-        const destination = getPostLoginRedirect("client", null, "/portal");
-        navigate(destination, { replace: true });
+        setTimeout(() => {
+          // Smart redirect to last known route
+          const destination = getPostLoginRedirect("client", null, "/portal");
+          navigate(destination);
+        }, 600);
+      }).catch(() => {
+        setStatus("success");
+        setTimeout(() => {
+          navigate("/portal");
+        }, 600);
       });
       return;
     }
@@ -66,17 +73,16 @@ export function GoogleCallbackPage() {
           },
         );
 
-        if (res.access_token && res.user) {
-          setSession(res.access_token, res.user);
+        if (res.access_token) {
+          setAuthToken(res.access_token);
           setAuthenticatedUser(res.user);
+          await refresh();
           setStatus("success");
-          setStep(3);
-          const defaultHome = getRoleHome(res.user.role);
-          const destination = getPostLoginRedirect(res.user.role, null, defaultHome);
-          // Immediate zero-delay navigation with replace
-          navigate(destination, { replace: true });
-        } else {
-          throw new Error("Invalid session response received.");
+          setTimeout(() => {
+            const defaultHome = getRoleHome(res.user.role);
+            const destination = getPostLoginRedirect(res.user.role, null, defaultHome);
+            navigate(destination);
+          }, 900);
         }
       } catch (err: unknown) {
         setStatus("error");
@@ -87,7 +93,7 @@ export function GoogleCallbackPage() {
     };
 
     exchangeCode();
-  }, [searchParams, navigate, refresh, setSession]);
+  }, [searchParams, navigate, refresh]);
 
   return (
     <div className="h-screen w-screen fixed inset-0 overflow-hidden bg-[#030914] flex flex-col justify-between p-4 sm:p-6 select-none antialiased">
@@ -124,7 +130,7 @@ export function GoogleCallbackPage() {
       </header>
 
       {/* ── Main Handshake Card ─────────────────────────────────────────── */}
-      <div className="relative w-full max-w-md mx-auto my-auto rounded-3xl border border-[#2A3446] bg-[#161F2D]/95 backdrop-blur-2xl p-8 sm:p-10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] text-center space-y-6 z-10 animate-page-in">
+      <div className="relative w-full max-w-md mx-auto my-auto rounded-3xl border border-white/40 bg-white/95 backdrop-blur-2xl p-8 sm:p-10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.6)] text-center space-y-6 z-10 animate-page-in">
         {/* Dual Brand Handshake Bridge: Google <───> Creo */}
         <div className="relative flex items-center justify-center gap-4 py-2">
           {/* Connecting Handshake Line with Pulse */}
@@ -155,13 +161,13 @@ export function GoogleCallbackPage() {
           </div>
 
           {/* Central Animated Badge */}
-          <div className="z-10 flex size-8 items-center justify-center rounded-full bg-slate-900 border-2 border-[#2A3446] shadow-md text-cyan-400 text-xs">
+          <div className="z-10 flex size-8 items-center justify-center rounded-full bg-slate-900 border-2 border-white shadow-md text-cyan-400 text-xs">
             <Sparkles className="size-3.5 animate-spin" style={{ animationDuration: "6s" }} />
           </div>
 
           {/* Creo Logo Container */}
-          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#2B7BC4] to-[#1E609A] text-white shadow-lg shadow-blue-500/30 hover:scale-105 transition-transform z-10 border border-blue-400/30">
-            <span className="font-black text-sm tracking-tight">creo.</span>
+          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#2B7BC4] to-[#1E609A] text-white font-black text-2xl shadow-lg shadow-blue-500/30 hover:scale-105 transition-transform z-10 border border-blue-400/30">
+            C
           </div>
         </div>
 
@@ -170,26 +176,26 @@ export function GoogleCallbackPage() {
           <div className="space-y-4 pt-1">
             {/* Pulsing Concentric Ring Spinner */}
             <div className="relative mx-auto size-14">
-              <div className="absolute inset-0 rounded-full border-4 border-blue-500/20 animate-ping opacity-30" />
-              <div className="absolute inset-0 rounded-full border-3 border-[#2A3446]" />
-              <div className="size-14 rounded-full border-3 border-transparent border-t-[#7FA0D6] border-r-[#0EA5E9] animate-spin" />
+              <div className="absolute inset-0 rounded-full border-4 border-blue-100/80 animate-ping opacity-30" />
+              <div className="absolute inset-0 rounded-full border-3 border-blue-200/60" />
+              <div className="size-14 rounded-full border-3 border-transparent border-t-[#2B7BC4] border-r-[#0EA5E9] animate-spin" />
               <div className="absolute inset-0 flex items-center justify-center">
-                <ShieldCheck className="size-5 text-[#7FA0D6]" />
+                <ShieldCheck className="size-5 text-[#2B7BC4]" />
               </div>
             </div>
 
             <div>
-              <h2 className="text-xl font-extrabold text-white tracking-tight">
+              <h2 className="text-xl font-extrabold text-[#0D2137] tracking-tight">
                 Signing in with Google
               </h2>
-              <p className="text-xs text-[#97A0B3] mt-1.5 leading-relaxed max-w-xs mx-auto">
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed max-w-xs mx-auto">
                 {step === 1 && "Verifying secure cryptographic signature..."}
                 {step === 2 && "Synchronizing workspace credentials & profile..."}
                 {step >= 3 && "Configuring authenticated session..."}
               </p>
             </div>
 
-            <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#0B111C]/80 border border-[#2A3446] text-[11px] font-bold text-[#7FA0D6] shadow-2xs">
+            <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-blue-50/80 border border-blue-200/70 text-[11px] font-bold text-[#2B7BC4] shadow-2xs">
               <ShieldCheck className="size-3.5 text-[#0EA5E9]" />
               <span>OAuth 2.0 Encrypted Handshake</span>
             </div>
@@ -199,21 +205,21 @@ export function GoogleCallbackPage() {
         {/* Status: Success */}
         {status === "success" && (
           <div className="space-y-4 pt-1 animate-in fade-in zoom-in-95 duration-200">
-            <div className="size-14 rounded-full bg-emerald-950/50 border-2 border-emerald-500/50 text-emerald-400 flex items-center justify-center mx-auto shadow-md shadow-emerald-500/10">
+            <div className="size-14 rounded-full bg-[#7FA0D6]50 border-2 border-emerald-300 text-emerald-600 flex items-center justify-center mx-auto shadow-md shadow-emerald-500/10">
               <CheckCircle2 className="size-7" />
             </div>
 
             <div>
-              <h2 className="text-xl font-black text-white tracking-tight">
+              <h2 className="text-xl font-black text-[#0D2137] tracking-tight">
                 Welcome, {authenticatedUser?.full_name?.split(" ")[0] || "there"}!
               </h2>
-              <p className="text-xs text-[#97A0B3] mt-1 leading-relaxed">
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                 Authentication confirmed. Launching your Creo production portal...
               </p>
             </div>
 
-            <div className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-950/40 px-3 py-1 rounded-full border border-emerald-800/60">
-              <span className="size-2 rounded-full bg-emerald-400 animate-ping" />
+            <div className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-[#7FA0D6]50 px-3 py-1 rounded-full border border-emerald-200/80">
+              <span className="size-2 rounded-full bg-[#7FA0D6]500 animate-ping" />
               <span>Redirecting automatically</span>
             </div>
           </div>
@@ -222,13 +228,13 @@ export function GoogleCallbackPage() {
         {/* Status: Error */}
         {status === "error" && (
           <div className="space-y-4 pt-1 animate-in fade-in duration-200">
-            <div className="size-14 rounded-full bg-rose-950/50 border-2 border-rose-500/50 text-rose-400 flex items-center justify-center mx-auto shadow-md shadow-rose-500/10">
+            <div className="size-14 rounded-full bg-rose-50 border-2 border-rose-300 text-rose-600 flex items-center justify-center mx-auto shadow-md shadow-rose-500/10">
               <AlertCircle className="size-7" />
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-white">Authentication Failed</h2>
-              <p className="text-xs text-rose-300 bg-rose-950/50 p-3.5 rounded-2xl border border-rose-800/60 mt-2.5 leading-relaxed text-left">
+              <h2 className="text-xl font-bold text-[#0D2137]">Authentication Failed</h2>
+              <p className="text-xs text-rose-700 bg-rose-50/90 p-3.5 rounded-2xl border border-rose-200/80 mt-2.5 leading-relaxed text-left">
                 {errorMessage}
               </p>
             </div>
