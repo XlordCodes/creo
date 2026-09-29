@@ -19,6 +19,7 @@ interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
+  setSession: (token: string, user: AuthUser) => void;
   sendOtp: (email: string, full_name?: string) => Promise<{ status: string; message: string }>;
   verifyOtp: (email: string, code: string, full_name?: string) => Promise<AuthUser>;
   loginWithPassword: (email: string, password: string) => Promise<AuthUser>;
@@ -35,20 +36,52 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const USER_STORAGE_KEY = "creo_auth_user";
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    try {
+      const raw = localStorage.getItem(USER_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [token, setTokenState] = useState<string | null>(() => getAuthToken());
-  const [loading, setLoading] = useState(true);
+
+  // If user and token already exist in local cache, do NOT block page with loading screen!
+  const [loading, setLoading] = useState<boolean>(() => {
+    const existingToken = getAuthToken();
+    if (!existingToken) return false;
+    try {
+      return !localStorage.getItem(USER_STORAGE_KEY);
+    } catch {
+      return true;
+    }
+  });
 
   const setToken = (newToken: string | null) => {
     setTokenState(newToken);
     setAuthToken(newToken);
   };
 
+  const setSession = (newToken: string, newUser: AuthUser) => {
+    setToken(newToken);
+    setUser(newUser);
+    try {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(newUser));
+    } catch {}
+    setLoading(false);
+  };
+
   const refresh = async () => {
     const currentToken = getAuthToken();
     if (!currentToken) {
       setUser(null);
+      try {
+        localStorage.removeItem(USER_STORAGE_KEY);
+      } catch {}
       setLoading(false);
       return;
     }
@@ -59,13 +92,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(data.access_token);
       }
       setUser(data);
+      try {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(data));
+      } catch {}
     } catch {
       setUser(null);
       setToken(null);
+      try {
+        localStorage.removeItem(USER_STORAGE_KEY);
+      } catch {}
     } finally {
       setLoading(false);
     }
-
   };
 
   useEffect(() => {
@@ -84,8 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, code, full_name }),
     });
-    setToken(res.access_token);
-    setUser(res.user);
+    setSession(res.access_token, res.user);
     return res.user;
   };
 
@@ -94,8 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    setToken(res.access_token);
-    setUser(res.user);
+    setSession(res.access_token, res.user);
     return res.user;
   };
 
@@ -104,8 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, password, full_name }),
     });
-    setToken(res.access_token);
-    setUser(res.user);
+    setSession(res.access_token, res.user);
     return res.user;
   };
 
@@ -121,8 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, code, password, full_name }),
     });
-    setToken(res.access_token);
-    setUser(res.user);
+    setSession(res.access_token, res.user);
     return res.user;
   };
 
@@ -138,8 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, code }),
     });
-    setToken(res.access_token);
-    setUser(res.user);
+    setSession(res.access_token, res.user);
     return res.user;
   };
 
@@ -150,8 +183,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (res.user) {
       setUser(res.user);
+      try {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(res.user));
+      } catch {}
     } else {
-      setUser((prev) => (prev ? { ...prev, must_reset_password: false } : null));
+      setUser((prev) => {
+        const updated = prev ? { ...prev, must_reset_password: false } : null;
+        if (updated) {
+          try {
+            localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(updated));
+          } catch {}
+        }
+        return updated;
+      });
     }
   };
 
@@ -181,6 +225,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setToken(null);
       setUser(null);
+      try {
+        localStorage.removeItem(USER_STORAGE_KEY);
+      } catch {}
     }
   };
 
@@ -190,6 +237,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         token,
         loading,
+        setSession,
         sendOtp,
         verifyOtp,
         loginWithPassword,

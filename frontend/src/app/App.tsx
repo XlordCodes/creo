@@ -25,14 +25,30 @@ import { CreoLoadingScreen } from "../components/ui/CreoLoadingScreen";
 
 // Portal Layout & Pages
 import { PortalLayout } from "../components/portal/PortalLayout";
-import { PortalDashboardPage } from "../pages/portal/PortalDashboardPage";
-import { PortalDeliverablesPage } from "../pages/portal/PortalDeliverablesPage";
-import { PortalCalendarPage } from "../pages/portal/PortalCalendarPage";
-import { PortalPaymentsPage } from "../pages/portal/PortalPaymentsPage";
-import { PortalSupportPage } from "../pages/portal/PortalSupportPage";
-import { PortalAccountPage } from "../pages/portal/PortalAccountPage";
-import { PortalCreativePodPage } from "../pages/portal/PortalCreativePodPage";
-import { PortalLibraryPage } from "../pages/portal/PortalLibraryPage";
+const PortalDashboardPage = lazy(() =>
+  import("../pages/portal/PortalDashboardPage").then((m) => ({ default: m.PortalDashboardPage }))
+);
+const PortalDeliverablesPage = lazy(() =>
+  import("../pages/portal/PortalDeliverablesPage").then((m) => ({ default: m.PortalDeliverablesPage }))
+);
+const PortalCalendarPage = lazy(() =>
+  import("../pages/portal/PortalCalendarPage").then((m) => ({ default: m.PortalCalendarPage }))
+);
+const PortalPaymentsPage = lazy(() =>
+  import("../pages/portal/PortalPaymentsPage").then((m) => ({ default: m.PortalPaymentsPage }))
+);
+const PortalSupportPage = lazy(() =>
+  import("../pages/portal/PortalSupportPage").then((m) => ({ default: m.PortalSupportPage }))
+);
+const PortalAccountPage = lazy(() =>
+  import("../pages/portal/PortalAccountPage").then((m) => ({ default: m.PortalAccountPage }))
+);
+const PortalCreativePodPage = lazy(() =>
+  import("../pages/portal/PortalCreativePodPage").then((m) => ({ default: m.PortalCreativePodPage }))
+);
+const PortalLibraryPage = lazy(() =>
+  import("../pages/portal/PortalLibraryPage").then((m) => ({ default: m.PortalLibraryPage }))
+);
 
 // Ops Layout & Features
 import { OpsLayout } from "../components/ops/OpsLayout";

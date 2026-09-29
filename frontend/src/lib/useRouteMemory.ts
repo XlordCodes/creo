@@ -66,6 +66,7 @@ export function isRouteValidForRole(route: string, role: string): boolean {
   const isPortalRoute = route.startsWith("/portal");
   const isOnboardingRoute = route.startsWith("/onboarding");
   const isDashboardRoute = route.startsWith("/dashboard") || route.startsWith("/kanban");
+  const isWorkstationRoute = route.startsWith("/workstation") || route.startsWith("/member") || route.startsWith("/lead") || route.startsWith("/slack");
 
   switch (role) {
     case "client":
@@ -74,13 +75,13 @@ export function isRouteValidForRole(route: string, role: string): boolean {
     case "admin":
     case "super_admin":
       // Admins can access everything
-      return isAdminRoute || isPortalRoute || isOnboardingRoute || isDashboardRoute;
+      return isAdminRoute || isPortalRoute || isOnboardingRoute || isDashboardRoute || isWorkstationRoute;
 
     case "team_member":
     case "team_lead":
     case "editor":
     case "designer":
-      return isAdminRoute || isDashboardRoute;
+      return isAdminRoute || isDashboardRoute || isWorkstationRoute;
 
     case "sales":
       return isAdminRoute || isDashboardRoute;

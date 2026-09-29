@@ -11,7 +11,7 @@ import { getPostLoginRedirect } from "../../lib/useRouteMemory";
 export function GoogleCallbackPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { refresh, setSession } = useAuth();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthUser | null>(null);
@@ -23,9 +23,9 @@ export function GoogleCallbackPage() {
   const hasExchangedRef = useRef(false);
 
   useEffect(() => {
-    // Cycle through subtle handshake steps for visual polish
-    const t1 = setTimeout(() => setStep(2), 600);
-    const t2 = setTimeout(() => setStep(3), 1200);
+    // Quick, snappy handshake progression
+    const t1 = setTimeout(() => setStep(2), 150);
+    const t2 = setTimeout(() => setStep(3), 350);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -36,18 +36,11 @@ export function GoogleCallbackPage() {
     const token = searchParams.get("token");
     if (token) {
       setAuthToken(token);
-      refresh().then(() => {
+      refresh().finally(() => {
         setStatus("success");
-        setTimeout(() => {
-          // Smart redirect to last known route
-          const destination = getPostLoginRedirect("client", null, "/portal");
-          navigate(destination);
-        }, 600);
-      }).catch(() => {
-        setStatus("success");
-        setTimeout(() => {
-          navigate("/portal");
-        }, 600);
+        setStep(3);
+        const destination = getPostLoginRedirect("client", null, "/portal");
+        navigate(destination, { replace: true });
       });
       return;
     }
@@ -73,16 +66,17 @@ export function GoogleCallbackPage() {
           },
         );
 
-        if (res.access_token) {
-          setAuthToken(res.access_token);
+        if (res.access_token && res.user) {
+          setSession(res.access_token, res.user);
           setAuthenticatedUser(res.user);
-          await refresh();
           setStatus("success");
-          setTimeout(() => {
-            const defaultHome = getRoleHome(res.user.role);
-            const destination = getPostLoginRedirect(res.user.role, null, defaultHome);
-            navigate(destination);
-          }, 900);
+          setStep(3);
+          const defaultHome = getRoleHome(res.user.role);
+          const destination = getPostLoginRedirect(res.user.role, null, defaultHome);
+          // Immediate zero-delay navigation with replace
+          navigate(destination, { replace: true });
+        } else {
+          throw new Error("Invalid session response received.");
         }
       } catch (err: unknown) {
         setStatus("error");
@@ -93,7 +87,7 @@ export function GoogleCallbackPage() {
     };
 
     exchangeCode();
-  }, [searchParams, navigate, refresh]);
+  }, [searchParams, navigate, refresh, setSession]);
 
   return (
     <div className="h-screen w-screen fixed inset-0 overflow-hidden bg-[#030914] flex flex-col justify-between p-4 sm:p-6 select-none antialiased">
