@@ -1,0 +1,105 @@
+import { type ComponentType, type LazyExoticComponent, lazy } from "react";
+
+// biome-ignore lint/suspicious/noExplicitAny: page components take arbitrary props
+type AnyComponent = ComponentType<any>;
+
+export type PreloadableComponent<T extends AnyComponent> = LazyExoticComponent<T> & {
+  preload: () => Promise<unknown>;
+};
+
+/**
+ * React.lazy plus a `preload()` handle so layouts can warm route chunks during
+ * idle time. The browser caches the module, so a later render resolves instantly.
+ */
+function lazyPage<T extends AnyComponent>(factory: () => Promise<T>): PreloadableComponent<T> {
+  const load = () => factory().then((component) => ({ default: component }));
+  const component = lazy(load) as PreloadableComponent<T>;
+  component.preload = load;
+  return component;
+}
+
+/** Run work once the browser is idle so it never competes with the current page. */
+export function whenIdle(work: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  if ("requestIdleCallback" in window) {
+    const id = window.requestIdleCallback(work, { timeout: 2500 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = setTimeout(work, 800);
+  return () => clearTimeout(id);
+}
+
+// ── Public marketing ─────────────────────────────────────────────────────────
+export const PricingPage = lazyPage(() =>
+  import("../pages/public/PricingPage").then((m) => m.PricingPage),
+);
+export const PortfolioPage = lazyPage(() =>
+  import("../pages/public/PortfolioPage").then((m) => m.PortfolioPage),
+);
+export const ClientsPage = lazyPage(() =>
+  import("../pages/public/ClientsPage").then((m) => m.ClientsPage),
+);
+export const AboutPage = lazyPage(() =>
+  import("../pages/public/AboutPage").then((m) => m.AboutPage),
+);
+export const FaqPage = lazyPage(() => import("../pages/public/FaqPage").then((m) => m.FaqPage));
+export const TermsPage = lazyPage(() =>
+  import("../pages/public/TermsPrivacyPages").then((m) => m.TermsPage),
+);
+export const PrivacyPage = lazyPage(() =>
+  import("../pages/public/TermsPrivacyPages").then((m) => m.PrivacyPage),
+);
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+export const AuthPage = lazyPage(() => import("../pages/auth/AuthPage").then((m) => m.AuthPage));
+export const GoogleCallbackPage = lazyPage(() =>
+  import("../pages/auth/GoogleCallbackPage").then((m) => m.GoogleCallbackPage),
+);
+
+// ── Onboarding ───────────────────────────────────────────────────────────────
+export const OnboardingView = lazyPage(() =>
+  import("../features/onboarding/OnboardingView").then((m) => m.OnboardingView),
+);
+
+// ── Client portal ────────────────────────────────────────────────────────────
+export const PortalDashboardPage = lazyPage(() =>
+  import("../pages/portal/PortalDashboardPage").then((m) => m.PortalDashboardPage),
+);
+export const PortalDeliverablesPage = lazyPage(() =>
+  import("../pages/portal/PortalDeliverablesPage").then((m) => m.PortalDeliverablesPage),
+);
+export const PortalCalendarPage = lazyPage(() =>
+  import("../pages/portal/PortalCalendarPage").then((m) => m.PortalCalendarPage),
+);
+export const PortalCreativePodPage = lazyPage(() =>
+  import("../pages/portal/PortalCreativePodPage").then((m) => m.PortalCreativePodPage),
+);
+export const PortalPaymentsPage = lazyPage(() =>
+  import("../pages/portal/PortalPaymentsPage").then((m) => m.PortalPaymentsPage),
+);
+export const PortalSupportPage = lazyPage(() =>
+  import("../pages/portal/PortalSupportPage").then((m) => m.PortalSupportPage),
+);
+export const PortalAccountPage = lazyPage(() =>
+  import("../pages/portal/PortalAccountPage").then((m) => m.PortalAccountPage),
+);
+export const PortalLibraryPage = lazyPage(() =>
+  import("../pages/portal/PortalLibraryPage").then((m) => m.PortalLibraryPage),
+);
+
+const PORTAL_PAGES = [
+  PortalDashboardPage,
+  PortalDeliverablesPage,
+  PortalCalendarPage,
+  PortalCreativePodPage,
+  PortalPaymentsPage,
+  PortalSupportPage,
+  PortalAccountPage,
+  PortalLibraryPage,
+];
+
+/** Warm every portal page chunk (and the onboarding flow) so sidebar navigation is instant. */
+export function preloadPortalPages(options: { includeOnboarding?: boolean } = {}): void {
+  for (const page of PORTAL_PAGES) void page.preload().catch(() => {});
+  if (options.includeOnboarding) void OnboardingView.preload().catch(() => {});
+}

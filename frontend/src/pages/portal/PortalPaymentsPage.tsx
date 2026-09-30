@@ -1,0 +1,296 @@
+import { useState } from "react";
+import { Download, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "../../lib/auth-context";
+import { request } from "../../lib/http";
+import { openRazorpayCheckout } from "../../lib/razorpay";
+import { useOnboardingGate } from "../../lib/useOnboardingGate";
+import { ResumeOnboardingBanner } from "../../components/portal/ResumeOnboardingBanner";
+
+interface SubscriptionData {
+  status: string;
+  name?: string;
+  price_minor?: number;
+  current_period_end?: string;
+}
+
+export function PortalPaymentsPage() {
+  const { user } = useAuth();
+  const [downloadingInv, setDownloadingInv] = useState<string | null>(null);
+  const [processingAddon, setProcessingAddon] = useState<string | null>(null);
+
+  const { data: subData } = useQuery<{ subscription?: SubscriptionData }>({
+    queryKey: ["client-subscription", user?.id],
+    queryFn: () => request<any>("/api/v1/payments/subscription"),
+    enabled: !!user?.id,
+  });
+
+  const gate = useOnboardingGate();
+
+  const planName = (subData as any)?.plan?.display_name || subData?.subscription?.name || "Growth";
+  const planPrice = (subData?.subscription as any)?.amount 
+    ? parseFloat((subData?.subscription as any).amount) 
+    : (subData as any)?.plan?.price_minor ? (subData as any).plan.price_minor / 100 : 50000;
+  const renewalDate = subData?.subscription?.current_period_end 
+    ? new Date(subData.subscription.current_period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase()
+    : "NEXT BILLING CYCLE";
+
+  const addons = [
+    { id: "extra_reel", name: "Extra reel", desc: "Delivered within this batch", price: 4500 },
+    { id: "rush", name: "Rush delivery", desc: "24-hour turnaround on one asset", price: 6000 },
+    { id: "revision", name: "Extra revision round", desc: "For one asset", price: 1500 },
+    { id: "shoot", name: "Half-day shoot", desc: "Product + process footage in Chennai", price: 18000 },
+  ];
+
+  const backendInvoices = (subData as any)?.invoices || [];
+  const invoices = backendInvoices.map((inv: any) => ({
+    id: inv.id,
+    period: inv.date,
+    amount: typeof inv.amount === 'string' ? parseFloat(inv.amount.replace(/[^0-9.]/g, '')) : inv.amount,
+    status: inv.status
+  }));
+
+  const usage = (subData as any)?.quotas || (subData as any)?.usage || {};
+  const usageBars = [
+    { label: "Reels", current: usage.reel?.used || 0, max: usage.reel?.quota || (subData as any)?.plan?.reel_quota || 8, color: "bg-[#7FA0D6]" },
+    { label: "Posts", current: (usage.static_post?.used ?? usage.poster?.used) || 0, max: (usage.static_post?.quota ?? usage.poster?.quota) || (subData as any)?.plan?.poster_quota || 4, color: "bg-[#7FA0D6]" },
+    { label: "Stories", current: usage.story?.used || 0, max: usage.story?.quota || (subData as any)?.plan?.story_quota || 8, color: "bg-[#7FA0D6]" }
+  ];
+
+  const totalMax = usageBars.reduce((sum, item) => sum + item.max, 0);
+  const costPerAsset = totalMax > 0 ? Math.round(planPrice / totalMax) : 0;
+
+  const rzpKey = (import.meta.env.VITE_RAZORPAY_KEY_ID as string) || "rzp_test_TO2r0YMjDZSpuC";
+
+  const handleAddon = (addon: typeof addons[0]) => {
+    setProcessingAddon(addon.id);
+    setTimeout(() => {
+      setProcessingAddon(null);
+      openRazorpayCheckout(
+        {
+          key: rzpKey,
+          amount: addon.price * 100,
+          currency: "INR",
+          name: "Creo Studio",
+          description: addon.name,
+          order_id: "addon_" + addon.id + "_" + Date.now(),
+          prefill: { name: user?.full_name || "", email: user?.email || "" }
+        },
+        () => alert(`Successfully added ${addon.name} to this cycle!`),
+        () => {}
+      );
+    }, 600);
+  };
+
+  const handleDownload = (id: string) => {
+    setDownloadingInv(id);
+    setTimeout(() => setDownloadingInv(null), 1200);
+  };
+
+  const handleComparePlans = () => {
+    alert("Compare plans modal will open here.");
+  };
+
+  // No plan yet: show where to resume instead of placeholder plan figures
+  if (!gate.isPaid) {
+    return (
+      <div className="space-y-6 pb-12">
+        <div>
+          <p className="text-xs uppercase font-bold tracking-[0.16em] text-[#97A0B3] mb-2">No active plan yet</p>
+          <h1 className="text-3xl font-bold text-[#F8FAFC] tracking-tight">Plan & billing</h1>
+        </div>
+        <ResumeOnboardingBanner variant="hero" title="Activate your plan in a few quick steps" />
+        <div className="bg-[#161F2D] border border-[#2A3446] rounded-3xl p-6 lg:p-8">
+          <h3 className="text-base font-semibold text-[#F8FAFC] mb-1.5">Invoices</h3>
+          <p className="text-sm text-[#97A0B3] leading-relaxed">
+            Receipts and invoices will appear here after your first payment.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6 pb-12">
+      {/* ── Header ── */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] uppercase font-bold tracking-[0.16em] text-[#7E889C] mb-2">
+            {planName} PLAN · RENEWS {renewalDate}
+          </p>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Plan & billing</h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleComparePlans}
+            className="px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors"
+          >
+            Compare plans
+          </button>
+          <button className="px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors">
+            Pause next month
+          </button>
+        </div>
+      </div>
+
+      {/* Paid but onboarding unfinished: same resume steps as the dashboard */}
+      <ResumeOnboardingBanner variant="hero" title="Your plan is active — finish setup to start production" />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* ── Top Left: Current Plan ── */}
+        <div className="bg-[#161F2D] border border-[#2A3446] rounded-[24px] p-6 lg:p-8 flex flex-col justify-between">
+          <div className="flex justify-between items-start mb-10">
+            <div>
+              <p className="text-[11px] uppercase font-bold tracking-[0.16em] text-[#7E889C] mb-1">
+                CURRENT PLAN
+              </p>
+              <h2 className="text-3xl font-bold text-white">{planName}</h2>
+            </div>
+            <div className="text-right">
+              <h2 className="text-3xl font-bold text-white">₹{planPrice.toLocaleString('en-IN')}</h2>
+              <p className="text-xs text-[#97A0B3] mt-1">per month · ₹{costPerAsset.toLocaleString('en-IN')} per asset</p>
+            </div>
+          </div>
+
+          <div className="space-y-6 mb-8">
+
+
+            {usageBars.map(item => (
+              <div key={item.label}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[13px] font-bold text-white">{item.label}</span>
+                  <span className="text-[13px] font-medium text-[#97A0B3]">{item.current} / {item.max}</span>
+                </div>
+                <div className="h-1.5 w-full bg-white/[0.05] rounded-full overflow-hidden">
+                  <div className={`h-full ${item.color} rounded-full`} style={{ width: `${(item.current / item.max) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-xs text-[#7E889C] font-medium leading-relaxed">
+            2 revision rounds per asset · 2 business-day batch SLA · dedicated account director
+          </p>
+        </div>
+
+        {/* ── Top Right: Add to this cycle ── */}
+        <div className="bg-[#161F2D] border border-[#2A3446] rounded-[24px] p-6 lg:p-8">
+          <h3 className="text-sm font-bold text-white mb-6">Add to this cycle</h3>
+          <div className="divide-y divide-white/[0.05]">
+            {addons.map(addon => (
+              <div key={addon.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-[13px] font-bold text-white mb-1">{addon.name}</h4>
+                  <p className="text-xs text-[#7E889C]">{addon.desc}</p>
+                </div>
+                <div className="flex items-center justify-between sm:justify-end gap-6 shrink-0">
+                  <span className="text-[13px] font-bold text-white">₹{addon.price.toLocaleString('en-IN')}</span>
+                  <button 
+                    onClick={() => handleAddon(addon)}
+                    disabled={!!processingAddon}
+                    className="px-5 py-2 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors w-20 flex items-center justify-center disabled:opacity-50"
+                  >
+                    {processingAddon === addon.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Add"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Bottom Left: Invoices ── */}
+        <div className="bg-[#161F2D] border border-[#2A3446] rounded-[24px] p-6 lg:p-8">
+          <h3 className="text-sm font-bold text-white mb-6">Invoices</h3>
+          <div className="overflow-x-auto scrollbar-hide">
+            <table className="w-full min-w-[500px]">
+              <thead>
+                <tr className="border-b border-[#2A3446]">
+                  <th className="text-left text-[11px] uppercase tracking-wider font-bold text-[#7E889C] pb-3 font-mono">Invoice</th>
+                  <th className="text-left text-[11px] uppercase tracking-wider font-bold text-[#7E889C] pb-3 font-mono">Period</th>
+                  <th className="text-left text-[11px] uppercase tracking-wider font-bold text-[#7E889C] pb-3 font-mono">Amount</th>
+                  <th className="text-left text-[11px] uppercase tracking-wider font-bold text-[#7E889C] pb-3 font-mono">Status</th>
+                  <th className="pb-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.05]">
+                {invoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-sm text-[#7E889C]">
+                      No invoices generated yet.
+                    </td>
+                  </tr>
+                ) : (
+                  invoices.map((inv: any) => (
+                    <tr key={inv.id}>
+                      <td className="py-4 text-[13px] font-medium text-[#97A0B3] font-mono">{inv.id}</td>
+                      <td className="py-4 text-[13px] text-white">{inv.period}</td>
+                      <td className="py-4 text-[13px] font-bold text-white">₹{inv.amount.toLocaleString('en-IN')}</td>
+                      <td className="py-4">
+                        <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-[#7FA0D6]/15 text-[#BCCCE6] text-xs font-bold">
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="py-4 text-right">
+                        <button 
+                          onClick={() => handleDownload(inv.id)}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors"
+                        >
+                          {downloadingInv === inv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-white" /> : <Download className="w-3.5 h-3.5" />}
+                          GST invoice
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── Bottom Right: Payment method ── */}
+        <div className="bg-[#161F2D] border border-[#2A3446] rounded-[24px] p-6 lg:p-8 flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-white mb-6">Payment method</h3>
+            
+            <div className="space-y-4 mb-8">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] text-[#97A0B3]">Method</span>
+                <span className="text-[13px] font-bold text-white">UPI AutoPay · Razorpay</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] text-[#97A0B3]">Next charge</span>
+                <span className="text-[13px] font-bold text-white">₹{planPrice.toLocaleString('en-IN')} · {renewalDate}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] text-[#97A0B3]">GSTIN on invoices</span>
+                <span className="text-[13px] font-bold text-white">Added</span>
+              </div>
+            </div>
+          </div>
+          
+          <button 
+            onClick={() => {
+              openRazorpayCheckout(
+                {
+                  key: rzpKey,
+                  amount: 0,
+                  currency: "INR",
+                  name: "Creo Studio",
+                  description: "Update payment method",
+                  order_id: "auth_" + Date.now(),
+                },
+                () => alert("Payment method updated successfully!"),
+                () => {}
+              );
+            }}
+            className="w-full py-3 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors mt-auto"
+          >
+            Change payment method
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+}
