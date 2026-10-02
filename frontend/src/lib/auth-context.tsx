@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { HttpError, request } from "./http";
-import { getAuthToken, setAuthToken } from "./auth-token";
+import { getAuthToken, setAuthToken, clearAuthToken } from "./auth-token";
 
 const USER_CACHE_KEY = "creo_auth_user";
 
