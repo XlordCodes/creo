@@ -16,7 +16,8 @@ import {
   Building2,
   LifeBuoy,
   ShieldCheck,
-  CreditCard
+  CreditCard,
+  ExternalLink
 } from "lucide-react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
@@ -41,15 +42,20 @@ export function AdminSidebar() {
   const { user, logout } = useAuth();
   const { mobileOpen, setMobileOpen } = useAdminSidebar();
 
+  const isAdminOrSuper = user?.role === "admin" || user?.role === "super_admin";
+  const isTeamLead = user?.role === "team_lead";
+  const isSpecialist =
+    user?.role === "team_member" ||
+    user?.role === "editor" ||
+    user?.role === "designer";
+
   const isClientRole =
     user?.role === "client" ||
-    location.pathname.startsWith("/portal");
+    (!isAdminOrSuper && !isTeamLead && !isSpecialist && location.pathname.startsWith("/portal"));
 
   const isMemberRole =
     !isClientRole &&
-    (user?.role === "team_member" ||
-      user?.role === "editor" ||
-      user?.role === "designer" ||
+    (isSpecialist ||
       location.pathname.startsWith("/workstation") ||
       location.pathname.startsWith("/member"));
 
@@ -97,7 +103,7 @@ export function AdminSidebar() {
       label: "Revenue Engine",
       items: [
         { label: "Manage Revenues", href: "/admin/revenue", icon: TrendingUp },
-        { label: "Plans & Negotiations", href: "/admin/plans", icon: FileText },
+        { label: "Plans & Negotiations", href: "/admin/plans-and-negotiations", icon: FileText },
       ],
     },
     {
@@ -194,21 +200,35 @@ export function AdminSidebar() {
     },
   ];
 
-  const currentNavSections = isClientRole
+  const portalPreviewSection: NavSection = {
+    label: "Client Portal (Active View)",
+    items: [
+      { label: "Client Dashboard", href: "/portal", icon: LayoutDashboard },
+      { label: "Content Deliverables", href: "/portal/deliverables", icon: Layers },
+      { label: "Content Calendar", href: "/portal/calendar", icon: Calendar },
+      { label: "Creative Pod", href: "/portal/creative-pod", icon: Briefcase },
+      { label: "Plans & Billing", href: "/portal/payments", icon: CreditCard },
+      { label: "Support Desk", href: "/portal/support", icon: LifeBuoy },
+    ],
+  };
+
+  const currentNavSections = user?.role === "client"
     ? clientNavSections
     : isMemberRole
     ? memberNavSections
     : user?.role === "team_lead"
-    ? leadNavSections
+    ? (location.pathname.startsWith("/portal") ? [portalPreviewSection, ...leadNavSections] : leadNavSections)
+    : (isAdminOrSuper && location.pathname.startsWith("/portal"))
+    ? [portalPreviewSection, ...adminNavSections]
     : adminNavSections;
 
-  const homeHref = isClientRole
-    ? "/portal"
+  const homeHref = isAdminOrSuper
+    ? "/admin"
+    : isTeamLead
+    ? "/admin/pod-dashboard"
     : isMemberRole
     ? "/workstation"
-    : user?.role === "team_lead"
-    ? "/admin/pod-dashboard"
-    : "/admin";
+    : "/portal";
 
   const renderNavContent = (onItemClick?: () => void) => (
     <>
@@ -223,7 +243,7 @@ export function AdminSidebar() {
             creo<span className="text-[#7FA0D6] text-2xl leading-none">.</span>
           </Link>
           <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30">
-            {isClientRole
+            {user?.role === "client"
               ? "Client Portal"
               : isMemberRole
               ? "Workstation"
@@ -243,6 +263,32 @@ export function AdminSidebar() {
           </button>
         )}
       </div>
+
+      {/* Quick Return Banner for Staff/Admins inspecting Client Portal */}
+      {isAdminOrSuper && location.pathname.startsWith("/portal") && (
+        <div className="p-3 bg-[#7FA0D6]/10 border-b border-[#2A3446] text-left">
+          <Link
+            to="/admin"
+            onClick={onItemClick}
+            className="flex items-center justify-between text-xs font-bold text-[#7FA0D6] hover:text-white px-3 py-2 rounded-xl bg-[#0B111C] border border-[#7FA0D6]/30 hover:border-[#7FA0D6]/60 transition-colors shadow-xs"
+          >
+            <span>← Return to Admin Console</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      )}
+      {isTeamLead && location.pathname.startsWith("/portal") && (
+        <div className="p-3 bg-[#7FA0D6]/10 border-b border-[#2A3446] text-left">
+          <Link
+            to="/admin/pod-dashboard"
+            onClick={onItemClick}
+            className="flex items-center justify-between text-xs font-bold text-[#7FA0D6] hover:text-white px-3 py-2 rounded-xl bg-[#0B111C] border border-[#7FA0D6]/30 hover:border-[#7FA0D6]/60 transition-colors shadow-xs"
+          >
+            <span>← Return to Pod Dashboard</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      )}
 
       {/* Scrollable Navigation - All menus directly visible, zero hover */}
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-3.5 space-y-4 text-left [scrollbar-width:thin] [scrollbar-color:#2A3446_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2A3446] [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-[#7FA0D6]/50">

@@ -6,23 +6,67 @@ import {
 import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../../lib/auth-context";
 
+const PENDING_REGISTRATION_KEY = "creo_pending_registration";
+
+interface PendingRegistration {
+  email: string;
+  fullName: string;
+  expiresAt: number;
+}
+
+function readPendingRegistration(): PendingRegistration | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_REGISTRATION_KEY);
+    if (!raw) return null;
+    const pending = JSON.parse(raw) as PendingRegistration;
+    if (!pending.email || pending.expiresAt <= Date.now()) {
+      sessionStorage.removeItem(PENDING_REGISTRATION_KEY);
+      return null;
+    }
+    return pending;
+  } catch {
+    return null;
+  }
+}
+
+function writePendingRegistration(email: string, fullName: string): void {
+  sessionStorage.setItem(PENDING_REGISTRATION_KEY, JSON.stringify({
+    email,
+    fullName,
+    expiresAt: Date.now() + 10 * 60_000,
+  } satisfies PendingRegistration));
+}
+
+function clearPendingRegistration(): void {
+  sessionStorage.removeItem(PENDING_REGISTRATION_KEY);
+}
+
 export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { loginWithPassword, register, getGoogleAuthUrl, forgotPassword } = useAuth();
+  const { loginWithPassword, registerIntent, resendRegistration, verifyRegistration, getGoogleAuthUrl, forgotPassword } = useAuth();
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
   const initialMode = location.pathname === "/signup" || defaultView === "signup" ? "signup" : "signin";
+  const initialPending = initialMode === "signup" ? readPendingRegistration() : null;
   const [mode, setMode] = useState<"signin" | "signup">(initialMode);
   const [rememberMe, setRememberMe] = useState(initialMode === "signin");
 
   // Controlled form state
-  const [email, setEmail] = useState("");
+  const queryEmail = new URLSearchParams(location.search).get("email") || "";
+  const [email, setEmail] = useState(queryEmail || initialPending?.email || "");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
+
+  useEffect(() => {
+    const qEmail = new URLSearchParams(location.search).get("email");
+    if (qEmail) setEmail(qEmail);
+  }, [location.search]);
+  const [fullName, setFullName] = useState(initialPending?.fullName || "");
+  const [registrationPending, setRegistrationPending] = useState(Boolean(initialPending));
+  const [otpCode, setOtpCode] = useState("");
 
   // Forgot password modal state
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -78,11 +122,56 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
       if (mode === "signin") {
         await loginWithPassword(cleanEmail, cleanPass);
       } else {
-        await register(cleanEmail, cleanPass, cleanName);
+        // Move to the OTP surface immediately; delivery continues in this request.
+        setRegistrationPending(true);
+        writePendingRegistration(cleanEmail, cleanName);
+        await registerIntent(cleanEmail, cleanPass, cleanName);
       }
     } catch (err: any) {
       console.error(err);
+      if (mode === "signup") {
+        setRegistrationPending(false);
+        clearPendingRegistration();
+      }
       setError(err.message || "Authentication failed. Please verify credentials.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerifyRegistration(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(otpCode)) {
+      setError("Please enter the 6-digit verification code sent to your email.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      await verifyRegistration(email.trim(), otpCode, password.trim() || undefined, fullName.trim());
+      clearPendingRegistration();
+      navigate("/portal", { replace: true });
+    } catch (err: any) {
+      setError(err.message || "The verification code is invalid or has expired.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResendRegistrationCode() {
+    try {
+      setLoading(true);
+      setError(null);
+      if (password.trim()) {
+        await registerIntent(email.trim(), password.trim(), fullName.trim());
+      } else {
+        await resendRegistration(email.trim());
+      }
+      writePendingRegistration(email.trim(), fullName.trim());
+      setOtpCode("");
+    } catch (err: any) {
+      setError(err.message || "Unable to resend the verification code.");
     } finally {
       setLoading(false);
     }
@@ -243,12 +332,14 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
           <div className="col-span-12 lg:col-span-6 flex justify-center">
             <div className="w-full max-w-[410px] bg-[#121926]/90 backdrop-blur-xl border border-[#222F44] rounded-2xl p-5 sm:p-6 shadow-[0_15px_40px_rgba(0,0,0,0.6)] flex flex-col justify-between">
               
-              {/* Segmented Mode Switcher */}
-              <div className="bg-[#0A0F18] border border-[#222F44] p-1 rounded-full flex mb-4">
+              {/* Keep verification focused: account switching is unavailable until OTP succeeds. */}
+              {!registrationPending && <div className="bg-[#0A0F18] border border-[#222F44] p-1 rounded-full flex mb-4">
                 <button 
                   type="button"
                   onClick={() => {
                     setMode("signin");
+                    setRegistrationPending(false);
+                    clearPendingRegistration();
                     setRememberMe(true);
                     setError(null);
                     navigate("/login", { replace: true });
@@ -277,15 +368,19 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
                 >
                   Create Account
                 </button>
-              </div>
+              </div>}
 
               {/* Title & Subtitle */}
               <div className="mb-3 text-left">
                 <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F8FAFC]">
-                  {mode === "signin" ? "Welcome back to CREO" : "Start operating your studio"}
+                  {registrationPending
+                    ? "Verify your email"
+                    : mode === "signin" ? "Welcome back to CREO" : "Start operating your studio"}
                 </h2>
                 <p className="text-[11px] text-[#97A0B3] mt-0.5">
-                  {mode === "signin" 
+                  {registrationPending
+                    ? `Enter the 6-digit code sent to ${email.trim()}.`
+                    : mode === "signin"
                     ? "Enter your credentials to access your agency pods." 
                     : "Deploy CREO across your team and client accounts."}
                 </p>
@@ -299,6 +394,64 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
               )}
 
               {/* Form */}
+              {registrationPending ? (
+                <form onSubmit={handleVerifyRegistration} className="space-y-3">
+                  <div>
+                    <label className="text-[9px] font-bold uppercase tracking-wider text-[#97A0B3] mb-1 block text-left">
+                      Verification Code
+                    </label>
+                    <div className="relative flex items-center bg-[#0A0F18] border border-[#222F44] rounded-xl px-3 py-2.5 focus-within:border-[#7FA0D6] focus-within:ring-1 focus-within:ring-[#7FA0D6]/30 transition-all">
+                      <ShieldCheck className="text-[#97A0B3] size-4 mr-2.5 shrink-0" />
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="000000"
+                        aria-label="Six-digit verification code"
+                        className="bg-transparent text-center text-lg font-mono tracking-[0.35em] text-[#F8FAFC] placeholder-[#97A0B3]/40 focus:outline-none w-full"
+                        autoFocus
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading || otpCode.length !== 6}
+                    className="w-full bg-[#BCCCE6] hover:bg-white text-[#050810] font-bold text-xs py-2.5 rounded-xl transition shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {loading && <Loader2 className="size-3.5 animate-spin" />}
+                    <span>{loading ? "Verifying..." : "Verify and Continue"}</span>
+                    {!loading && <ArrowRight className="size-3.5" />}
+                  </button>
+
+                  <div className="flex items-center justify-between text-[11px]">
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => {
+                        setRegistrationPending(false);
+                        setOtpCode("");
+                        setError(null);
+                        clearPendingRegistration();
+                      }}
+                      className="text-[#97A0B3] hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      Change details
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={handleResendRegistrationCode}
+                      className="text-[#7FA0D6] hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      Resend code
+                    </button>
+                  </div>
+                </form>
+              ) : (
               <form onSubmit={handleSubmit} className="space-y-3">
                 
                 {/* Full Name (Sign Up only) */}
@@ -333,7 +486,8 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder={mode === "signin" ? "admin@creo.agency" : "founder@agency.com"} 
-                      className="bg-transparent text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none w-full"
+                      className="bg-transparent text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none w-full rounded-md"
+                      style={{ colorScheme: "dark" }}
                       autoComplete="email"
                       required
                     />
@@ -352,7 +506,8 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder={mode === "signin" ? "••••••••" : "Min. 8 chars"} 
-                      className="bg-transparent text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none w-full"
+                      className="bg-transparent text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none w-full rounded-md"
+                      style={{ colorScheme: "dark" }}
                       autoComplete={mode === "signin" ? "current-password" : "new-password"}
                       required
                     />
@@ -409,9 +564,10 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
                   {!loading && <ArrowRight className="size-3.5" />}
                 </button>
               </form>
+              )}
 
               {/* Alternative Auth / Google Workspace (Sign In Mode) */}
-              {mode === "signin" ? (
+              {!registrationPending && mode === "signin" ? (
                 <div className="mt-3">
                   <div className="flex items-center my-2.5">
                     <div className="flex-1 border-t border-[#222F44]/60"></div>
@@ -447,13 +603,13 @@ export function AuthPage({ defaultView = "signin" }: { defaultView?: string }) {
                     <span>Google Workspace</span>
                   </button>
                 </div>
-              ) : (
+              ) : !registrationPending ? (
                 <div className="mt-3 pt-2 text-[10px] text-[#97A0B3] text-center border-t border-[#222F44]/50 leading-relaxed">
                   By joining, you agree to CREO's{" "}
                   <Link to="/terms" className="text-[#7FA0D6] hover:underline">Terms</Link> and{" "}
                   <Link to="/privacy" className="text-[#7FA0D6] hover:underline">Privacy Protocol</Link>.
                 </div>
-              )}
+              ) : null}
 
               {/* Bottom security micro badge */}
               <div className="pt-2 text-center text-[10px] text-[#97A0B3]/50 flex items-center justify-center gap-1.5">

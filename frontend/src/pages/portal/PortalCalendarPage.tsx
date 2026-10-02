@@ -18,6 +18,8 @@ interface CalendarEntry {
   time?: string;
 }
 
+type CalendarFormat = CalendarEntry["format"];
+
 const FORMAT_COLORS = {
   Reel: "bg-[#7FA0D6]",
   Carousel: "bg-[#F97316]",
@@ -89,14 +91,24 @@ export function PortalCalendarPage() {
   const monthStr = (month + 1).toString().padStart(2, '0');
   const monthEntries = allEntries.filter(e => e.date.startsWith(`${year}-${monthStr}`));
 
-  const getEntryForDay = (day: number) => {
+  const getEntriesForDay = (day: number) => {
     const dayStr = day.toString().padStart(2, '0');
     const dateStr = `${year}-${monthStr}-${dayStr}`;
-    return allEntries.find(e => e.date === dateStr);
+    return allEntries
+      .filter(e => e.date === dateStr)
+      .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   };
 
-  const selectedEntry = getEntryForDay(selectedDate);
+  const selectedEntries = getEntriesForDay(selectedDate);
+  const selectedEntry = selectedEntries[0];
   const monthName = currentMonth.toLocaleString('default', { month: 'long' });
+
+  const renderEntryPill = (entry: CalendarEntry, compact = false) => (
+    <div key={entry.id} className={`flex min-w-0 items-center gap-1.5 ${compact ? "text-[11px]" : "text-xs"}`}>
+      <div className={`h-2 w-2 shrink-0 rounded-sm ${FORMAT_COLORS[entry.format as CalendarFormat]}`} />
+      <span className="truncate font-medium text-[#97A0B3]">{entry.format}</span>
+    </div>
+  );
 
   const handleExport = () => {
     const csvContent = [
@@ -212,18 +224,18 @@ export function PortalCalendarPage() {
 
             {/* Grid Cells */}
             {viewMode === "Month" ? (
-              <div className="grid grid-cols-7 gap-px bg-white/[0.05] border border-[#2A3446] rounded-xl flex-1 overflow-hidden">
+              <div className="grid h-[408px] min-h-[408px] grid-cols-7 grid-rows-6 gap-px overflow-hidden rounded-xl border border-[#2A3446] bg-white/[0.05]">
                 {Array.from({ length: totalCells }).map((_, idx) => {
                   const dayNum = idx - emptyPrefix + 1;
                   const isCurrentMonth = dayNum > 0 && dayNum <= daysInMonth;
-                  const entry = isCurrentMonth ? getEntryForDay(dayNum) : null;
+                  const entries = isCurrentMonth ? getEntriesForDay(dayNum) : [];
                   const isSelected = isCurrentMonth && dayNum === selectedDate;
 
                   return (
                     <div 
                       key={idx} 
                       onClick={() => isCurrentMonth && setSelectedDate(dayNum)}
-                      className={`bg-[#161F2D] p-3 relative flex flex-col transition-colors ${
+                      className={`relative flex min-h-0 flex-col bg-[#161F2D] p-3 transition-colors ${
                         isCurrentMonth ? "cursor-pointer hover:bg-[#1F2C3F]" : "opacity-50 pointer-events-none"
                       } ${isSelected ? 'ring-1 ring-white/[0.2] z-10 bg-[#1F2C3F]' : ''}`}
                     >
@@ -233,23 +245,11 @@ export function PortalCalendarPage() {
                         </span>
                       )}
 
-                      {entry && (
-                        <div className="flex-1 flex flex-col justify-end">
-                          {entry.hasThumbnail ? (
-                            <div className="relative w-full aspect-video rounded-md overflow-hidden mb-1.5">
-                              <img src={entry.thumbnail_url} alt="" className="w-full h-full object-cover" />
-                              <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[11px] font-medium text-white">
-                                <div className={`w-1.5 h-1.5 rounded-sm ${FORMAT_COLORS[entry.format as keyof typeof FORMAT_COLORS]}`} />
-                                {entry.format}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <div className={`w-2 h-2 rounded-sm shrink-0 ${FORMAT_COLORS[entry.format as keyof typeof FORMAT_COLORS]}`} />
-                              <span className="text-xs font-medium text-[#97A0B3] truncate">
-                                {entry.format}
-                              </span>
-                            </div>
+                      {entries.length > 0 && (
+                        <div className="mt-auto min-h-0 space-y-1 overflow-hidden">
+                          {entries.slice(0, 3).map(entry => renderEntryPill(entry, true))}
+                          {entries.length > 3 && (
+                            <div className="text-[11px] font-bold text-[#BCCCE6]">+{entries.length - 3} more</div>
                           )}
                         </div>
                       )}
@@ -258,13 +258,13 @@ export function PortalCalendarPage() {
                 })}
               </div>
             ) : viewMode === "Week" ? (
-              <div className="grid grid-cols-7 gap-px bg-white/[0.05] border border-[#2A3446] rounded-xl flex-1 overflow-hidden h-64 shrink-0">
+              <div className="grid h-[256px] min-h-[256px] shrink-0 grid-cols-7 gap-px overflow-hidden rounded-xl border border-[#2A3446] bg-white/[0.05]">
                 {Array.from({ length: 7 }).map((_, idx) => {
                   // Simplified week logic: show the week of the selected date
                   const weekStart = selectedDate - ((selectedDate + emptyPrefix - 1) % 7);
                   const dayNum = weekStart + idx;
                   const isCurrentMonth = dayNum > 0 && dayNum <= daysInMonth;
-                  const entry = isCurrentMonth ? getEntryForDay(dayNum) : null;
+                  const entries = isCurrentMonth ? getEntriesForDay(dayNum) : [];
                   const isSelected = isCurrentMonth && dayNum === selectedDate;
                   
                   return (
@@ -280,23 +280,15 @@ export function PortalCalendarPage() {
                           {dayNum}
                         </span>
                       )}
-                      {entry && (
-                        <div className="flex-1 flex flex-col justify-start mt-2">
-                          {entry.hasThumbnail ? (
-                            <div className="relative w-full aspect-video rounded-md overflow-hidden mb-1.5">
-                              <img src={entry.thumbnail_url} alt="" className="w-full h-full object-cover" />
-                              <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[11px] font-medium text-white">
-                                <div className={`w-1.5 h-1.5 rounded-sm ${FORMAT_COLORS[entry.format as keyof typeof FORMAT_COLORS]}`} />
-                                {entry.format}
-                              </div>
+                      {entries.length > 0 && (
+                        <div className="mt-2 min-h-0 space-y-1.5 overflow-hidden">
+                          {entries.slice(0, 4).map(entry => (
+                            <div key={entry.id} className="min-w-0 rounded bg-white/[0.05] px-2 py-1.5">
+                              {renderEntryPill(entry)}
                             </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 bg-white/[0.05] px-2 py-1.5 rounded">
-                              <div className={`w-2 h-2 rounded-sm shrink-0 ${FORMAT_COLORS[entry.format as keyof typeof FORMAT_COLORS]}`} />
-                              <span className="text-xs font-medium text-white truncate">
-                                {entry.title || entry.format}
-                              </span>
-                            </div>
+                          ))}
+                          {entries.length > 4 && (
+                            <div className="text-[11px] font-bold text-[#BCCCE6]">+{entries.length - 4} more</div>
                           )}
                         </div>
                       )}

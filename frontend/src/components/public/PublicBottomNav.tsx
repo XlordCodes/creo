@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router";
-import { Home, Info, CreditCard, HelpCircle, LogIn, LayoutDashboard } from "lucide-react";
+import { Home, Info, CreditCard, LogIn, LayoutDashboard } from "lucide-react";
 import { useAuth } from "../../lib/auth-context";
 import { getRoleHome } from "../auth/ProtectedRoute";
 
@@ -12,7 +12,6 @@ export function PublicBottomNav() {
     { label: "Home", href: "/", icon: Home },
     { label: "About", href: "/about", icon: Info },
     { label: "Pricing", href: "/pricing", icon: CreditCard },
-    { label: "FAQ", href: "/faq", icon: HelpCircle },
   ];
 
   return (

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router";
-import { CheckCircle2, AlertCircle, ArrowRight, ShieldCheck, Lock, Sparkles } from "lucide-react";
+import { Check, AlertCircle, ArrowRight, Lock, Loader2 } from "lucide-react";
 import { request } from "../../lib/http";
 import { useAuth } from "../../lib/auth-context";
 import { setAuthToken } from "../../lib/auth-token";
@@ -23,7 +23,6 @@ export function GoogleCallbackPage() {
   const hasExchangedRef = useRef(false);
 
   useEffect(() => {
-    // Cycle through subtle handshake steps for visual polish
     const t1 = setTimeout(() => setStep(2), 600);
     const t2 = setTimeout(() => setStep(3), 1200);
     return () => {
@@ -36,19 +35,20 @@ export function GoogleCallbackPage() {
     const token = searchParams.get("token");
     if (token) {
       setAuthToken(token);
-      refresh().then(() => {
-        setStatus("success");
-        setTimeout(() => {
-          // Smart redirect to last known route
-          const destination = getPostLoginRedirect("client", null, "/portal");
-          navigate(destination);
-        }, 600);
-      }).catch(() => {
-        setStatus("success");
-        setTimeout(() => {
-          navigate("/portal");
-        }, 600);
-      });
+      refresh()
+        .then(() => {
+          setStatus("success");
+          setTimeout(() => {
+            const destination = getPostLoginRedirect("client", null, "/portal");
+            navigate(destination);
+          }, 900);
+        })
+        .catch(() => {
+          setStatus("success");
+          setTimeout(() => {
+            navigate("/portal");
+          }, 900);
+        });
       return;
     }
 
@@ -96,51 +96,24 @@ export function GoogleCallbackPage() {
   }, [searchParams, navigate, refresh]);
 
   return (
-    <div className="h-screen w-screen fixed inset-0 overflow-hidden bg-[#030914] flex flex-col justify-between p-4 sm:p-6 select-none antialiased">
-      {/* ── Animated AI Background Layer ─────────────────────────────────── */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div
-          className="absolute -inset-10 bg-cover bg-center animate-ai-bg-drift filter brightness-[0.70] contrast-[1.12]"
-          style={{ backgroundImage: `url('/assets/auth_bg.jpg')` }}
-        />
-        {/* Atmospheric Cinematic Sapphire Vignette */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#030A16]/85 via-[#07192F]/65 to-[#040D1A]/90 backdrop-blur-[2px]" />
-        {/* Animated Ambient Light Pulses */}
-        <div className="absolute -top-28 -left-28 w-[520px] h-[520px] bg-blue-500/20 rounded-full blur-[120px] animate-ai-orb-1" />
-        <div className="absolute -bottom-28 -right-28 w-[580px] h-[580px] bg-cyan-400/15 rounded-full blur-[130px] animate-ai-orb-2" />
-      </div>
+    <div className="min-h-screen w-full bg-[#050810] flex flex-col items-center justify-center p-4 sm:p-6 select-none relative overflow-hidden font-sans">
+      {/* Subtle Night Navy depth backdrop (admin screens style) */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_45%,#0B111C_0%,#050810_100%)] pointer-events-none -z-10"
+      />
 
-      {/* ── Top Header Bar ────────────────────────────────────────────────── */}
-      <header className="max-w-md w-full mx-auto flex items-center justify-between pb-1 relative z-10 shrink-0">
-        <Link to="/" className="flex items-center gap-2.5 group">
-          <div className="flex size-8 items-center justify-center rounded-xl bg-gradient-to-br from-[#2B7BC4] to-[#0EA5E9] shadow-lg shadow-blue-500/25 group-hover:scale-105 transition-transform border border-white/20">
-            <span className="font-mono text-base font-black text-white">C</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-black tracking-tight text-white drop-shadow-sm">Creo</span>
-            <span className="text-[8px] font-bold tracking-wider text-cyan-300 uppercase">
-              Identity Services
-            </span>
-          </div>
-        </Link>
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-blue-200/80 bg-white/5 border border-white/10 px-3 py-1 rounded-full backdrop-blur-md">
-          <Lock className="size-3 text-cyan-300" />
-          <span>TLS 1.3 / OAuth 2.0</span>
-        </div>
-      </header>
+      {/* Main Authentication Card */}
+      <div className="relative w-full max-w-[760px] mx-auto rounded-[22px] border border-[#2A3446] bg-[#161F2D] py-10 sm:py-12 px-6 sm:px-12 shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col items-center text-center">
+        {/* Authentication Connection Row: Google → Lock → CREO */}
+        <div className="relative flex items-center justify-between w-full max-w-[320px] mx-auto h-14">
+          {/* Connector Line Exactly Through Centers */}
+          <div className="absolute inset-x-7 top-1/2 -translate-y-1/2 h-px bg-[#2A3446]" />
+          <div className="absolute inset-x-12 top-1/2 -translate-y-1/2 h-px bg-gradient-to-r from-transparent via-[#7FA0D6]/40 to-transparent" />
 
-      {/* ── Main Handshake Card ─────────────────────────────────────────── */}
-      <div className="relative w-full max-w-md mx-auto my-auto rounded-3xl border border-[#222F44] bg-[#0B111C]/90 backdrop-blur-2xl p-8 sm:p-10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] text-center space-y-6 z-10 animate-page-in">
-        {/* Dual Brand Handshake Bridge: Google <───> Creo */}
-        <div className="relative flex items-center justify-center gap-4 py-2">
-          {/* Connecting Handshake Line with Pulse */}
-          <div className="absolute inset-x-20 top-1/2 -translate-y-1/2 h-[2px] bg-gradient-to-r from-blue-500/30 via-[#7FA0D6] to-cyan-400/30 opacity-60">
-            <div className="size-2 rounded-full bg-cyan-400 absolute top-1/2 -translate-y-1/2 animate-[ping_1.6s_cubic-bezier(0,0,0.2,1)_infinite]" style={{ left: "50%" }} />
-          </div>
-
-          {/* Google Icon Container */}
-          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-[#121926] border border-[#222F44] shadow-md hover:scale-105 transition-transform z-10">
-            <svg className="size-7" viewBox="0 0 24 24">
+          {/* 1. Google Icon: dark Surface container, Steel Line border */}
+          <div className="relative z-10 flex size-14 items-center justify-center rounded-2xl bg-[#0B111C] border border-[#2A3446] shadow-sm shrink-0">
+            <svg className="size-6" viewBox="0 0 24 24">
               <path
                 fill="#4285F4"
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -160,110 +133,118 @@ export function GoogleCallbackPage() {
             </svg>
           </div>
 
-          {/* Central Animated Badge */}
-          <div className="z-10 flex size-8 items-center justify-center rounded-full bg-[#0A0F18] border border-[#222F44] shadow-md text-[#7FA0D6] text-xs">
-            <Sparkles className="size-3.5 animate-spin" style={{ animationDuration: "6s" }} />
+          {/* 2. Lock: compact circular Night Navy/Surface control, periwinkle lock icon, subtle #7FA0D6 active ring */}
+          <div className="relative z-10 flex size-9 items-center justify-center rounded-full bg-[#0B111C] border border-[#2A3446] ring-1 ring-[#7FA0D6]/30 shadow-xs shrink-0">
+            <Lock className="size-3.5 text-[#BCCCE6]" />
           </div>
 
-          {/* Creo Logo Container */}
-          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#2B7BC4] to-[#1E609A] text-white font-black text-2xl shadow-lg shadow-blue-500/20 hover:scale-105 transition-transform z-10 border border-[#7FA0D6]/30">
-            C
+          {/* 3. CREO Icon: Periwinkle #BCCCE6 button-like tile, dark #050810 "C", subtle Glow Blue edge */}
+          <div className="relative z-10 flex size-14 items-center justify-center rounded-2xl bg-[#BCCCE6] border border-[#7FA0D6]/40 shadow-sm shrink-0">
+            <span className="font-mono font-black text-2xl text-[#050810] leading-none select-none">
+              C
+            </span>
           </div>
         </div>
 
-        {/* Status: Loading */}
-        {status === "loading" && (
-          <div className="space-y-4 pt-1">
-            {/* Pulsing Concentric Ring Spinner */}
-            <div className="relative mx-auto size-14">
-              <div className="absolute inset-0 rounded-full border-4 border-[#7FA0D6]/20 animate-ping opacity-30" />
-              <div className="absolute inset-0 rounded-full border-3 border-[#222F44]" />
-              <div className="size-14 rounded-full border-3 border-transparent border-t-[#7FA0D6] border-r-[#0EA5E9] animate-spin" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <ShieldCheck className="size-5 text-[#7FA0D6]" />
+        {/* Status Content */}
+        <div className="mt-8 flex flex-col items-center w-full">
+          {/* Status: Loading */}
+          {status === "loading" && (
+            <div className="flex flex-col items-center w-full">
+              <div className="relative flex items-center justify-center size-12 rounded-full bg-[#0B111C] border border-[#2A3446] mb-6 shadow-xs">
+                <Loader2 className="size-5 text-[#7FA0D6] animate-spin" />
+              </div>
+
+              <h1 className="text-[30px] sm:text-[32px] font-semibold text-[#F8FAFC] tracking-tight leading-tight">
+                Signing in with Google
+              </h1>
+              <p className="text-[14px] sm:text-[15px] font-normal text-[#97A0B3] mt-2.5 sm:mt-3 leading-relaxed max-w-lg">
+                {step === 1 && "Verifying secure cryptographic signature…"}
+                {step === 2 && "Synchronizing workspace credentials & profile…"}
+                {step >= 3 && "Configuring authenticated session…"}
+              </p>
+
+              <div className="inline-flex items-center gap-2.5 h-11 sm:h-12 px-5 sm:px-6 rounded-full bg-[#0B111C] border border-[#2A3446] mt-6 shadow-xs">
+                <Loader2 className="size-4 animate-spin text-[#7FA0D6]" />
+                <span className="text-[13px] sm:text-[14px] font-semibold text-[#BCCCE6]">
+                  Authenticating session…
+                </span>
               </div>
             </div>
+          )}
 
-            <div>
-              <h2 className="text-xl font-extrabold text-[#F8FAFC] tracking-tight">
-                Signing in with Google
-              </h2>
-              <p className="text-xs text-[#97A0B3] mt-1.5 leading-relaxed max-w-xs mx-auto">
-                {step === 1 && "Verifying secure cryptographic signature..."}
-                {step === 2 && "Synchronizing workspace credentials & profile..."}
-                {step >= 3 && "Configuring authenticated session..."}
+          {/* Status: Success */}
+          {status === "success" && (
+            <div className="flex flex-col items-center w-full">
+              {/* Success Indicator: dark circular base, Periwinkle/Glow Blue check mark, thin concentric ring, subtle pulse */}
+              <div className="relative flex items-center justify-center size-14 mb-6">
+                <div className="absolute inset-0 rounded-full border border-[#7FA0D6]/35 animate-ping opacity-30" />
+                <div className="size-12 rounded-full bg-[#0B111C] border border-[#2A3446] flex items-center justify-center shadow-xs relative z-10">
+                  <Check className="size-5 text-[#BCCCE6]" strokeWidth={2.5} />
+                </div>
+              </div>
+
+              <h1 className="text-[30px] sm:text-[32px] font-semibold text-[#F8FAFC] tracking-tight leading-tight">
+                Welcome, {authenticatedUser?.full_name?.split(" ")[0] || "Jai"}!
+              </h1>
+              <p className="text-[14px] sm:text-[15px] font-normal text-[#97A0B3] mt-2.5 sm:mt-3 leading-relaxed max-w-lg">
+                Authentication confirmed. Launching your production workspace…
               </p>
-            </div>
 
-            <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#121926] border border-[#222F44] text-[11px] font-bold text-[#7FA0D6] shadow-xs">
-              <ShieldCheck className="size-3.5 text-[#0EA5E9]" />
-              <span>OAuth 2.0 Encrypted Handshake</span>
+              {/* Redirect State: Nebula-style control */}
+              <div className="inline-flex items-center gap-2.5 h-11 sm:h-12 px-5 sm:px-6 rounded-full bg-[#0B111C] border border-[#2A3446] mt-6 shadow-xs">
+                <Loader2 className="size-4 animate-spin text-[#7FA0D6]" />
+                <span className="text-[13px] sm:text-[14px] font-semibold text-[#BCCCE6]">
+                  Redirecting automatically
+                </span>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Status: Success */}
-        {status === "success" && (
-          <div className="space-y-4 pt-1 animate-in fade-in zoom-in-95 duration-200">
-            <div className="size-14 rounded-full bg-emerald-500/10 border-2 border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-md">
-              <CheckCircle2 className="size-7" />
-            </div>
+          {/* Status: Error */}
+          {status === "error" && (
+            <div className="flex flex-col items-center w-full">
+              <div className="size-12 rounded-full bg-[#0B111C] border border-[#2A3446] text-[#D8BF9B] flex items-center justify-center mb-6 shadow-xs">
+                <AlertCircle className="size-6 text-[#D8BF9B]" />
+              </div>
 
-            <div>
-              <h2 className="text-xl font-black text-[#F8FAFC] tracking-tight">
-                Welcome, {authenticatedUser?.full_name?.split(" ")[0] || "there"}!
-              </h2>
-              <p className="text-xs text-[#97A0B3] mt-1 leading-relaxed">
-                Authentication confirmed. Launching your Creo production portal...
-              </p>
-            </div>
-
-            <div className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/30">
-              <span className="size-2 rounded-full bg-emerald-400 animate-ping" />
-              <span>Redirecting automatically</span>
-            </div>
-          </div>
-        )}
-
-        {/* Status: Error */}
-        {status === "error" && (
-          <div className="space-y-4 pt-1 animate-in fade-in duration-200">
-            <div className="size-14 rounded-full bg-rose-500/10 border-2 border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto shadow-md">
-              <AlertCircle className="size-7" />
-            </div>
-
-            <div>
-              <h2 className="text-xl font-bold text-[#F8FAFC]">Authentication Failed</h2>
-              <p className="text-xs text-rose-300 bg-rose-950/40 p-3.5 rounded-2xl border border-rose-500/30 mt-2.5 leading-relaxed text-left">
+              <h1 className="text-[30px] sm:text-[32px] font-semibold text-[#F8FAFC] tracking-tight leading-tight">
+                Authentication Failed
+              </h1>
+              <p className="text-[14px] sm:text-[15px] font-normal text-[#97A0B3] bg-[#0B111C] p-4 rounded-xl border border-[#2A3446] mt-4 leading-relaxed max-w-md text-center">
                 {errorMessage}
               </p>
-            </div>
 
-            <div className="pt-2">
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#2B7BC4] to-[#1E609A] px-6 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:brightness-110 active:scale-95 transition-all"
-              >
-                Back to Sign In <ArrowRight className="size-3.5" />
-              </Link>
+              <div className="mt-6">
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#BCCCE6] px-6 py-2.5 text-[13px] font-semibold text-[#050810] hover:bg-white transition-colors"
+                >
+                  Back to Sign In <ArrowRight className="size-4" />
+                </Link>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* ── Bottom Footer Help Note ─────────────────────────────────────── */}
-      <footer className="text-center text-xs text-white/70 py-1 relative z-10 shrink-0">
-        <span>Protected by Creo Zero-Trust Infrastructure · </span>
-        <a
-          href="https://wa.me/919941999415"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-cyan-300 font-semibold hover:text-white hover:underline cursor-pointer transition-colors"
-        >
-          Need Support?
-        </a>
-      </footer>
+      {/* Bottom Message: Card → footer spacing 48–56px */}
+      <div className="flex items-center justify-center gap-3 w-full max-w-[540px] mx-auto mt-12 sm:mt-14 text-[12px] sm:text-[13px] text-[#97A0B3]">
+        <div className="h-px bg-[#2A3446] flex-1 hidden sm:block" />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span>Protected by Creo Zero-Trust Infrastructure</span>
+          <span className="text-[#2A3446]">&middot;</span>
+          <a
+            href="https://wa.me/919941999415"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#BCCCE6] font-medium hover:underline hover:text-white transition-colors"
+          >
+            Need Support?
+          </a>
+        </div>
+        <div className="h-px bg-[#2A3446] flex-1 hidden sm:block" />
+      </div>
     </div>
   );
 }
-

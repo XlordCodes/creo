@@ -32,9 +32,9 @@ function ProgressStepper({
   onSelectStep?: (step: number) => void;
 }) {
   return (
-    <div className="w-full mb-8 sm:mb-10">
+    <div className="w-full mb-4 sm:mb-5">
       {/* Stepper Card */}
-      <div className="relative bg-[#161F2D] rounded-2xl shadow-xl border border-[#2A3446] px-3 sm:px-8 py-5">
+      <div className="relative bg-[#161F2D] rounded-xl shadow-xl border border-[#2A3446] px-2.5 sm:px-7 py-3.5 sm:py-4">
         <div className="flex items-start justify-between relative">
 
           {/* Background track line - mathematically centered between step 1 (10%) and step 5 (90%) */}
@@ -97,7 +97,7 @@ function ProgressStepper({
                     }`}>
                       Step {s.step}
                     </p>
-                    <p className={`text-xs font-semibold transition-colors truncate px-0.5 ${
+                    <p className={`text-[11px] sm:text-xs font-semibold transition-colors truncate px-0.5 ${
                       isActive
                         ? "text-white font-bold"
                         : isDone
@@ -185,7 +185,7 @@ function StageVerifyEmail({
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -16 }}
-      className="max-w-xl mx-auto rounded-2xl border border-[#2A3446] bg-[#161F2D] p-8 sm:p-12 shadow-xl text-center"
+      className="w-full max-w-xl mx-auto rounded-xl border border-[#2A3446] bg-[#161F2D] p-5 sm:p-8 shadow-xl text-center"
     >
       <div className="size-14 mx-auto mb-4 rounded-2xl bg-[#0B111C] border border-[#2A3446] flex items-center justify-center text-[#7FA0D6]">
         {verifiedSuccess ? (
@@ -335,7 +335,7 @@ export function OnboardingView({ userId, onPortalLaunch }: OnboardingViewProps) 
     // No polling: every step updates the cache itself after its request succeeds.
     // Refetch on focus still picks up changes made in another tab (e.g. a payment).
     staleTime: 15_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   });
 
   /**
@@ -379,7 +379,14 @@ export function OnboardingView({ userId, onPortalLaunch }: OnboardingViewProps) 
 
   const handleSelectStep = (step: number) => {
     setActiveStep(step);
-    setSearchParams({ step: String(step) }, { replace: true });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("step", String(step));
+        return next;
+      },
+      { replace: true }
+    );
   };
 
   useEffect(() => {
@@ -440,7 +447,7 @@ export function OnboardingView({ userId, onPortalLaunch }: OnboardingViewProps) 
   }
 
   return (
-    <div className="w-full max-w-5xl lg:max-w-6xl mx-auto flex flex-col items-center pb-20 sm:pb-28">
+    <div className="w-full max-w-6xl mx-auto flex flex-col items-center pb-4 sm:pb-6">
       {/* Visual Stepper */}
       <ProgressStepper
         activeStep={currentStep}
@@ -467,6 +474,11 @@ export function OnboardingView({ userId, onPortalLaunch }: OnboardingViewProps) 
               userId={userId}
               onAccepted={handleTermsAccepted}
               onBack={() => handleSelectStep(1)}
+              onSkipToPayment={() => {
+                markStageReached(2);
+                handleSelectStep(3);
+              }}
+              isAlreadyAccepted={backendStage >= 2}
               isSubmitting={termsSubmitting}
               error={termsError}
             />
@@ -489,7 +501,7 @@ export function OnboardingView({ userId, onPortalLaunch }: OnboardingViewProps) 
             <StageQuestionnaire
               key="questionnaire"
               userId={userId}
-              initialSection={(status?.resume_section as any) || undefined}
+              initialSection={(searchParams.get("section") as any) || (status?.resume_section as any) || undefined}
               onComplete={(team) => {
                 if (team && team.length > 0) {
                   setAssignedTeam(team);

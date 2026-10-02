@@ -7,6 +7,7 @@ Never reads a stored column for stage, never accepts a stage from the request bo
 from __future__ import annotations
 
 import asyncio
+import html
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -63,7 +64,15 @@ def get_first_incomplete_section(quest: Questionnaire | None) -> str:
     sec_e = quest.section_e or {}
     if not (sec_e.get("on_camera") or sec_e.get("shoot_locations")):
         return "e"
-    return "e"
+    # If core A-E are all filled, check if client was on an active section
+    ans = quest.answers or {}
+    last_sec = ans.get("last_active_section")
+    if last_sec and last_sec in ("a", "b", "c", "d", "e", "f", "g"):
+        return last_sec
+    sec_f = quest.section_f or {}
+    if not sec_f:
+        return "f"
+    return "g"
 
 
 async def get_current_stage(db: AsyncSession, client_id: uuid.UUID) -> int:
@@ -106,14 +115,26 @@ async def get_onboarding_status(db: AsyncSession, client_id: uuid.UUID) -> Onboa
         last_stage_name = STAGE_NAMES[2]
     elif stage == 3:
         next_required = "questionnaire"
-        # The questionnaire row is only needed to pick the resume section at this stage
         q_stmt = select(Questionnaire).where(Questionnaire.user_id == client_id)
         quest = (await db.execute(q_stmt)).scalar_one_or_none()
-        resume_section = get_first_incomplete_section(quest)
+        ans = (quest.answers or {}) if quest else {}
+        server_last = ans.get("last_active_section")
+        if server_last and server_last in ("a", "b", "c", "d", "e", "f", "g"):
+            resume_section = server_last
+        else:
+            resume_section = get_first_incomplete_section(quest)
         next_route = "/onboarding/questionnaire"
         last_stage_name = STAGE_NAMES[3]
     elif stage == 4:
         next_required = "brand_dna"
+        q_stmt = select(Questionnaire).where(Questionnaire.user_id == client_id)
+        quest = (await db.execute(q_stmt)).scalar_one_or_none()
+        ans = (quest.answers or {}) if quest else {}
+        server_last = ans.get("last_active_section")
+        if server_last and server_last in ("a", "b", "c", "d", "e", "f", "g"):
+            resume_section = server_last
+        else:
+            resume_section = "g"
         next_route = "/onboarding/questionnaire?step=brand_dna"
         last_stage_name = STAGE_NAMES[4]
     elif stage == 5:
@@ -367,6 +388,13 @@ async def save_questionnaire_section(
             if not quest.submitted_at:
                 quest.submitted_at = now
 
+    # Persist last active section
+    from sqlalchemy.orm.attributes import flag_modified
+    ans = dict(quest.answers or {})
+    ans["last_active_section"] = sec
+    quest.answers = ans
+    flag_modified(quest, "answers")
+
     # Extended completion check
     has_f = bool(quest.section_f and bool(quest.section_f))
     has_g = bool(quest.section_g and bool(quest.section_g))
@@ -421,6 +449,7 @@ async def get_questionnaire_state(
         "core_completed": quest.core_completed_at is not None,
         "extended_completed": quest.extended_completed_at is not None,
         "version": quest.version or 1,
+        "last_active_section": (quest.answers or {}).get("last_active_section"),
     }
 
 
@@ -575,14 +604,12 @@ async def complete_onboarding(db: AsyncSession, client_id: uuid.UUID) -> Onboard
     if not quest or not quest.core_completed_at:
         raise Conflict("Mandatory Brand Questionnaire Sections A-E must be submitted before completing onboarding", code="QUESTIONNAIRE_REQUIRED")
 
-    # Prerequisite 4: Brand DNA generated
+    # Prerequisite 4: Brand DNA. Use the instant deterministic version so the client never
+    # waits on an LLM; Gemini upgrades it in the background once the pod is assigned.
     if not profile.brand_dna:
-        from app.services.brand_dna import run_brand_dna_pipeline
-        # The pod brief is sent once below, after assignment
-        await run_brand_dna_pipeline(db, client_id, notify_team=False)
+        from app.services.brand_dna import save_template_brand_dna
+        await save_template_brand_dna(db, client_id)
         await db.refresh(profile)
-        if not profile.brand_dna:
-            raise Conflict("Brand DNA generation must complete before assigning creative pod", code="BRAND_DNA_REQUIRED")
 
     # Prerequisite 5 & 6: Impartial Pod Assignment & Feasible Calendar Generation
     from app.services.fair_dispatch_service import assign_client_and_generate_schedule
@@ -624,9 +651,9 @@ async def complete_onboarding(db: AsyncSession, client_id: uuid.UUID) -> Onboard
             "role": "Lead Graphic Designer (Posters & Carousels)",
         })
 
-    # Notify and email the assigned team lead & specialists with the client's Brand DNA summary.
-    # Runs after the response so the client isn't kept waiting on one SMTP round trip per pod member.
-    schedule_team_notification(client_id)
+    # After the response: Gemini summarises the questionnaire (Brand DNA + team brief with pod
+    # alignment), then the team lead and specialists get the brief in-app and by email.
+    schedule_brand_enrichment(client_id)
 
     return OnboardingCompleteResponse(
         status="completed",
@@ -653,6 +680,52 @@ def schedule_team_notification(client_id: uuid.UUID) -> None:
     task = asyncio.create_task(_notify_team_in_background(client_id))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+
+async def _enrich_and_notify_in_background(client_id: uuid.UUID) -> None:
+    from app.db.session import AsyncSessionLocal
+    from app.services.brand_dna import run_brand_dna_pipeline
+
+    async with AsyncSessionLocal() as bg_db:
+        try:
+            profile = (
+                await bg_db.execute(select(ClientProfile).where(ClientProfile.user_id == client_id))
+            ).scalar_one_or_none()
+            brief = (profile.brand_dna or {}).get("team_brief") if profile else None
+            already_llm = bool(
+                profile
+                and profile.brand_dna_source in ("gemini", "openai")
+                and brief
+                and brief.get("pod_alignment")
+            )
+            if not already_llm:
+                await run_brand_dna_pipeline(bg_db, client_id, notify_team=False)
+        except Exception as e_dna:
+            await bg_db.rollback()
+            logger.error("background_brand_dna_enrichment_failed", client_id=str(client_id), error=str(e_dna))
+        try:
+            await notify_team_of_new_client_summary(bg_db, client_id)
+        except Exception as e_notify:
+            logger.error("failed_to_notify_team_of_onboarding_summary", error=str(e_notify))
+
+
+def schedule_brand_enrichment(client_id: uuid.UUID) -> None:
+    """Summarise the questionnaire with Gemini and brief the pod, without blocking the client."""
+    task = asyncio.create_task(_enrich_and_notify_in_background(client_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def load_pod_roster(db: AsyncSession, client_id: uuid.UUID) -> list[dict[str, str]]:
+    """Assigned pod members as [{name, role}] for prompts and briefs."""
+    rows = (
+        await db.execute(
+            select(ClientAssignment, User)
+            .join(User, User.id == ClientAssignment.user_id)
+            .where(ClientAssignment.client_id == client_id)
+        )
+    ).all()
+    return [{"name": u.full_name or u.email, "role": str(ca.role)} for ca, u in rows]
 
 
 async def notify_team_of_new_client_summary(
@@ -821,14 +894,49 @@ async def notify_team_of_new_client_summary(
     rules_html = "".join([f'<li style="margin-bottom: 3px;">{r}</li>' for r in writing_rules])
     do_not_html = "".join([f'<li style="margin-bottom: 3px; color: #991B1B;">{r}</li>' for r in do_not_rules]) if do_not_rules else ""
 
+    # Team brief (Gemini-generated when available): summary, tone, directives, pod alignment
+    team_brief = brand_dna_data.get("team_brief") or {}
+    brief_summary = str(team_brief.get("brand_summary") or positioning)
+    brief_tone = [str(t) for t in (team_brief.get("tone_profile") or voice_words)][:5]
+    brief_directives = [str(d) for d in (team_brief.get("production_directives") or [])][:5]
+    alignment_by_name = {
+        str(a.get("member_name", "")).strip().lower(): a
+        for a in (team_brief.get("pod_alignment") or [])
+        if isinstance(a, dict)
+    }
+    directives_html = "".join(
+        f'<li style="margin-bottom: 4px;">{html.escape(d)}</li>' for d in brief_directives
+    )
+    brief_html = f"""
+              <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #2B7BC4; margin-bottom: 6px;">
+                  Questionnaire Brief (A–G)
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 13px; color: #334155; line-height: 1.55;">{html.escape(brief_summary)}</p>
+                {f'<p style="margin: 0 0 8px 0; font-size: 12px; color: #475569;"><strong>Tone:</strong> {html.escape(", ".join(brief_tone))}</p>' if brief_tone else ''}
+                {f'<div style="font-size: 12px; color: #0D2137; font-weight: 700; margin-top: 6px;">Production directives</div><ol style="margin: 4px 0 0 0; padding-left: 20px; font-size: 12px; color: #475569;">{directives_html}</ol>' if directives_html else ''}
+              </div>"""
+
+    email_jobs: list[tuple[str, str, str, str]] = []
+
     # Dispatch to each team member
     for item in team_roster:
         member = item["user"]
         role_title = item["role_title"]
+        alignment = alignment_by_name.get(str(member.full_name or member.email).strip().lower())
+        alignment_line = (
+            f" Why you: {alignment.get('rationale')} (match {alignment.get('match_score')}%)."
+            if alignment and alignment.get("rationale")
+            else ""
+        )
+        notif_msg = (
+            f"You're on {company_name}'s pod as {role_title}. {brief_summary[:220]}"
+            f"{alignment_line} Open the client to see the full questionnaire brief."
+        )[:900]
 
         # 1. In-app Notification with role-based internal route
         if item.get("role_key") == "team_lead":
-            in_app_link = "/lead/clients"
+            in_app_link = f"/lead/clients/{client_id}"
         elif item.get("role_key") in ["video_editor", "graphic_designer", "copywriter"]:
             in_app_link = "/workstation/tasks"
         else:
@@ -895,6 +1003,9 @@ async def notify_team_of_new_client_summary(
                   &ldquo;{positioning}&rdquo;
                 </p>
               </div>
+
+              {brief_html}
+              {f'<div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 10px 14px; margin-bottom: 20px; font-size: 12px; color: #1E3A8A;"><strong>Why you were matched:</strong> {html.escape(str(alignment.get("rationale")))} ({alignment.get("match_score")}% match)</div>' if alignment and alignment.get("rationale") else ''}
 
               <!-- Pod Roster -->
               <div style="margin-bottom: 24px;">
@@ -967,25 +1078,29 @@ async def notify_team_of_new_client_summary(
             f"Client: {company_name} (@{ig_handle})\n"
             f"Role: {role_title}\n"
             f"Strategic Positioning: {positioning}\n\n"
+            f"Brief: {brief_summary}\n"
+            + "".join(f"- {d}\n" for d in brief_directives)
+            + f"\n"
             f"Tone Voice Words: {', '.join(voice_words)}\n"
             f"Pillars Defined: {len(pillars_data)}\n\n"
             f"Open Client Production Workspace: {portal_link}\n"
         )
 
-        try:
-            if member.email:
-                sent = await send_email(
-                    to_email=member.email,
-                    subject=email_subject,
-                    html_content=email_html,
-                    text_content=plain_text,
-                )
-                if sent:
-                    emails_sent_count += 1
-        except Exception as email_err:
-            logger.warning("failed_to_send_team_brief_email", member=member.email, error=str(email_err))
+        if member.email:
+            email_jobs.append((member.email, email_subject, email_html, plain_text))
 
+    # In-app notifications land immediately; emails go out in parallel afterwards
     await db.commit()
+
+    async def _send(to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+        try:
+            return bool(await send_email(to_email=to_email, subject=subject, html_content=html_body, text_content=text_body))
+        except Exception as email_err:
+            logger.warning("failed_to_send_team_brief_email", member=to_email, error=str(email_err))
+            return False
+
+    results = await asyncio.gather(*(_send(*job) for job in email_jobs))
+    emails_sent_count = sum(1 for ok in results if ok)
     logger.info(
         "team_onboarding_summary_dispatched",
         client_id=str(client_id),

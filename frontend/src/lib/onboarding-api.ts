@@ -75,6 +75,7 @@ export interface QuestionnaireState {
   core_completed: boolean;
   extended_completed: boolean;
   version: number;
+  last_active_section?: string | null;
 }
 
 export function fetchQuestionnaireState(userId: string): Promise<QuestionnaireState> {

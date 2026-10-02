@@ -63,7 +63,7 @@ export function PortalDashboardPage() {
       return await request<DashboardData>("/api/v1/portal/dashboard");
     },
     enabled: !isLocked,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const subscriptionActive = !!dashboard?.active_plan && ["active", "trialing"].includes(dashboard?.active_plan?.status);
@@ -78,7 +78,7 @@ export function PortalDashboardPage() {
       }
     },
     enabled: subscriptionActive,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const { data: upcomingEntries = [] } = useQuery<any[]>({
@@ -101,7 +101,7 @@ export function PortalDashboardPage() {
       }
     },
     enabled: subscriptionActive,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const { data: subData } = useQuery<any>({
@@ -114,7 +114,7 @@ export function PortalDashboardPage() {
       }
     },
     enabled: subscriptionActive,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const showToast = (msg: string) => {

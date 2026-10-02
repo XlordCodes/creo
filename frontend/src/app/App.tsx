@@ -13,7 +13,6 @@ import {
   AboutPage,
   AuthPage,
   ClientsPage,
-  FaqPage,
   GoogleCallbackPage,
   OnboardingView,
   PortalAccountPage,
@@ -79,6 +78,9 @@ const AdminPlansPage = lazy(() =>
 );
 const AdminSalesPage = lazy(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminSalesPage }))
+);
+const AdminPlansAndNegotiationsPage = lazy(() =>
+  import("../pages/admin/AdminPlansAndNegotiationsPage").then((m) => ({ default: m.AdminPlansAndNegotiationsPage }))
 );
 
 const AdminTeamManagementPage = lazy(() =>
@@ -168,9 +170,9 @@ function OnboardingPageWrapper() {
   useEffect(() => whenIdle(() => preloadPortalPages()), []);
 
   return (
-    <div data-surface="review" className="bento-theme min-h-screen bg-[#0B111C] text-[#F8FAFC] flex flex-col overflow-x-hidden">
+    <div data-surface="review" className="bento-theme min-h-[100dvh] bg-[#0B111C] text-[#F8FAFC] flex flex-col overflow-x-hidden">
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 border-b border-[#2A3446] bg-[#050810]/95 backdrop-blur-md px-4 sm:px-8 py-3 shadow-md shrink-0">
+      <header className="sticky top-0 z-30 border-b border-[#2A3446] bg-[#050810]/95 backdrop-blur-md px-4 sm:px-8 py-2.5 shadow-md shrink-0">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 group">
             <span className="size-8 flex items-center justify-center rounded-xl bg-[#161F2D] border border-[#2A3446] font-mono text-sm font-bold text-[#7FA0D6] shadow-xs group-hover:scale-105 transition-transform">
@@ -214,7 +216,7 @@ function OnboardingPageWrapper() {
       </header>
 
       {/* Main Onboarding Canvas - full page view with generous space */}
-      <main className="flex-1 max-w-5xl lg:max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 flex flex-col items-center">
+      <main className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-5 flex flex-col items-center">
         <OnboardingErrorBoundary>
           <Suspense fallback={<CreoInlineLoader label="Loading your onboarding" />}>
             <OnboardingView userId={userId} onPortalLaunch={() => navigate("/portal")} />
@@ -319,6 +321,17 @@ function ScrollToTop() {
   return null;
 }
 
+function SupportRedirect() {
+  const { user } = useAuth();
+  if (user?.role === "admin" || user?.role === "super_admin") {
+    return <Navigate to="/admin/support" replace />;
+  }
+  if (user) {
+    return <Navigate to="/portal/support" replace />;
+  }
+  return <Navigate to="/pricing" replace />;
+}
+
 export function App() {
   return (
     <AuthProvider>
@@ -328,6 +341,10 @@ export function App() {
           <RoutePrefetcher />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
+              {/* Universal Support Redirect */}
+              <Route path="/support" element={<SupportRedirect />} />
+              <Route path="/client/plans" element={<Navigate to="/portal/payments" replace />} />
+
               {/* 1. Public Marketing Pages (Open to All) */}
               <Route element={<PublicLayout />}>
                 <Route path="/" element={<HomePage />} />
@@ -335,7 +352,7 @@ export function App() {
                 <Route path="/portfolio" element={<PortfolioPage />} />
                 <Route path="/clients" element={<ClientsPage />} />
                 <Route path="/about" element={<AboutPage />} />
-                <Route path="/faq" element={<FaqPage />} />
+                <Route path="/faq" element={<Navigate to="/pricing" replace />} />
                 <Route path="/terms" element={<TermsPage />} />
                 <Route path="/privacy" element={<PrivacyPage />} />
               </Route>
@@ -409,6 +426,7 @@ export function App() {
                 <Route path="creative-pod" element={<PortalCreativePodPage />} />
                 <Route path="creative_pod" element={<PortalCreativePodPage />} />
                 <Route path="payments" element={<PortalPaymentsPage />} />
+                <Route path="plans" element={<PortalPaymentsPage />} />
                 <Route path="support" element={<PortalSupportPage />} />
                 <Route path="account" element={<PortalAccountPage />} />
                 <Route path="library" element={<PortalLibraryPage />} />
@@ -499,10 +517,18 @@ export function App() {
                   }
                 />
                 <Route
+                  path="/admin/plans-and-negotiations"
+                  element={
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "sales"]}>
+                      <AdminPlansAndNegotiationsPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
                   path="/admin/plans"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
-                      <AdminPlansPage />
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "sales"]}>
+                      <AdminPlansAndNegotiationsPage />
                     </ProtectedRoute>
                   }
                 />

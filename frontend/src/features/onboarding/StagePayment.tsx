@@ -234,10 +234,10 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full space-y-6"
+      className="w-full space-y-4 sm:space-y-5"
     >
       {/* Header Card */}
-      <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-6 sm:p-7 shadow-xl">
+      <div className="rounded-xl border border-[#2A3446] bg-[#161F2D] p-4 sm:p-6 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#7FA0D6]/20 border border-[#7FA0D6]/30 text-[#BCCCE6] text-[11px] font-bold uppercase tracking-wider mb-3 shadow-sm">

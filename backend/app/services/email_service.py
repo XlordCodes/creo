@@ -17,7 +17,7 @@ import socket
 logger = get_logger(__name__)
 
 
-def _create_ipv4_connection(address: tuple[str, int], timeout: float = 12.0, source_address: Any = None) -> socket.socket:
+def _create_ipv4_connection(address: tuple[str, int], timeout: float = 3.0, source_address: Any = None) -> socket.socket:
     """Force IPv4 (AF_INET) socket connection to prevent [Errno 101] Network is unreachable on cloud container networks."""
     host, port = address
     err = None
@@ -60,13 +60,17 @@ def _send_smtp_sync(
     text_content: str | None = None,
 ) -> bool:
     """Send an email synchronously over TLS via configured SMTP credentials with RFC-compliant anti-spam headers."""
-    smtp_pw = (settings.SMTP_PASSWORD or "gcic myxm rrep lorb").strip().strip('"').strip("'")
-    smtp_user = (settings.SMTP_USERNAME or "creotool26@gmail.com").strip()
+    smtp_pw = (settings.SMTP_PASSWORD or "").strip().strip('"').strip("'")
+    smtp_user = (settings.SMTP_USERNAME or "").strip()
     smtp_server = (settings.SMTP_SERVER or "smtp.gmail.com").strip()
     smtp_port = settings.SMTP_PORT or 587
 
     sender_email = (settings.SMTP_FROM_EMAIL or smtp_user).strip()
     clean_to = to_email.strip()
+
+    if not smtp_user or not smtp_pw or not sender_email:
+        logger.error("email_provider_not_configured")
+        return False
 
     # Primary multipart/alternative container
     msg = MIMEMultipart("alternative")
@@ -97,8 +101,9 @@ def _send_smtp_sync(
 
     # 1. Primary delivery attempt (e.g. port 587 with STARTTLS over forced IPv4)
     try:
-        with IPv4SMTP(smtp_server, smtp_port, timeout=12) as server:
-            if settings.SMTP_USE_TLS:
+        smtp_class = IPv4SMTP_SSL if smtp_port == 465 else IPv4SMTP
+        with smtp_class(smtp_server, smtp_port, timeout=3) as server:
+            if settings.SMTP_USE_TLS and smtp_port != 465:
                 server.starttls()
             server.login(smtp_user, smtp_pw)
             server.sendmail(sender_email, [clean_to], msg.as_string())
@@ -106,17 +111,6 @@ def _send_smtp_sync(
         return True
     except Exception as e_primary:
         logger.warning("smtp_primary_attempt_failed", port=smtp_port, error=str(e_primary))
-
-    # 2. Fallback delivery attempt via Port 465 direct SSL over forced IPv4
-    if smtp_port != 465:
-        try:
-            with IPv4SMTP_SSL(smtp_server, 465, timeout=12) as server:
-                server.login(smtp_user, smtp_pw)
-                server.sendmail(sender_email, [clean_to], msg.as_string())
-            logger.info("smtp_email_sent_via_port_465_ssl", to_email=clean_to, subject=subject)
-            return True
-        except Exception as e_ssl:
-            logger.error("smtp_ssl_fallback_failed", error=str(e_ssl))
 
     return False
 
@@ -131,12 +125,12 @@ async def send_email(
     if settings.RESEND_API_KEY:
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
                     "https://api.resend.com/emails",
                     headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
                     json={
-                        "from": "Creo Verification <onboarding@resend.dev>",
+                        "from": settings.RESEND_FROM_EMAIL,
                         "to": [to_email],
                         "subject": subject,
                         "html": html_content,
@@ -162,7 +156,7 @@ async def send_email(
 
 async def send_otp_email(to_email: str, otp_code: str) -> bool:
     """Send a Creo-branded 6-digit OTP verification code designed for inbox delivery (zero JS, 100% email-safe)."""
-    logger.info("SECURITY_OTP_GENERATED", to_email=to_email, otp_code=otp_code)
+    logger.info("security_otp_delivery_requested", to_email=to_email)
     subject = f"{otp_code} is your Creo verification code"
     text_content = (
         f"CREO WORKSPACE VERIFICATION\n\n"

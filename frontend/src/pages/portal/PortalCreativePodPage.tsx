@@ -15,10 +15,8 @@ interface TeamMember {
   is_primary?: boolean;
 }
 
-interface DashboardData {
+interface PodData {
   assigned_team?: TeamMember[];
-  active_plan?: { status: string; name?: string; price_minor?: number } | null;
-  onboarding_stage?: number;
 }
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
@@ -94,13 +92,14 @@ export function PortalCreativePodPage() {
   // An expired or missing subscription drops the onboarding stage below 8, so the gate covers it
   const gate = useOnboardingGate();
 
-  const { data: dashboard, isLoading } = useQuery<DashboardData>({
-    queryKey: ["portal-dashboard", user?.id],
-    queryFn: () => request<DashboardData>("/api/v1/portal/dashboard"),
+  const { data: podData, isLoading } = useQuery<PodData>({
+    queryKey: ["portal-pod", user?.id],
+    queryFn: () => request<PodData>("/api/v1/portal/pod"),
     enabled: !!user?.id && gate.isComplete,
+    staleTime: 5 * 60_000,
   });
 
-  const assignedTeam = dashboard?.assigned_team || [];
+  const assignedTeam = podData?.assigned_team || [];
   const podLead = assignedTeam.find((m) => m.is_primary || m.raw_role === "team_lead" || m.raw_role === "creative_lead");
   const allMembers = podLead ? [podLead, ...assignedTeam.filter((m) => m.id !== podLead.id)] : assignedTeam;
 

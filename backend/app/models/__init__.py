@@ -27,6 +27,7 @@ from app.models.calendar import (
     ShootDay,
 )
 from app.models.ops import Announcement, AuditLog, LeaveRequest, Notification
+from app.models.negotiation import PlanNegotiation
 from app.models.questionnaire import Questionnaire
 from app.models.support import Ticket, TicketMessage
 from app.models.tenant import Agency, Team, TeamMember
@@ -34,6 +35,8 @@ from app.models.user import ClientProfile, ClientRoleRequirement, StaffProfile, 
 from app.models.work import ClientAssignment, ContentCalendar, Deliverable, Task
 
 __all__ = [
+    # Negotiation
+    "PlanNegotiation",
     # Enums
     "UserRole",
     "AccountStatus",

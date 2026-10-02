@@ -22,6 +22,46 @@ from app.models.work import ClientAssignment, Deliverable
 router = APIRouter(prefix="/portal", tags=["Portal"])
 
 
+@router.get("/pod", response_model=dict[str, Any])
+async def get_portal_pod(
+    client_id: uuid.UUID | None = Query(None),
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return only the assigned pod members needed by the Creative Pod page."""
+    if actor.role == "client":
+        target_client_id = actor.client_id or actor.user_id
+    else:
+        target_client_id = client_id or actor.client_id or actor.user_id
+    assignments = await db.execute(
+        select(ClientAssignment, User)
+        .join(User, User.id == ClientAssignment.user_id)
+        .where(ClientAssignment.client_id == target_client_id)
+        .order_by(
+            (ClientAssignment.role == "team_lead").desc(),
+            (ClientAssignment.role == "video_editor").desc(),
+        )
+    )
+
+    role_labels = {
+        "team_lead": "Team Lead & Account Director",
+        "video_editor": "Lead Video Editor (Reels & Motion)",
+        "graphic_designer": "Lead Graphic Designer (Posters & Carousels)",
+    }
+    assigned_team = [
+        {
+            "id": str(user.id),
+            "name": user.full_name or user.email.split("@")[0].capitalize(),
+            "email": user.email,
+            "raw_role": assignment.role,
+            "role": role_labels.get(assignment.role, "Team Member"),
+            "is_primary": assignment.is_primary,
+        }
+        for assignment, user in assignments.all()
+    ]
+    return {"assigned_team": assigned_team}
+
+
 @router.get("/dashboard", response_model=dict[str, Any])
 async def get_portal_dashboard(
     client_id: uuid.UUID | None = Query(None),

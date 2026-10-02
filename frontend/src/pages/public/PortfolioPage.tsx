@@ -46,9 +46,9 @@ export function PortfolioPage() {
               <Link to="/pricing" className="bg-[#BCCCE6] text-[#050810] font-semibold text-xs sm:text-sm px-6 py-3 rounded-full transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] hover:bg-[#D5E1F2] w-full sm:w-auto text-center">
                 Deploy CREO in Your Agency &rarr;
               </Link>
-              <Link to="/faq" className="bg-transparent border border-[#2A3446]/30 text-[#F8FAFC] text-xs sm:text-sm px-6 py-3 rounded-full hover:bg-[#121926] transition w-full sm:w-auto text-center shadow-sm">
+              <a href="https://wa.me/919941999415" target="_blank" rel="noopener noreferrer" className="bg-transparent border border-[#2A3446]/30 text-[#F8FAFC] text-xs sm:text-sm px-6 py-3 rounded-full hover:bg-[#121926] transition w-full sm:w-auto text-center shadow-sm">
                 Schedule Live Demo
-              </Link>
+              </a>
             </div>
             
             {/* 4 Stat Pods */}

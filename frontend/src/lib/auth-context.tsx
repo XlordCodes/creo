@@ -58,7 +58,8 @@ interface AuthContextType {
   loginWithPassword: (email: string, password: string) => Promise<AuthUser>;
   register: (email: string, password: string, full_name?: string) => Promise<AuthUser>;
   registerIntent: (email: string, password: string, full_name?: string) => Promise<{ status: string; message: string }>;
-  verifyRegistration: (email: string, code: string, password: string, full_name?: string) => Promise<AuthUser>;
+  resendRegistration: (email: string) => Promise<{ status: string; message: string }>;
+  verifyRegistration: (email: string, code: string, password?: string, full_name?: string) => Promise<AuthUser>;
   forgotPassword: (email: string) => Promise<{ status: string; message: string }>;
   verifyResetOtp: (email: string, code: string) => Promise<AuthUser>;
   setMandatoryPassword: (newPassword: string) => Promise<void>;
@@ -173,10 +174,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const verifyRegistration = async (email: string, code: string, password: string, full_name?: string) => {
+  const resendRegistration = async (email: string) => {
+    return await request<{ status: string; message: string }>("/api/v1/auth/resend-registration", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  };
+
+  const verifyRegistration = async (email: string, code: string, password?: string, full_name?: string) => {
     const res = await request<{ access_token: string; user: AuthUser }>("/api/v1/auth/verify-registration", {
       method: "POST",
-      body: JSON.stringify({ email, code, password, full_name }),
+      body: JSON.stringify({ email, code, ...(password ? { password } : {}), full_name }),
     });
     setToken(res.access_token);
     setUser(res.user);
@@ -252,6 +260,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loginWithPassword,
         register,
         registerIntent,
+        resendRegistration,
         verifyRegistration,
         forgotPassword,
         verifyResetOtp,

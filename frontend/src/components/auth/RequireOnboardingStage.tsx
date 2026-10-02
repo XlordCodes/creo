@@ -27,7 +27,10 @@ export function RequireOnboardingStage({ children }: RequireOnboardingStageProps
     return <CreoLoadingScreen label="Checking onboarding stage..." />;
   }
 
-  if (gate.isClient && gate.isComplete && !hasRenderedFlow.current) {
+  // Forward to /portal only when onboarding is complete AND the subscription is active;
+  // an inactive/expired retainer must still be able to reach the plan step without loops.
+  const isSubActive = gate.status ? Boolean(gate.status.checklist?.subscription_active) : gate.isPaid;
+  if (gate.isClient && gate.isComplete && isSubActive && !hasRenderedFlow.current) {
     return <Navigate to="/portal" replace />;
   }
 

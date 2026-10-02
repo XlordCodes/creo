@@ -128,11 +128,18 @@ async def queue_brand_dna_generation(
             detail="Questionnaire Sections A-E must be submitted before Brand DNA can be generated.",
         )
 
-    dna = await brand_dna.run_brand_dna_pipeline(db, client_id)
+    # Respond immediately with the deterministic Brand DNA; Gemini refines it in the
+    # background (and briefs the pod once one is assigned).
+    profile = (await db.execute(select(ClientProfile).where(ClientProfile.user_id == client_id))).scalar_one_or_none()
+    if profile and profile.brand_dna:
+        dna_payload = profile.brand_dna
+    else:
+        dna_payload = (await brand_dna.save_template_brand_dna(db, client_id)).model_dump()
+    onboarding_service.schedule_brand_enrichment(client_id)
     return {
         "status": "generating",
         "message": "Brand DNA generation queued",
-        "brand_dna": dna.model_dump(),
+        "brand_dna": dna_payload,
     }
 
 

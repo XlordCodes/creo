@@ -34,12 +34,28 @@ _EXHAUSTED_KEYS_TODAY: dict[str, date] = {}
 _USAGE_LOCK = asyncio.Lock()
 
 # Candidate models in order of priority
+# Fastest first. The 1.5 family is retired and only produced 404 round trips.
 DEFAULT_CANDIDATE_MODELS = [
+    "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
     "gemini-flash-latest",
 ]
+
+
+def _payload_for_model(payload: dict[str, Any], model: str) -> dict[str, Any]:
+    """Adapt a request for a specific model.
+
+    2.5 models think by default, which adds seconds of latency for structured
+    extraction; disable it. Older models reject thinkingConfig, so strip it.
+    """
+    gen_cfg = dict(payload.get("generationConfig") or {})
+    if model.startswith("gemini-2.5"):
+        gen_cfg.setdefault("thinkingConfig", {"thinkingBudget": 0})
+    else:
+        gen_cfg.pop("thinkingConfig", None)
+        # responseJsonSchema is a 2.5+ feature; older models keep plain JSON mode
+        gen_cfg.pop("responseJsonSchema", None)
+    return {**payload, "generationConfig": gen_cfg}
 
 
 def mask_key(key: str) -> str:
@@ -189,7 +205,7 @@ async def get_key_quota_status() -> list[dict[str, Any]]:
 async def generate_gemini_content(
     payload: dict[str, Any],
     candidate_models: list[str] | None = None,
-    timeout: float = 20.0,
+    timeout: float = 25.0,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Execute generateContent against Gemini API with automatic key rotation and model failover.
     
@@ -217,7 +233,7 @@ async def generate_gemini_content(
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    res = await client.post(url, json=payload)
+                    res = await client.post(url, json=_payload_for_model(payload, model))
 
                 if res.status_code == 200:
                     data = res.json()
@@ -251,6 +267,17 @@ async def generate_gemini_content(
                         "gemini_model_not_found_trying_next_model",
                         key=mask_key(key),
                         model=model,
+                    )
+                    continue
+
+                elif res.status_code == 400 and "API_KEY_INVALID" not in res.text:
+                    # A malformed request (e.g. schema the model doesn't support) says
+                    # nothing about the key, so don't burn it for the day
+                    logger.warning(
+                        "gemini_bad_request_trying_next_model",
+                        key=mask_key(key),
+                        model=model,
+                        response=res.text[:200],
                     )
                     continue
 

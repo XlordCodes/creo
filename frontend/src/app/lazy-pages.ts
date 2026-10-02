@@ -42,7 +42,6 @@ export const ClientsPage = lazyPage(() =>
 export const AboutPage = lazyPage(() =>
   import("../pages/public/AboutPage").then((m) => m.AboutPage),
 );
-export const FaqPage = lazyPage(() => import("../pages/public/FaqPage").then((m) => m.FaqPage));
 export const TermsPage = lazyPage(() =>
   import("../pages/public/TermsPrivacyPages").then((m) => m.TermsPage),
 );
@@ -87,19 +86,15 @@ export const PortalLibraryPage = lazyPage(() =>
   import("../pages/portal/PortalLibraryPage").then((m) => m.PortalLibraryPage),
 );
 
-const PORTAL_PAGES = [
+const PORTAL_CORE_PAGES = [
   PortalDashboardPage,
   PortalDeliverablesPage,
   PortalCalendarPage,
-  PortalCreativePodPage,
   PortalPaymentsPage,
-  PortalSupportPage,
-  PortalAccountPage,
-  PortalLibraryPage,
 ];
 
-/** Warm every portal page chunk (and the onboarding flow) so sidebar navigation is instant. */
+/** Warm common portal routes without downloading the entire application after login. */
 export function preloadPortalPages(options: { includeOnboarding?: boolean } = {}): void {
-  for (const page of PORTAL_PAGES) void page.preload().catch(() => {});
+  for (const page of PORTAL_CORE_PAGES) void page.preload().catch(() => {});
   if (options.includeOnboarding) void OnboardingView.preload().catch(() => {});
 }

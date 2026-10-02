@@ -37,6 +37,10 @@ services:
         value: 15
       - key: REFRESH_TOKEN_DAYS
         value: 30
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: Creo Verification <onboarding@resend.dev>
 
   # ── Creo Background Task Worker ───────────────────────────────────────
   - type: worker

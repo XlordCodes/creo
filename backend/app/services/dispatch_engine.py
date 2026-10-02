@@ -68,7 +68,7 @@ DEFAULT_TEMPLATE: dict[str, dict[str, Any]] = {
     "poster": {"days": [0, 4], "time": "12:30"},      # Mon, Fri at 12:30 PM
     "static_post": {"days": [0, 4], "time": "12:30"}, # Mon, Fri
     "carousel": {"days": [2], "time": "18:00"},        # Wed at 6:00 PM
-    "story": {"days": [0, 1, 2, 3, 4], "time": "20:00"}, # Daily at 8:00 PM
+    "story": {"days": [0, 1, 2, 3, 4, 5, 6], "time": "20:00"}, # Daily at 8:00 PM
 }
 
 

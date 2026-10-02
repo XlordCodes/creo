@@ -1,15 +1,19 @@
 import React, { useState } from "react";
+import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
   Send,
   X,
   Plus,
+  ChevronLeft,
+  ShieldAlert,
+  ArrowRight,
+  PhoneCall,
 } from "lucide-react";
 import { request } from "../../lib/http";
 import { useAuth } from "../../lib/auth-context";
-import { useOnboardingGate } from "../../lib/useOnboardingGate";
-import { SubscriptionLockedState } from "../../components/portal/SubscriptionLockedState";
+import { PlanBargainCallModal } from "../../components/portal/PlanBargainCallModal";
 import type { TicketItem } from "../../types/api";
 
 interface SupportTicketData {
@@ -42,8 +46,6 @@ export function PortalSupportPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const gate = useOnboardingGate();
-
   const { data: subData } = useQuery({
     queryKey: ["client-subscription"],
     queryFn: () => request<any>("/api/v1/payments/subscription"),
@@ -54,12 +56,6 @@ export function PortalSupportPage() {
     subData?.subscription?.status === "expired" ||
     subData?.subscription?.status === "canceled";
   const isStaffOrAdmin = user?.role && user.role !== "client";
-  const isSubscribed =
-    isStaffOrAdmin ||
-    (gate.isPaid && !isExpired) ||
-    (!isExpired &&
-      (subData?.is_active === true ||
-        (!!subData?.subscription && ["active", "trialing"].includes(subData?.subscription?.status))));
 
   const { data: serverTickets = NO_TICKETS } = useQuery<TicketItem[]>({
     queryKey: ["tickets", user?.id],
@@ -71,8 +67,8 @@ export function PortalSupportPage() {
         return [];
       }
     },
-    enabled: isSubscribed,
-    refetchInterval: 30000,
+    enabled: !!user?.id,
+    refetchInterval: 2 * 60_000,
   });
 
   // Local state
@@ -82,6 +78,7 @@ export function PortalSupportPage() {
   const [description, setDescription] = useState("");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+  const [bargainModalOpen, setBargainModalOpen] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -147,19 +144,101 @@ export function PortalSupportPage() {
     setDescription("");
   };
 
-  if (isExpired && !isStaffOrAdmin) {
-    return (
-      <SubscriptionLockedState
-        title="Support Access Expired"
-        description="Your retainer has expired. Renew to access the support desk."
-      />
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-white">Help</h1>
+      {/* ── Top Navigation / Breadcrumbs: Instant Redirect to All Pages ── */}
+      <div className="bg-[#161F2D] border border-[#2A3446] rounded-2xl p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-2 text-xs">
+          <Link
+            to={isStaffOrAdmin ? "/admin" : "/portal"}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0B111C] border border-[#2A3446] text-[#97A0B3] hover:text-white hover:border-[#7FA0D6]/40 transition-colors font-bold cursor-pointer"
+            title="Return to Dashboard"
+          >
+            <ChevronLeft className="w-3.5 h-3.5 text-[#7FA0D6]" />
+            <span>{isStaffOrAdmin ? "Admin Dashboard" : "Client Dashboard"}</span>
+          </Link>
+          <span className="text-[#2A3446]">/</span>
+          <span className="text-white font-bold">Support & Help Desk</span>
+        </div>
 
+        {/* Quick Route Nav Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <Link
+            to="/portal"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#0B111C] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            Dashboard
+          </Link>
+          <Link
+            to="/portal/deliverables"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#0B111C] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            Deliverables
+          </Link>
+          <Link
+            to="/portal/calendar"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#0B111C] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            Calendar
+          </Link>
+          <Link
+            to="/portal/creative-pod"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#0B111C] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            Creative Pod
+          </Link>
+          <Link
+            to="/portal/payments"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#0B111C] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            Plans & Billing
+          </Link>
+          {isStaffOrAdmin && (
+            <Link
+              to="/admin/support"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#7FA0D6]/15 text-[#7FA0D6] hover:bg-[#7FA0D6]/25 transition-colors whitespace-nowrap border border-[#7FA0D6]/30 cursor-pointer"
+            >
+              Admin Support Desk →
+            </Link>
+          )}
+        </div>
+      </div>
+
+      {/* ── Retainer Notice Banner (Informative & Actionable, Never Blocking Support) ── */}
+      {isExpired && !isStaffOrAdmin && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="size-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0 border border-amber-500/40">
+              <ShieldAlert className="size-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white">Retainer Subscription Inactive or Expired</h4>
+              <p className="text-xs text-[#97A0B3] mt-0.5">
+                Deliverable pipelines and asset reviews are currently paused. Our support desk is 100% active to assist you with renewal, custom quota arrangements, or billing questions.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => setBargainModalOpen(true)}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-[#7FA0D6] hover:text-white hover:border-[#7FA0D6]/50 text-xs font-bold transition-colors cursor-pointer"
+            >
+              <PhoneCall className="size-3.5" />
+              <span>Call & Bargain</span>
+            </button>
+            <Link
+              to="/portal/payments"
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#BCCCE6] hover:bg-white text-[#0B111C] text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            >
+              <span>Renew Retainer</span>
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* ── Main Help Section ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ── Left Column: Ask your pod (Form) ── */}
         <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
@@ -301,16 +380,22 @@ export function PortalSupportPage() {
         </div>
       </div>
 
-      {/* Toast */}
+      {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#161F2D] text-white px-5 py-3 rounded-xl shadow-2xl border border-white/[0.1] text-sm font-medium flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-[#6EE7B7]" />
           {toastMessage}
-          <button type="button" onClick={() => setToastMessage(null)} className="ml-2 text-[#7E889C] hover:text-white">
+          <button type="button" onClick={() => setToastMessage(null)} className="ml-2 text-[#7E889C] hover:text-white cursor-pointer">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
+
+      {/* Plan Bargain Call Modal */}
+      <PlanBargainCallModal
+        isOpen={bargainModalOpen}
+        onClose={() => setBargainModalOpen(false)}
+      />
     </div>
   );
 }

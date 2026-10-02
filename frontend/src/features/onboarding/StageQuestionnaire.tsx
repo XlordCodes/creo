@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { type AllocationStatus, PodAllocationModal } from "./PodAllocationModal";
+import { useSearchParams } from "react-router";
 import { motion } from "motion/react";
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
@@ -25,7 +27,6 @@ import {
 import {
   fetchQuestionnaireState,
   saveQuestionnaireSection,
-  queueBrandDNAGeneration,
   completeOnboarding,
 } from "../../lib/onboarding-api";
 import type { AssignedTeamMember } from "../../types/api";
@@ -193,7 +194,80 @@ function generateTonePreview(humour: number, formality: number, respectfulness: 
 }
 
 export function StageQuestionnaire({ userId, initialSection, onComplete }: StageQuestionnaireProps) {
-  const [activeSection, setActiveSection] = useState<SectionKey>(initialSection || "a");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const validSections: SectionKey[] = ["a", "b", "c", "d", "e", "f", "g"];
+
+  const getSavedSection = (): SectionKey | null => {
+    // 1. URL search parameters (window.location.search first, then React Router searchParams)
+    if (typeof window !== "undefined") {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlSec = urlParams.get("section")?.toLowerCase();
+        if (urlSec && (validSections as string[]).includes(urlSec)) {
+          return urlSec as SectionKey;
+        }
+      } catch {}
+    }
+    const param = searchParams.get("section")?.toLowerCase();
+    if (param && (validSections as string[]).includes(param)) {
+      return param as SectionKey;
+    }
+
+    // 2. Storage fallback (sessionStorage first, then localStorage)
+    if (typeof window !== "undefined") {
+      try {
+        const uId = userId || "";
+        const sessionVal = (
+          (uId && sessionStorage.getItem(`creo_active_section_${uId}`)) ||
+          sessionStorage.getItem("creo_active_section")
+        )?.toLowerCase();
+        if (sessionVal && (validSections as string[]).includes(sessionVal)) {
+          return sessionVal as SectionKey;
+        }
+
+        const localVal = (
+          (uId && localStorage.getItem(`creo_active_section_${uId}`)) ||
+          localStorage.getItem("creo_active_section")
+        )?.toLowerCase();
+        if (localVal && (validSections as string[]).includes(localVal)) {
+          return localVal as SectionKey;
+        }
+      } catch {}
+    }
+
+    // 3. Initial section prop
+    if (initialSection && validSections.includes(initialSection)) {
+      return initialSection;
+    }
+
+    return null;
+  };
+
+  const [activeSection, setActiveSection] = useState<SectionKey>(() => getSavedSection() || "a");
+
+  useEffect(() => {
+    if (!activeSection) return;
+    try {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("creo_active_section", activeSection);
+        localStorage.setItem("creo_active_section", activeSection);
+        if (userId) {
+          sessionStorage.setItem(`creo_active_section_${userId}`, activeSection);
+          localStorage.setItem(`creo_active_section_${userId}`, activeSection);
+        }
+      }
+    } catch {}
+
+    setSearchParams(
+      (prev) => {
+        if (prev.get("section") === activeSection) return prev;
+        const next = new URLSearchParams(prev);
+        next.set("section", activeSection);
+        return next;
+      },
+      { replace: true }
+    );
+  }, [activeSection, userId, setSearchParams]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -204,7 +278,11 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   const [validationBanner, setValidationBanner] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [failedSection, setFailedSection] = useState<SectionKey | null>(null);
-  const [synthPhase, setSynthPhase] = useState<string>("Synthesizing Brand DNA…");
+  const synthPhase = "Allocating your creative pod…";
+  const [allocOpen, setAllocOpen] = useState(false);
+  const [allocStatus, setAllocStatus] = useState<AllocationStatus>("working");
+  const [allocError, setAllocError] = useState<string | null>(null);
+  const allocatedTeamRef = useRef<AssignedTeamMember[] | undefined>(undefined);
 
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // JSON of what the server last acknowledged per section; unchanged sections are never re-sent
@@ -290,6 +368,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   const { data: qState, isLoading } = useQuery({
     queryKey: ["questionnaire-state", userId],
     queryFn: () => fetchQuestionnaireState(userId),
+    staleTime: 10 * 60_000,
   });
 
   useEffect(() => {
@@ -336,11 +415,11 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
 
       const isCoreDone = Boolean(
         qState.core_completed ||
-        (qState.section_a?.brand_name &&
-         qState.section_b?.ideal_customer &&
-         qState.section_c?.voice_words?.length &&
-         qState.section_d?.visual_direction?.length &&
-         qState.section_e?.shoot_city)
+        (qState.section_a && (qState.section_a.brand_name || qState.section_a.one_liner) &&
+         qState.section_b && qState.section_b.ideal_customer &&
+         qState.section_c && (qState.section_c.humour !== undefined || qState.section_c.voice_words?.length) &&
+         qState.section_d && (qState.section_d.visual_direction?.length || qState.section_d.colours?.length) &&
+         qState.section_e && (qState.section_e.shoot_city || qState.section_e.on_camera?.length))
       );
 
       if (isCoreDone) {
@@ -358,21 +437,27 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
       const e = qState.section_e;
 
       const firstIncomplete: SectionKey =
-        (!a || !a.brand_name) ? "a" :
+        (!a || (!a.brand_name && !a.one_liner)) ? "a" :
         (!b || !b.ideal_customer) ? "b" :
-        (!c || !c.voice_words?.length) ? "c" :
-        (!d || !d.visual_direction?.length) ? "d" :
-        (!e || !e.shoot_city) ? "e" : "a";
+        (!c || (!c.humour && !c.voice_words?.length)) ? "c" :
+        (!d || (!d.visual_direction?.length && !d.colours?.length)) ? "d" :
+        (!e || (!e.shoot_city && !e.on_camera?.length)) ? "e" : "f";
 
-      if (!isCoreDone) {
-        // Enforce completing mandatory core sections first
-        setActiveSection(firstIncomplete);
-      } else if (effectiveInitial) {
-        setActiveSection(effectiveInitial);
-      } else {
-        setActiveSection("a");
+      if (!dataInitialized) {
+        const savedSec = getSavedSection();
+        const serverLast = (qState as any)?.last_active_section as SectionKey | undefined;
+        const validServerLast = serverLast && validSections.includes(serverLast) ? serverLast : null;
+        const preferredSec = savedSec || validServerLast || effectiveInitial;
+
+        if (preferredSec && validSections.includes(preferredSec)) {
+          setActiveSection(preferredSec);
+        } else if (!isCoreDone) {
+          setActiveSection(firstIncomplete);
+        } else {
+          setActiveSection("a");
+        }
+        setDataInitialized(true);
       }
-      setDataInitialized(true);
     }
   }, [qState, initialSection]);
 
@@ -623,19 +708,33 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   };
 
   const handleSelectSectionTab = (targetKey: SectionKey) => {
-    // Sections F & G require core sections (A-E) to be completed first
-    if ((targetKey === "f" || targetKey === "g") && !coreUnlocked) {
+    const inMemoryCore = Boolean(
+      (secA.brand_name || secA.one_liner) &&
+      secB.ideal_customer &&
+      (secC.humour !== undefined || secC.voice_words?.length) &&
+      (secD.visual_direction?.length || secD.colours?.length) &&
+      (secE.shoot_city || secE.on_camera?.length)
+    );
+
+    if ((targetKey === "f" || targetKey === "g") && !coreUnlocked && !inMemoryCore) {
       setValidationBanner("Please complete mandatory Sections A–E before proceeding to optional creative enrichment.");
       return;
+    }
+
+    if (inMemoryCore && !coreUnlocked) {
+      setCoreUnlocked(true);
     }
 
     const targetIdx = SECTIONS.findIndex((s) => s.key === targetKey);
     const currentIdx = SECTIONS.findIndex((s) => s.key === activeSection);
 
-    if (targetIdx <= currentIdx || completedSections.has(targetKey) || coreUnlocked) {
+    if (targetIdx <= currentIdx || completedSections.has(targetKey) || coreUnlocked || inMemoryCore) {
       setFieldErrors({});
       setValidationBanner(null);
       setApiError(null);
+      if (isSectionDirty(activeSection)) {
+        void persistSection(activeSection);
+      }
       setActiveSection(targetKey);
       formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
@@ -673,6 +772,9 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     setIsSynthesizing(true);
     setApiError(null);
     setValidationBanner(null);
+    setAllocError(null);
+    setAllocStatus("working");
+    setAllocOpen(true);
 
     // Cancel pending debounce timer
     if (autosaveTimerRef.current) {
@@ -680,38 +782,45 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     }
 
     try {
-      // 2. Persist any section the server hasn't acknowledged yet (usually none — autosave
-      // already sent them). Sequential on purpose: each save re-evaluates core completion.
-      setSynthPhase("Saving your answers…");
+      // 2. Make sure every answered section (A–G) is on the server. Usually nothing is left
+      // because autosave already sent them. Sequential on purpose: each save re-evaluates
+      // core completion.
       const allSections: SectionKey[] = ["a", "b", "c", "d", "e", "f", "g"];
       for (const sec of allSections) {
-        const isCore = sec !== "f" && sec !== "g";
-        if ((isCore || sec === activeSection) && isSectionDirty(sec)) {
+        if (isSectionDirty(sec)) {
           await persistSection(sec);
         }
       }
 
-      // 3. Trigger Brand DNA synthesis pipeline
-      setSynthPhase("Synthesizing Brand DNA…");
-      await queueBrandDNAGeneration(userId);
-
-      // 4. Complete onboarding and allocate creative pod
-      setSynthPhase("Assigning your creative pod…");
+      // 3. Allocate the pod and generate the workspace. This call is fast: the Gemini
+      // summary of sections A–G and the team brief are produced on the server afterwards
+      // and delivered to the team lead and specialists, not to the client.
       const completeRes = await completeOnboarding(userId);
-      onComplete(completeRes.assigned_team);
+      allocatedTeamRef.current = completeRes.assigned_team;
+      setAllocStatus("success");
     } catch (err: unknown) {
       console.error("Failed to complete onboarding", err);
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes("Sections A-E")) {
-        setActiveSection("a");
-        setValidationBanner("Please review and submit Sections A–E before finalizing Brand DNA.");
-      } else {
-        setApiError(errMsg || "Synthesis pipeline encountered an issue. Please retry.");
-      }
-    } finally {
       setIsSynthesizing(false);
+      if (errMsg.includes("Sections A-E")) {
+        setAllocOpen(false);
+        setActiveSection("a");
+        setValidationBanner("Please review and submit Sections A–E before finalizing your workspace.");
+      } else {
+        setAllocError(errMsg || null);
+        setAllocStatus("error");
+      }
     }
   };
+
+  const labelFor = (options: { value: string; label: string }[], value: unknown, fallback: string) =>
+    options.find((o) => o.value === value)?.label ?? fallback;
+  const allocationAesthetic = labelFor(
+    VISUAL_DIRECTION_OPTIONS,
+    Array.isArray(secD.visual_direction) ? secD.visual_direction[0] : undefined,
+    "chosen visual",
+  );
+  const allocationOutcome = labelFor(GOAL_OPTIONS, secA.primary_goal, "your primary goal");
 
   if (isLoading) {
     return (
@@ -723,54 +832,21 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   }
 
   return (
-    <div ref={formTopRef} className="w-full space-y-6 onboarding-dark-canvas" style={{ colorScheme: "dark" }}>
-      {/* Header Banner */}
-      <div className="bg-[#161F2D] rounded-2xl p-6 sm:p-7 text-white shadow-xl relative overflow-hidden border border-[#2A3446]">
-        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#7FA0D6] mb-1">
-              <Sparkles className="w-4 h-4 text-[#D8BF9B]" />
-              <span>Production Intake & Brand DNA Engine</span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white font-display">
-              Creo Brand Discovery & Production Blueprint
-            </h1>
-            <p className="text-sm text-[#94A3B8] mt-1 max-w-2xl leading-relaxed">
-              Sections A–E configure our editor, designer, and shoot director (~10 min).
-              Sections F–G are optional creative enrichment.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            {coreUnlocked && (
-              <div className="inline-flex items-center gap-1.5 bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-full">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Calendar Ready</span>
-              </div>
-            )}
-            <div className="text-right">
-              <span className="text-xs text-[#94A3B8] font-mono flex items-center gap-1.5">
-                {isSaving ? (
-                  <>
-                    <Loader2 className="size-3 animate-spin text-[#7FA0D6]" />
-                    <span className="text-[#7FA0D6]">Saving...</span>
-                  </>
-                ) : saveSuccess ? (
-                  <>
-                    <Check className="size-3 text-emerald-400" />
-                    <span className="text-emerald-400">Saved ✓</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="size-1.5 rounded-full bg-emerald-400" />
-                    <span>Autosave Ready</span>
-                  </>
-                )}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div ref={formTopRef} className="w-full space-y-4 sm:space-y-5 onboarding-dark-canvas" style={{ colorScheme: "dark" }}>
+      <PodAllocationModal
+        open={allocOpen}
+        status={allocStatus}
+        aesthetic={allocationAesthetic}
+        outcome={allocationOutcome}
+        errorMessage={allocError}
+        onDone={() => {
+          setAllocOpen(false);
+          setIsSynthesizing(false);
+          onComplete(allocatedTeamRef.current);
+        }}
+        onRetry={() => void handleSynthesizeAndFinish()}
+        onClose={() => setAllocOpen(false)}
+      />
 
       {/* Core Discovery Complete Shortcut Banner */}
       {coreUnlocked && (
@@ -788,7 +864,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
             className="px-4 py-2 bg-[#BCCCE6] text-[#0B111C] hover:bg-white rounded-xl text-xs font-bold transition-all shadow-sm shrink-0 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isSynthesizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
-            <span>Proceed to Creative Pod & Calendar</span>
+            <span>Allocate my creative pod</span>
           </button>
         </div>
       )}
@@ -876,7 +952,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
       )}
 
       {/* Main Section Content Form (Full dark theme, high contrast) */}
-      <div className="bg-[#161F2D] rounded-2xl border border-[#2A3446] p-6 sm:p-8 shadow-xl text-white" style={{ colorScheme: "dark" }}>
+      <div className="bg-[#161F2D] rounded-xl border border-[#2A3446] p-4 sm:p-6 shadow-xl text-white" style={{ colorScheme: "dark" }}>
         
         {/* SECTION A: BRAND IDENTITY */}
         {activeSection === "a" && (
@@ -2005,7 +2081,33 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
             <span>Previous Section</span>
           </button>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              onClick={async () => {
+                setIsSaving(true);
+                try {
+                  await persistSection(activeSection);
+                  setSaveSuccess(true);
+                  setTimeout(() => setSaveSuccess(false), 2000);
+                } catch (e) {
+                  console.error(e);
+                } finally {
+                  setIsSaving(false);
+                }
+              }}
+              disabled={isSaving}
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] hover:bg-[#1F2C3F] hover:border-[#7FA0D6] text-xs font-bold text-[#CBD5E1] hover:text-white transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {isSaving ? (
+                <Loader2 className="size-3.5 animate-spin text-[#7FA0D6]" />
+              ) : saveSuccess ? (
+                <Check className="size-3.5 text-emerald-400" />
+              ) : (
+                <RefreshCw className="size-3.5 text-[#7FA0D6]" />
+              )}
+              <span>{isSaving ? "Syncing..." : saveSuccess ? "Synced ✓" : "Sync Draft"}</span>
+            </button>
             {activeSection !== "g" ? (
               <button
                 type="button"
@@ -2039,7 +2141,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-[#0B111C]" />
-                    <span>Synthesize Brand DNA & Finish</span>
+                    <span>Finish & allocate my pod</span>
                   </>
                 )}
               </button>

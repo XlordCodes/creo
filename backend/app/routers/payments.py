@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -217,6 +218,12 @@ async def get_client_subscription(
             "server_time_utc": check["server_time_utc"],
         }
 
+    from app.models.user import ClientProfile
+    prof_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)
+    prof = (await db.execute(prof_stmt)).scalar_one_or_none()
+    pause_info = (prof.brand_dna or {}).get("subscription_pause") if prof else None
+    is_paused_next = bool(pause_info and pause_info.get("is_paused"))
+
     return {
         "subscription": sub_data,
         "plan": {
@@ -234,6 +241,8 @@ async def get_client_subscription(
         "seconds_remaining": check["seconds_remaining"],
         "days_remaining": check["days_remaining"],
         "server_time_utc": check["server_time_utc"],
+        "is_paused_next_month": is_paused_next,
+        "pause_details": pause_info if is_paused_next else None,
     }
 
 
@@ -272,3 +281,154 @@ async def get_payment_history(
         for sub, plan in rows
     ]
 
+
+
+class PauseSubscriptionRequest(BaseModel):
+    reason: str | None = None
+    notes: str | None = None
+
+
+@router.post("/subscription/pause")
+async def pause_subscription(
+    body: PauseSubscriptionRequest | None = None,
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Schedules the active subscription to pause for the upcoming cycle."""
+    from datetime import UTC, datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.user import ClientProfile, User
+    from app.models.support import Ticket
+    from app.models.enums import TicketPriority, TicketStatus
+    from app.services.subscription_guard import check_client_subscription
+    from app.core.logging import get_logger
+
+    logger = get_logger("app.routers.payments")
+    req = body or PauseSubscriptionRequest()
+
+    client_id = actor.client_id or actor.user_id
+    check = await check_client_subscription(db, client_id)
+    sub = check.get("subscription")
+    plan = check.get("plan")
+
+    prof_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)
+    prof = (await db.execute(prof_stmt)).scalar_one_or_none()
+    if not prof:
+        prof = ClientProfile(user_id=client_id, brand_dna={})
+        db.add(prof)
+
+    dna = dict(prof.brand_dna or {})
+    effective_date_str = (
+        sub.current_period_end.strftime("%d %b %Y")
+        if sub and getattr(sub, "current_period_end", None)
+        else "next cycle"
+    )
+    effective_date_iso = (
+        sub.current_period_end.isoformat()
+        if sub and getattr(sub, "current_period_end", None)
+        else None
+    )
+
+    dna["subscription_pause"] = {
+        "is_paused": True,
+        "reason": req.reason or "Client requested pause",
+        "notes": req.notes,
+        "paused_at": datetime.now(UTC).isoformat(),
+        "effective_date": effective_date_iso,
+    }
+    prof.brand_dna = dna
+    flag_modified(prof, "brand_dna")
+
+    # Notify account/ops team via internal support ticket (non-blocking)
+    try:
+        user_stmt = select(User).where(User.id == client_id)
+        user_obj = (await db.execute(user_stmt)).scalar_one_or_none()
+        client_name = (user_obj.full_name if user_obj else None) or actor.email or str(client_id)
+
+        pause_ticket = Ticket(
+            client_id=client_id,
+            agency_id=getattr(sub, "agency_id", None) if sub else (user_obj.agency_id if user_obj else None),
+            title=f"Subscription Pause Request: Next Month ({plan.display_name if plan else 'Active Retainer'})",
+            description=(
+                f"Client {client_name} ({actor.email}) requested to pause their retainer for the upcoming cycle.\n\n"
+                f"• Effective renewal date: {effective_date_str}\n"
+                f"• Reason: {req.reason or 'Not specified'}\n"
+                f"• Notes: {req.notes or 'None'}\n"
+                f"Current period remains active until {effective_date_str}."
+            ),
+            priority=TicketPriority.HIGH,
+            status=TicketStatus.OPEN,
+        )
+        db.add(pause_ticket)
+    except Exception as err:
+        logger.warning("subscription_pause_ticket_skipped", error=str(err))
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": f"Your plan has been scheduled to pause starting {effective_date_str}. You will not be charged next month.",
+        "is_paused_next_month": True,
+        "effective_date": effective_date_iso,
+    }
+
+
+@router.post("/subscription/resume")
+async def resume_subscription(
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Resumes automatic renewal for the client's next cycle."""
+    from datetime import UTC, datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.user import ClientProfile, User
+    from app.models.support import Ticket
+    from app.models.enums import TicketPriority, TicketStatus
+    from app.services.subscription_guard import check_client_subscription
+    from app.core.logging import get_logger
+
+    logger = get_logger("app.routers.payments")
+
+    client_id = actor.client_id or actor.user_id
+    check = await check_client_subscription(db, client_id)
+    sub = check.get("subscription")
+    plan = check.get("plan")
+
+    prof_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)
+    prof = (await db.execute(prof_stmt)).scalar_one_or_none()
+    if not prof:
+        prof = ClientProfile(user_id=client_id, brand_dna={})
+        db.add(prof)
+
+    dna = dict(prof.brand_dna or {})
+    dna["subscription_pause"] = {
+        "is_paused": False,
+        "resumed_at": datetime.now(UTC).isoformat(),
+    }
+    prof.brand_dna = dna
+    flag_modified(prof, "brand_dna")
+
+    try:
+        user_stmt = select(User).where(User.id == client_id)
+        user_obj = (await db.execute(user_stmt)).scalar_one_or_none()
+        client_name = (user_obj.full_name if user_obj else None) or actor.email or str(client_id)
+
+        resume_ticket = Ticket(
+            client_id=client_id,
+            agency_id=getattr(sub, "agency_id", None) if sub else (user_obj.agency_id if user_obj else None),
+            title=f"Subscription Resumed by Client ({plan.display_name if plan else 'Active Retainer'})",
+            description=f"Client {client_name} ({actor.email}) resumed their subscription renewal. AutoPay will proceed normally.",
+            priority=TicketPriority.MEDIUM,
+            status=TicketStatus.RESOLVED,
+        )
+        db.add(resume_ticket)
+    except Exception as err:
+        logger.warning("subscription_resume_ticket_skipped", error=str(err))
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "Your subscription renewal has been resumed. AutoPay remains active.",
+        "is_paused_next_month": False,
+    }

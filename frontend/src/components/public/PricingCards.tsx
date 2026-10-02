@@ -1,4 +1,6 @@
+import { ArrowRight, Check } from "lucide-react";
 import { Link } from "react-router";
+import { CountUp, Stagger, StaggerItem, TiltCard } from "../motion";
 
 interface PricingCardsProps {
   showBillingToggle?: boolean;
@@ -76,83 +78,83 @@ export function PricingCards({ className = "" }: PricingCardsProps) {
   return (
     <div className={`w-full ${className}`}>
       {/* 3 Pricing Tier Cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+      <Stagger className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch" gap={0.12}>
         {PLANS.map((plan) => (
-          <div
-            key={plan.id}
-            className={`rounded-2xl p-7 flex flex-col justify-between transition-all duration-300 ${
-              plan.isFeatured
-                ? "bg-[#141C2B] border-2 border-[#7FA0D6]/80 shadow-[0_0_35px_rgba(127,160,214,0.12)]"
-                : "bg-[#121926] border border-[#222F44] hover:border-white/[0.15]"
-            }`}
-          >
-            <div>
-              {/* Plan Name & Badge */}
-              <div className="flex items-center justify-between mb-4 min-h-[28px]">
-                <h3 className="text-white font-semibold text-base tracking-wide">
-                  {plan.name}
-                </h3>
-                {plan.badge && (
-                  <span className="px-3 py-1 rounded-full bg-white/[0.06] border border-white/[0.12] text-[11px] font-medium text-white/90">
-                    {plan.badge}
-                  </span>
-                )}
-              </div>
-
-              {/* Price & Unit Cost */}
-              <div className="mb-2">
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold text-white tracking-tight">
-                    {plan.price}
-                  </span>
-                  <span className="text-sm font-normal text-[#9CA3AF]">
-                    {plan.period}
-                  </span>
+          <StaggerItem key={plan.id} className={`h-full ${plan.isFeatured ? "lg:-translate-y-3" : ""}`}>
+            <TiltCard
+              max={5}
+              lift={plan.isFeatured ? 36 : 22}
+              glow="transparent"
+              className={`h-full rounded-2xl p-7 flex flex-col justify-between transition-colors duration-300 shadow-xl ${
+                plan.isFeatured
+                  ? "creo-conic-border"
+                  : "bg-[#121926] border border-[#222F44] hover:border-[#7FA0D6]/60"
+              }`}
+            >
+              <div className="relative z-[2] [transform:translateZ(20px)]">
+                {/* Plan Name & Badge */}
+                <div className="flex items-center justify-between mb-4 min-h-[28px]">
+                  <h3 className="text-white font-semibold text-base tracking-wide">{plan.name}</h3>
+                  {plan.badge && (
+                    <span className="relative overflow-hidden px-3 py-1 rounded-full bg-[#D8BF9B]/10 border border-[#D8BF9B]/35 text-xs font-semibold text-[#D8BF9B]">
+                      {plan.badge}
+                    </span>
+                  )}
                 </div>
-                <p className="text-xs text-[#9CA3AF] mt-1.5 font-medium">
-                  {plan.unitCost}
-                </p>
-              </div>
 
-              {/* Separator */}
-              <div className="border-t border-white/[0.08] my-6" />
-
-              {/* Quotas 3-column stats */}
-              <div className="grid grid-cols-3 gap-3 mb-8">
-                {plan.stats.map((stat) => (
-                  <div key={stat.label}>
-                    <div className="text-2xl font-bold text-white tracking-tight">
-                      {stat.count}
-                    </div>
-                    <div className="text-xs text-[#9CA3AF] mt-0.5 font-medium">
-                      {stat.label}
-                    </div>
+                {/* Price & Unit Cost */}
+                <div className="mb-2">
+                  <div className="flex items-baseline gap-1">
+                    <CountUp value={plan.price} className="text-4xl font-extrabold text-white tracking-tight" />
+                    <span className="text-sm font-normal text-[#97A0B3]">{plan.period}</span>
                   </div>
-                ))}
+                  <p className="text-xs text-[#97A0B3] mt-1.5 font-medium">{plan.unitCost}</p>
+                </div>
+
+                {/* Separator */}
+                <div className="border-t border-[#2A3446] my-6" />
+
+                {/* Quotas 3-column stats */}
+                <div className="grid grid-cols-3 gap-3 mb-8">
+                  {plan.stats.map((stat) => (
+                    <div key={stat.label}>
+                      <CountUp value={stat.count} duration={1.2} className="block text-2xl font-bold text-white tracking-tight" />
+                      <div className="text-xs text-[#97A0B3] mt-0.5 font-medium">{stat.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Features List */}
+                <ul className="space-y-3.5 mb-8 text-sm text-[#D1D5DB] leading-relaxed">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-center gap-2.5">
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#7FA0D6]/12 text-[#7FA0D6]">
+                        <Check className="size-3" strokeWidth={3} />
+                      </span>
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
 
-              {/* Features List */}
-              <div className="space-y-3.5 mb-8 text-[13px] text-[#D1D5DB] leading-relaxed">
-                {plan.features.map((feature, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <span>{feature}</span>
-                  </div>
-                ))}
+              {/* CTA Button */}
+              <div className="relative z-[2] mt-auto pt-2 [transform:translateZ(28px)]">
+                <Link
+                  to={plan.ctaLink}
+                  className={`group w-full text-sm font-bold py-3.5 px-4 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 shadow-sm ${
+                    plan.isFeatured
+                      ? "bg-[#BCCCE6] hover:bg-white text-[#0B111C]"
+                      : "bg-[#0B111C] border border-[#2A3446] text-[#F8FAFC] hover:border-[#BCCCE6] hover:bg-[#BCCCE6] hover:text-[#0B111C]"
+                  }`}
+                >
+                  {plan.ctaText}
+                  <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-1" />
+                </Link>
               </div>
-            </div>
-
-            {/* CTA Button */}
-            <div className="mt-auto pt-2">
-              <Link
-                to={plan.ctaLink}
-                className="w-full bg-[#BCCCE6] hover:bg-[#CAD8EE] text-[#0E1420] text-sm font-bold py-3.5 px-4 rounded-xl text-center transition-colors block shadow-sm"
-              >
-                {plan.ctaText}
-              </Link>
-            </div>
-          </div>
+            </TiltCard>
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
     </div>
   );
 }

@@ -17,7 +17,7 @@ export function PortalDeliverablesPage() {
     queryKey: ["portal", "deliverables", clientId],
     queryFn: () => fetchPortalDeliverables(clientId),
     enabled: gate.isComplete,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const deliverables = deliverablesData?.items || [];
