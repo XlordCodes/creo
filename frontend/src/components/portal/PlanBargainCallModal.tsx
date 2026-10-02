@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   PhoneCall,
   X,
@@ -15,6 +16,7 @@ interface PlanBargainCallModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  initialTopic?: string;
 }
 
 const TOPICS = [
@@ -26,14 +28,19 @@ const TOPICS = [
 
 const TIME_SLOTS = [
   "Immediate / ASAP (Next 30 mins)",
-  "Today Afternoon (2:00 PM – 5:00 PM)",
-  "Today Evening (6:00 PM – 9:00 PM)",
-  "Tomorrow Morning (10:00 AM – 1:00 PM)",
+  "Today Afternoon (2:00 PM - 5:00 PM)",
+  "Today Evening (6:00 PM - 9:00 PM)",
+  "Tomorrow Morning (10:00 AM - 1:00 PM)",
 ];
 
-export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargainCallModalProps) {
+export function PlanBargainCallModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  initialTopic,
+}: PlanBargainCallModalProps) {
   const { user } = useAuth();
-  const [targetTopic, setTargetTopic] = useState(TOPICS[0]);
+  const [targetTopic, setTargetTopic] = useState(initialTopic || TOPICS[0]);
   const [proposedOffer, setProposedOffer] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [preferredTime, setPreferredTime] = useState(TIME_SLOTS[0]);
@@ -42,18 +49,46 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (initialTopic) {
+      setTargetTopic(initialTopic);
+    }
+  }, [initialTopic]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loading) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, loading, onClose]);
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   const clientName = user?.full_name || user?.email?.split("@")[0] || "Client";
   const clientEmail = user?.email || "";
 
   // WhatsApp Pre-composed Direct Link
   const waText = encodeURIComponent(
-    `Hi Creo Admin, I am ${clientName} (${clientEmail}). I would like to negotiate a custom plan/pricing for my brand.\n` +
-      `• Target Topic: ${targetTopic}\n` +
-      (proposedOffer ? `• Proposed Scope / Budget: ${proposedOffer}\n` : "") +
-      (phoneNumber ? `• Contact Phone: ${phoneNumber}\n` : "") +
-      `• Preferred Time: ${preferredTime}\n` +
+    `Hi Creo Admin, I am ${clientName} (${clientEmail}). I would like to negotiate a custom plan/pricing for my brand.
+` +
+      `• Target Topic: ${targetTopic}
+` +
+      (proposedOffer ? `• Proposed Scope / Budget: ${proposedOffer}
+` : "") +
+      (phoneNumber ? `• Contact Phone: ${phoneNumber}
+` : "") +
+      `• Preferred Time: ${preferredTime}
+` +
       (notes ? `• Notes: ${notes}` : "")
   );
   const waUrl = `https://wa.me/919941999415?text=${waText}`;
@@ -93,14 +128,27 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
-      <div className="relative w-full max-w-lg rounded-3xl bg-[#161F2D] p-6 sm:p-7 shadow-2xl border border-[#2A3446] max-h-[92vh] overflow-y-auto text-[#F8FAFC]">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[99999] grid place-items-center p-4 sm:p-6 overflow-y-auto bg-black/80 animate-[fadeIn_0.15s_ease-out]"
+      style={{
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !loading) onClose();
+      }}
+    >
+      <div
+        className="relative w-full max-w-lg rounded-3xl bg-[#161F2D] p-6 sm:p-7 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] border border-[#2A3446] max-h-[90vh] overflow-y-auto text-[#F8FAFC] m-auto animate-[zoomIn_0.2s_cubic-bezier(0.16,1,0.3,1)]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Close button */}
         <button
           type="button"
           onClick={onClose}
           disabled={loading}
+          aria-label="Close modal"
           className="absolute top-5 right-5 size-8 rounded-full bg-[#0B111C] border border-[#2A3446] text-[#97A0B3] hover:bg-[#2A3446] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
         >
           <X className="size-4" />
@@ -126,10 +174,10 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
               </div>
               <div>
                 <h3 className="text-lg font-bold text-[#F8FAFC] tracking-tight">
-                  Book a Plan Negotiation Call
+                  Book a Plan Consultation Call
                 </h3>
                 <p className="text-xs text-[#97A0B3] mt-0.5">
-                  Bargain custom rates, adjust deliverable quotas, or create a tailored retainer with our Executive Director.
+                  Discuss custom video deliverables or negotiate a tailored plan with our executive team.
                 </p>
               </div>
             </div>
@@ -263,6 +311,7 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -13,7 +13,7 @@ export function SlaPerformanceWidget({ slas }: SlaPerformanceWidgetProps) {
   const overallSla = 98.4;
   const responseSla = 99.1;
   const resolutionSla = 97.8;
-  const activeAlerts = slas.length > 0 ? slas.length : 2; // mock if 0 for UI purposes
+  const activeAlerts = slas.length;
 
   return (
     <div

@@ -42,13 +42,13 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       window.location.hostname === "127.0.0.1" ||
       window.location.hostname.startsWith("192.168."));
 
+  const isWorkersDev = typeof window !== "undefined" && (window.location.hostname.includes("workers.dev") || window.location.hostname.includes("pages.dev"));
+  
   const apiBase = (
-    isLocalhost
-      ? "" // Always use relative path locally so Vite proxy routes to local backend on 8000
-      : (typeof window !== "undefined" &&
-         (window.location.hostname.includes("workers.dev") || window.location.hostname.includes("pages.dev"))
-          ? "https://creo-dsxr.onrender.com"
-          : (import.meta.env.VITE_API_URL as string) || "")
+    import.meta.env.VITE_API_URL ||
+    (isWorkersDev
+      ? "https://creo-dsxr.onrender.com"
+      : (isLocalhost ? "http://localhost:8000" : ""))
   ).replace(/\/$/, "");
   const requestUrl = path.startsWith("/api") && apiBase ? `${apiBase}${path}` : path;
 

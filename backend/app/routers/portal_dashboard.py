@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rbac import Actor, get_current_actor
 from app.db.session import get_db
-from app.models.billing import Plan, Subscription
+from app.models.billing import Plan, PlanNegotiation, Subscription
 from app.models.enums import DeliverableStatus, TicketStatus, UserRole
 from app.models.ops import Announcement, AuditLog, Notification
 from app.models.support import Ticket
@@ -20,6 +20,46 @@ from app.models.user import ClientProfile, User
 from app.models.work import ClientAssignment, Deliverable
 
 router = APIRouter(prefix="/portal", tags=["Portal"])
+
+
+@router.get("/pod", response_model=dict[str, Any])
+async def get_portal_pod(
+    client_id: uuid.UUID | None = Query(None),
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return only the assigned pod members needed by the Creative Pod page."""
+    if actor.role == "client":
+        target_client_id = actor.client_id or actor.user_id
+    else:
+        target_client_id = client_id or actor.client_id or actor.user_id
+    assignments = await db.execute(
+        select(ClientAssignment, User)
+        .join(User, User.id == ClientAssignment.user_id)
+        .where(ClientAssignment.client_id == target_client_id)
+        .order_by(
+            (ClientAssignment.role == "team_lead").desc(),
+            (ClientAssignment.role == "video_editor").desc(),
+        )
+    )
+
+    role_labels = {
+        "team_lead": "Team Lead & Account Director",
+        "video_editor": "Lead Video Editor (Reels & Motion)",
+        "graphic_designer": "Lead Graphic Designer (Posters & Carousels)",
+    }
+    assigned_team = [
+        {
+            "id": str(user.id),
+            "name": user.full_name or user.email.split("@")[0].capitalize(),
+            "email": user.email,
+            "raw_role": assignment.role,
+            "role": role_labels.get(assignment.role, "Team Member"),
+            "is_primary": assignment.is_primary,
+        }
+        for assignment, user in assignments.all()
+    ]
+    return {"assigned_team": assigned_team}
 
 
 @router.get("/dashboard", response_model=dict[str, Any])
@@ -579,7 +619,7 @@ async def book_plan_bargain_call(
                 user_id=aid,
                 title=f"📞 Plan Bargain Call: {client_name}",
                 message=f"{client_name} ({client_user.email}) requested a call to bargain plan: {payload.target_topic}. Contact: {phone} (Preferred: {payload.preferred_time}){offer_str}{notes_str}",
-                link="/admin/clients",
+                link="/admin/plans",
             )
         )
     if notifs:
@@ -588,6 +628,7 @@ async def book_plan_bargain_call(
     # 2. Add Audit Log
     db.add(
         AuditLog(
+            agency_id=getattr(actor, "agency_id", None),
             actor_id=actor.user_id,
             actor_role=actor.role if isinstance(actor.role, UserRole) else None,
             entity="plan_bargain_call",
@@ -605,6 +646,21 @@ async def book_plan_bargain_call(
         )
     )
 
+    # 3. Create PlanNegotiation record so admin can see it on Plans & Negotiations page
+    neg = PlanNegotiation(
+        agency_id=getattr(actor, "agency_id", None),
+        client_id=actor.user_id,
+        client_name=client_name,
+        client_email=client_user.email,
+        target_topic=payload.target_topic,
+        proposed_offer=payload.proposed_offer,
+        phone_number=phone,
+        preferred_time=payload.preferred_time,
+        notes=payload.notes,
+        status="Pending Review",
+    )
+    db.add(neg)
+
     await db.commit()
 
     return {
@@ -614,3 +670,38 @@ async def book_plan_bargain_call(
         "topic": payload.target_topic,
         "message": f"Negotiation call request logged successfully. Our Agency Director will call you at {phone} ({payload.preferred_time}).",
     }
+
+
+@router.get("/negotiations", response_model=list[dict[str, Any]])
+async def get_client_negotiations(
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Retrieve negotiation/bargain requests submitted by the authenticated client."""
+    client_id = actor.client_id or actor.user_id
+    stmt = (
+        select(PlanNegotiation)
+        .where(PlanNegotiation.client_id == client_id)
+        .order_by(PlanNegotiation.created_at.desc())
+        .limit(20)
+    )
+    res = await db.execute(stmt)
+    rows = res.scalars().all()
+    return [
+        {
+            "id": str(n.id),
+            "targetTopic": n.target_topic,
+            "proposedOffer": n.proposed_offer,
+            "phoneNumber": n.phone_number,
+            "preferredTime": n.preferred_time,
+            "notes": n.notes,
+            "status": n.status,
+            "counterPrice": n.counter_price,
+            "counterNote": n.counter_note,
+            "declineReason": n.decline_reason,
+            "requestedAt": n.created_at.isoformat() if n.created_at else None,
+            "reviewedAt": n.reviewed_at.isoformat() if n.reviewed_at else None,
+        }
+        for n in rows
+    ]
+

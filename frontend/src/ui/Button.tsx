@@ -25,12 +25,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variantStyles = {
       primary:
-        "bg-[#2B7BC4] text-white hover:bg-[#1A5EA8] shadow-xs active:scale-[0.98] transition-all font-semibold",
+        "bg-[#7FA0D6] text-white hover:bg-[#7FA0D6] shadow-xs active:scale-[0.98] transition-all font-semibold",
       secondary:
-        "bg-white text-[#0D2137] border border-[#C9DFF0] hover:bg-[#F0F7FD] hover:border-[#2B7BC4]/40 active:bg-[#E8F4FD] font-medium shadow-xs",
+        "bg-white text-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] hover:border-[#7FA0D6]/40 active:bg-[#BCCCE6] font-medium shadow-xs",
       ghost:
-        "bg-transparent text-[#0D2137] hover:bg-[#E8F4FD] active:bg-[#C9DFF0]/50",
-      destructive: "bg-[#991B1B] text-white hover:bg-[#7F1D1D] active:opacity-95 shadow-xs",
+        "bg-transparent text-[#0B111C] hover:bg-[#BCCCE6] active:bg-[#2A3446]/50",
+      destructive: "bg-[#D8BF9B] text-white hover:bg-[#D8BF9B] active:opacity-95 shadow-xs",
     };
 
     const sizeStyles = {

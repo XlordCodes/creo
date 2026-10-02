@@ -16,6 +16,7 @@ interface TicketItem {
   client: string;
   tier: string;
   email: string;
+  clientInitial?: string;
   avatarBg: string;
   issueTitle: string;
   issueDesc: string;
@@ -27,6 +28,7 @@ interface TicketItem {
   status: "Open" | "In Progress" | "Pending Client" | "Resolved";
   primaryAction: string;
   secondaryAction: string;
+  rawId?: string;
 }
 
 const DEFAULT_INITIAL_TICKETS: TicketItem[] = [
@@ -35,7 +37,7 @@ const DEFAULT_INITIAL_TICKETS: TicketItem[] = [
     client: "Sushmitaa",
     tier: "Enterprise Acceleration",
     email: "sushmitaa1407@gmail.com",
-    avatarBg: "bg-[#0F172A]",
+    avatarBg: "bg-[#0B111C]",
     issueTitle: "deliverables not received on time, checkout",
     issueDesc: "I've not received my deliverables which was scheduled yesterday",
     priority: "High",
@@ -52,7 +54,7 @@ const DEFAULT_INITIAL_TICKETS: TicketItem[] = [
     client: "Ryze",
     tier: "Starter Growth",
     email: "sushmitaa1407@gmail.com",
-    avatarBg: "bg-[#0F172A]",
+    avatarBg: "bg-[#0B111C]",
     issueTitle: "API Webhook Timeout on Deliverables Sync",
     issueDesc: "Payload dropped after 4 retries via US-East Gateway during automated delivery sync of 4× 4K Reels.",
     priority: "Urgent",
@@ -69,7 +71,7 @@ const DEFAULT_INITIAL_TICKETS: TicketItem[] = [
     client: "Aravindan",
     tier: "Custom Retainer",
     email: "aravindan20062006@gmail.com",
-    avatarBg: "bg-[#1E293B]",
+    avatarBg: "bg-[#161F2D]",
     issueTitle: "Cloud Database Architecture Infographic Review",
     issueDesc: "Technical schematic revision for zero-latency failover cluster diagram requested by CTO.",
     priority: "High",
@@ -102,6 +104,7 @@ const DEFAULT_INITIAL_TICKETS: TicketItem[] = [
 
 export function AdminSupportTicketsPage() {
   const navigate = useNavigate();
+  const [statusFilter, setStatusFilter] = useState<"active" | "closed">("active");
   const [tickets, setTickets] = useState<TicketItem[]>(DEFAULT_INITIAL_TICKETS);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [alertModal, setAlertModal] = useState<{
@@ -119,13 +122,10 @@ export function AdminSupportTicketsPage() {
       // 1. Fetch from server API
       let serverItems: any[] = [];
       try {
-        const res = await request<any[]>("/api/v1/admin/support/tickets");
+        const res = await request<any[]>(`/api/v1/tickets?status_filter=${statusFilter}`);
         if (Array.isArray(res) && res.length > 0) serverItems = res;
-      } catch {
-        try {
-          const res2 = await request<any[]>("/api/v1/tickets");
-          if (Array.isArray(res2)) serverItems = res2;
-        } catch {}
+      } catch (e) {
+        console.error("Failed to load server tickets", e);
       }
 
       // 2. Fetch from shared local tickets (client portal submissions)
@@ -140,9 +140,17 @@ export function AdminSupportTicketsPage() {
         const priority: TicketItem["priority"] =
           prio === "urgent" ? "Urgent" : prio === "high" ? "High" : prio === "low" ? "Low Priority" : "Medium";
         const stat = (st.status || "open").toLowerCase();
-        const status: TicketItem["status"] =
-          stat === "resolved" ? "Resolved" : stat === "in_progress" ? "In Progress" : stat === "waiting_on_client" ? "Pending Client" : "Open";
+        let status: TicketItem["status"] = "Open";
+        if (stat === "resolved") status = "Resolved";
+        else if (stat === "in_progress") status = "In Progress";
+        else if (stat === "waiting_on_client") status = "Pending Client";
+        else if (stat === "closed") status = "Resolved"; // Map closed to Resolved in UI for now or handle appropriately.
         const initials = (st.assignee_name || st.agent || "Support Lead").split(" ").map((w: string) => w[0]).join("").toUpperCase();
+        
+        const clientName = st.client_name || st.client || "Client Account";
+        const clientEmail = st.client_email || st.email || "client@creo.agency";
+        const clientInitial = clientName.charAt(0).toUpperCase();
+        
         const shortId = String(st.id).includes("1781")
           ? "1781"
           : String(st.id).length > 8
@@ -151,10 +159,11 @@ export function AdminSupportTicketsPage() {
 
         return {
           id: shortId,
-          client: st.client || "Client Account",
+          client: clientName,
           tier: st.tier || "Active Retainer",
-          email: st.email || "client@creo.agency",
-          avatarBg: "bg-[#0F172A]",
+          email: clientEmail,
+          avatarBg: "bg-[#0B111C]",
+          clientInitial,
           issueTitle: st.title || st.subject || "Support Inquiry",
           issueDesc: st.description || "",
           priority,
@@ -165,6 +174,7 @@ export function AdminSupportTicketsPage() {
           status,
           primaryAction: status === "Resolved" ? "Reopen" : "Resolve",
           secondaryAction: "Assign",
+          rawId: String(st.id),
         };
       });
 
@@ -174,7 +184,7 @@ export function AdminSupportTicketsPage() {
         client: lt.client || "Client Account",
         tier: lt.tier || "Active Retainer",
         email: lt.email || "client@creo.agency",
-        avatarBg: lt.avatarBg || "bg-[#0F172A]",
+        avatarBg: lt.avatarBg || "bg-[#0B111C]",
         issueTitle: lt.issueTitle || lt.title || "Support Request",
         issueDesc: lt.issueDesc || lt.description || "",
         priority: lt.priority || "Urgent",
@@ -185,6 +195,7 @@ export function AdminSupportTicketsPage() {
         status: lt.status || "Open",
         primaryAction: lt.status === "Resolved" ? "Reopen" : "Resolve",
         secondaryAction: "Assign",
+        rawId: String(lt.id),
       }));
 
       // Combine with local first so newly sent tickets appear at the very top
@@ -209,7 +220,7 @@ export function AdminSupportTicketsPage() {
       console.error("Failed to load tickets:", err);
       setTickets(DEFAULT_INITIAL_TICKETS);
     }
-  }, []);
+  }, [statusFilter]);
 
   useEffect(() => {
     loadTickets();
@@ -245,6 +256,10 @@ export function AdminSupportTicketsPage() {
   };
 
   const handlePrimaryAction = async (t: TicketItem) => {
+    if (t.primaryAction === "Open Chat" || t.issueTitle === "Client Pod Thread") {
+      navigate(`/admin/support/tickets/${t.rawId || t.id}`);
+      return;
+    }
     const newStatus: TicketItem["status"] = t.status !== "Resolved" ? "Resolved" : "In Progress";
     setTickets((prev) =>
       prev.map((item) =>
@@ -320,8 +335,8 @@ export function AdminSupportTicketsPage() {
               <span className="text-xs font-bold text-[#7FA0D6]">active items</span>
             </div>
             <div className="pt-1">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/15 text-rose-400 text-[11px] font-bold border border-rose-500/30">
-                <span className="size-1.5 rounded-full bg-rose-500 animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/15 text-[#BCCCE6] text-[11px] font-bold border border-blue-500/30">
+                <span className="size-1.5 rounded-full bg-[#BCCCE6] animate-pulse" />
                 Live SLA Monitoring
               </span>
             </div>
@@ -333,7 +348,7 @@ export function AdminSupportTicketsPage() {
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#97A0B3]">
                 RESOLVED TODAY
               </span>
-              <div className="size-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+              <div className="size-8 rounded-xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-[#BCCCE6]">
                 <CheckCircle2 className="size-4" />
               </div>
             </div>
@@ -343,11 +358,31 @@ export function AdminSupportTicketsPage() {
             </div>
             <div className="pt-1">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] text-[11px] font-bold border border-[#7FA0D6]/30">
-                <span className="size-1.5 rounded-full bg-[#7FA0D6]/150" />
+                <span className="size-1.5 rounded-full bg-[#7FA0D6]" />
                 100% SLA Compliance Rate
               </span>
             </div>
           </div>
+        </div>
+
+        {/* View Toggle */}
+        <div className="flex items-center gap-2 border-b border-[#2A3446] pb-2">
+          <button
+            onClick={() => setStatusFilter("active")}
+            className={`px-4 py-2 text-xs font-bold transition-all border-b-2 ${
+              statusFilter === "active" ? "border-[#7FA0D6] text-white" : "border-transparent text-[#97A0B3] hover:text-[#BCCCE6]"
+            }`}
+          >
+            Active Tickets ({openCount})
+          </button>
+          <button
+            onClick={() => setStatusFilter("closed")}
+            className={`px-4 py-2 text-xs font-bold transition-all border-b-2 ${
+              statusFilter === "closed" ? "border-[#7FA0D6] text-white" : "border-transparent text-[#97A0B3] hover:text-[#BCCCE6]"
+            }`}
+          >
+            Closed Archive ({resolvedCount})
+          </button>
         </div>
 
         {/* Mobile Tickets Card List (< md) */}
@@ -360,7 +395,7 @@ export function AdminSupportTicketsPage() {
             filteredTickets.map((t) => (
               <div
                 key={t.id}
-                onClick={() => navigate(`/admin/support/tickets/${t.id}`)}
+                onClick={() => navigate(`/admin/support/tickets/${t.rawId || t.id}`)}
                 className="bg-[#161F2D] rounded-2xl p-4 border border-[#2A3446]/90 shadow-2xs space-y-3 hover:border-blue-300 transition-all cursor-pointer active:scale-[0.99]"
               >
                 {/* Header: ID + Priority + Status */}
@@ -370,12 +405,12 @@ export function AdminSupportTicketsPage() {
                     <span
                       className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
                         t.priority === "Urgent"
-                          ? "bg-rose-500 text-white"
+                          ? "bg-blue-900/40 text-[#BCCCE6] border border-blue-500/30"
                           : t.priority === "High"
-                          ? "bg-amber-100 text-amber-800"
+                          ? "bg-blue-500/20 text-[#BCCCE6] border border-blue-500/30"
                           : t.priority === "Medium"
-                          ? "bg-[#7FA0D6]/20 text-blue-800"
-                          : "bg-[#1F2C3F] text-[#F1F5F9]"
+                          ? "bg-[#7FA0D6]/20 text-[#7FA0D6]"
+                          : "bg-[#161F2D] text-[#F1F5F9]"
                       }`}
                     >
                       {t.priority}
@@ -384,12 +419,12 @@ export function AdminSupportTicketsPage() {
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                       t.status === "Open"
-                        ? "bg-rose-50 text-rose-700 border-rose-200"
+                        ? "bg-blue-500/15 text-[#BCCCE6] border-blue-500/30"
                         : t.status === "In Progress"
                         ? "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30"
                         : t.status === "Pending Client"
-                        ? "bg-amber-50 text-amber-700 border-amber-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        ? "bg-blue-500/20 text-[#BCCCE6] border-blue-500/30"
+                        : "bg-blue-600/15 text-[#BCCCE6] border-blue-500/30"
                     }`}
                   >
                     {t.status}
@@ -401,12 +436,12 @@ export function AdminSupportTicketsPage() {
                   <div
                     className={`size-8 rounded-xl ${t.avatarBg} text-white font-black text-xs flex items-center justify-center shrink-0`}
                   >
-                    {t.client[0]}
+                    {t.clientInitial || t.client[0]}
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="font-bold text-xs text-white truncate">{t.client}</span>
-                      <span className="px-1.5 py-0.2 rounded text-[8px] font-extrabold bg-[#7FA0D6]/20 text-blue-800 uppercase">
+                      <span className="px-1.5 py-0.2 rounded text-[8px] font-extrabold bg-[#7FA0D6]/20 text-[#7FA0D6] uppercase">
                         {t.tier}
                       </span>
                     </div>
@@ -441,8 +476,8 @@ export function AdminSupportTicketsPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => navigate(`/admin/support/tickets/${t.id}`)}
-                      className="px-2.5 py-1 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-[11px] font-bold hover:bg-slate-200"
+                      onClick={() => navigate(`/admin/support/tickets/${t.rawId || t.id}`)}
+                      className="px-2.5 py-1 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-[11px] font-bold hover:bg-slate-200"
                     >
                       {t.secondaryAction}
                     </button>
@@ -488,7 +523,7 @@ export function AdminSupportTicketsPage() {
                     <tr
                       key={t.id}
                       className="hover:bg-[#0B111C]/80 transition-colors group cursor-pointer"
-                      onClick={() => navigate(`/admin/support/tickets/${t.id}`)}
+                      onClick={() => navigate(`/admin/support/tickets/${t.rawId || t.id}`)}
                     >
                       <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -534,17 +569,17 @@ export function AdminSupportTicketsPage() {
                             <span
                               className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
                                 t.priority === "Urgent"
-                                  ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                                  ? "bg-blue-900/40 text-[#BCCCE6] border border-blue-500/30"
                                   : t.priority === "High"
-                                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                  ? "bg-blue-500/20 text-[#BCCCE6] border border-blue-500/30"
                                   : t.priority === "Medium"
                                   ? "bg-[#7FA0D6]/20 text-[#7FA0D6] border border-[#7FA0D6]/30"
-                                  : "bg-[#1F2C3F] text-[#F1F5F9] border border-[#2A3446]"
+                                  : "bg-[#161F2D] text-[#F1F5F9] border border-[#2A3446]"
                               }`}
                             >
                               {t.priority}
                             </span>
-                            <span className="text-[11px] font-semibold text-rose-400">
+                            <span className="text-[11px] font-semibold text-[#BCCCE6]">
                               {t.timeLog}
                             </span>
                           </div>
@@ -575,12 +610,12 @@ export function AdminSupportTicketsPage() {
                         <span
                           className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                             t.status === "Open"
-                              ? "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                              ? "bg-blue-500/15 text-[#BCCCE6] border border-blue-500/30"
                               : t.status === "In Progress"
                               ? "bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30"
                               : t.status === "Pending Client"
-                              ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                              : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                              ? "bg-blue-500/20 text-[#BCCCE6] border border-blue-500/30"
+                              : "bg-blue-600/15 text-[#BCCCE6] border border-blue-500/30"
                           }`}
                         >
                           {t.status}
@@ -603,14 +638,14 @@ export function AdminSupportTicketsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => navigate(`/admin/support/tickets/${t.id}`)}
-                            className="px-2.5 py-1 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-[11px] font-bold hover:bg-slate-200 transition-colors cursor-pointer"
+                            onClick={() => navigate(`/admin/support/tickets/${t.rawId || t.id}`)}
+                            className="px-2.5 py-1 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-[11px] font-bold hover:bg-slate-200 transition-colors cursor-pointer"
                           >
                             {t.secondaryAction}
                           </button>
                           <button
                             type="button"
-                            onClick={() => navigate(`/admin/support/tickets/${t.id}`)}
+                            onClick={() => navigate(`/admin/support/tickets/${t.rawId || t.id}`)}
                             className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded cursor-pointer"
                             aria-label="More actions"
                           >
@@ -643,7 +678,7 @@ export function AdminSupportTicketsPage() {
             <button
               type="button"
               onClick={() => setAlertModal(null)}
-              className="absolute top-4 right-4 size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
+              className="absolute top-4 right-4 size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
               aria-label="Close dialog"
             >
               <X className="size-4" />
@@ -710,7 +745,7 @@ export function AdminSupportTicketsPage() {
                     setAlertModal(null);
                     navigate(`/admin/support/tickets/${id}`);
                   }}
-                  className="px-5 py-3 rounded-2xl bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] font-bold text-xs active:scale-95 transition-all cursor-pointer"
+                  className="px-5 py-3 rounded-2xl bg-[#161F2D] hover:bg-slate-200 text-[#F1F5F9] font-bold text-xs active:scale-95 transition-all cursor-pointer"
                 >
                   View Ticket
                 </button>

@@ -116,8 +116,8 @@ export function OtpPinInput({
           const lightClasses = hasError
             ? "border-red-400 bg-red-50/50 text-red-600 focus:ring-4 focus:ring-red-100"
             : isFilled
-            ? "border-[#2B7BC4] bg-[#F0F7FF] text-[#0D2137] shadow-xs shadow-[#2B7BC4]/10"
-            : "border-slate-200 bg-slate-50/70 text-[#0D2137] hover:border-slate-300 focus:border-[#2B7BC4] focus:bg-white focus:ring-4 focus:ring-[#2B7BC4]/15";
+            ? "border-[#7FA0D6] bg-[#161F2D] text-[#0B111C] shadow-xs shadow-[#7FA0D6]/10"
+            : "border-slate-200 bg-slate-50/70 text-[#0B111C] hover:border-slate-300 focus:border-[#7FA0D6] focus:bg-white focus:ring-4 focus:ring-[#7FA0D6]/15";
 
           return (
             <input

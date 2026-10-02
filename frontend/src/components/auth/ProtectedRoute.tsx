@@ -81,7 +81,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
                   const returnUrl = encodeURIComponent(location.pathname + location.search);
                   window.location.href = `/login?redirectedFrom=${returnUrl}`;
                 }}
-                className="w-full py-2.5 px-4 rounded-xl border border-[#2A3446] text-[#97A0B3] hover:text-white text-xs font-bold hover:bg-[#1F2C3F] transition-colors cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-xl border border-[#2A3446] text-[#97A0B3] hover:text-white text-xs font-bold hover:bg-[#161F2D] transition-colors cursor-pointer"
               >
                 Sign In with Admin Account
               </button>

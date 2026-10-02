@@ -13,11 +13,135 @@ import {
   ArrowLeft,
   ChevronRight,
   MessageSquare,
+  Smile,
+  Search,
 } from "lucide-react";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
+import { request } from "../../lib/http";
+
+// WhatsApp Emoji Categories
+const EMOJI_CATEGORIES = [
+  {
+    id: "smileys",
+    name: "Smileys & People",
+    icon: "😀",
+    emojis: [
+      "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "🥹", "😊", "😇", "🙂", "🙃", "😉", "😌",
+      "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸",
+      "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢",
+      "😭", "😮‍💨", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗",
+      "🤔", "🫣", "🤭", "🫡", "🤫", "🫠", "🤥", "😶", "😶‍🌫️", "😐", "😑", "😬", "🫨", "🫠", "🙄", "😯"
+    ],
+  },
+  {
+    id: "gestures",
+    name: "Hands & Body",
+    icon: "👍",
+    emojis: [
+      "👍", "👎", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✌️", "🤟", "🤘", "🤌", "🤏", "👈", "👉", "👆",
+      "👇", "☝️", "✋", "🤚", "🖐️", "🖖", "👋", "💪", "🦾", "🖕", "✍️", "🫵", "🫶", "🫱", "🫲", "🫸",
+      "🫷", "🫡", "🤝", "💅", "🤳", "💆", "💇", "🙋", "💁", "🙇", "🙅", "🙆", "🙋‍♂️", "🙋‍♀️"
+    ],
+  },
+  {
+    id: "symbols",
+    name: "Hearts & Symbols",
+    icon: "❤️",
+    emojis: [
+      "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❤️‍🔥", "❤️‍🩹", "❣️", "💕", "💞", "💓",
+      "💗", "💖", "💘", "💝", "💯", "🔥", "✨", "🎉", "🎊", "⭐", "🌟", "💫", "⚡", "💥", "🎯", "🚀",
+      "💡", "🔔", "🏆", "🥇", "🥈", "🥉", "👑", "💎", "📢", "💬", "💭", "🔴", "🟢", "🔵", "🟡", "✅", "❌"
+    ],
+  },
+  {
+    id: "animals",
+    name: "Animals & Nature",
+    icon: "🐶",
+    emojis: [
+      "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐻‍❄️", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵",
+      "🙈", "🙉", "🙊", "🐒", "🐔", "🐧", "🐦", "🐤", "🐣", "🐥", "🦆", "🦅", "🦉", "🦇", "🐺", "🐗",
+      "🐴", "🦄", "🐝", "🪲", "🐛", "🦋", "🐌", "🐞", "🐜", "🪰", "🪲", "🐙", "🦑", "🦐", "🦞", "🦀"
+    ],
+  },
+  {
+    id: "food",
+    name: "Food & Drink",
+    icon: "🍔",
+    emojis: [
+      "🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐", "🍈", "🍒", "🍑", "🥭", "🍍", "🥥",
+      "🥝", "🍅", "🥑", "🥦", "🥬", "🥒", "🌶️", "🌽", "🥕", "🧄", "🧅", "🥔", "🍠", "🥐", "🥯", "🍞",
+      "🥖", "🥨", "🧀", "🥚", "🍳", "🧈", "🥞", "🧇", "🥓", "🥩", "🍗", "🍖", "🌭", "🍔", "🍟", "🍕",
+      "☕", "🍵", "🧃", "🥤", "🧋", "🍺", "🍻", "🥂", "🍷", "🥃", "🍸", "🍹", "🍾", "🍿", "🍩", "🍪"
+    ],
+  },
+  {
+    id: "activities",
+    name: "Objects & Activities",
+    icon: "⚽",
+    emojis: [
+      "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🥏", "🎱", "🪀", "🏓", "🏸", "🏒", "🏑", "🥍",
+      "🏏", "🥊", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸️", "🎨", "🎬", "🎤", "🎧", "🎼", "🎹", "🥁", "🎷",
+      "🎺", "🎸", "🪕", "🎻", "🎲", "♟️", "🎯", "🎮", "🎰", "🧩", "🚗", "🏎️", "✈️", "🚀"
+    ],
+  },
+];
+
+const STORAGE_KEY = "creo_slack_messages_v2";
+
+const SEED_MESSAGES: Record<string, ChatMessage[]> = {
+  general: [
+    {
+      id: "seed-1",
+      sender: "Pod Operations Lead",
+      role: "Pod Lead",
+      avatar: "PL",
+      avatarBg: "bg-[#7FA0D6]",
+      content: "Good morning team! Standup update: All 4 active client sprint deliverables are on track for today's review.",
+      timestamp: "09:00 AM",
+      reactions: [
+        { emoji: "🚀", count: 3, users: ["Pod Lead", "Operations"] },
+        { emoji: "👍", count: 2, users: ["Specialist"] },
+      ],
+    },
+    {
+      id: "seed-2",
+      sender: "Client Manager",
+      role: "Operations Executive",
+      avatar: "CM",
+      avatarBg: "bg-[#7FA0D6]",
+      content: "Reminder: Please upload all final MP4 and Figma assets to the deliverables-handoff channel once QA approves.",
+      timestamp: "09:15 AM",
+      reactions: [{ emoji: "✅", count: 4, users: ["Team Lead"] }],
+    },
+  ],
+  "deliverables-handoff": [
+    {
+      id: "seed-3",
+      sender: "Creative Specialist",
+      role: "Video Editor",
+      avatar: "CS",
+      avatarBg: "bg-[#7FA0D6]",
+      content: "📦 Handoff Drop: High-conversion reel assets for Apex Motion are packaged and ready for final review.",
+      timestamp: "10:30 AM",
+      reactions: [{ emoji: "🔥", count: 3, users: ["Lead"] }],
+    },
+  ],
+  "urgent-escalations": [
+    {
+      id: "seed-4",
+      sender: "System Alert",
+      role: "Automation Bot",
+      avatar: "SA",
+      avatarBg: "bg-[#D8BF9B]",
+      content: "⚡ SLA Monitor: Priority 1 deliverable review queue is currently empty. Excellent turnaround time!",
+      timestamp: "11:00 AM",
+      reactions: [{ emoji: "⭐", count: 2, users: ["Admin"] }],
+    },
+  ],
+};
 import { useAuth } from "../../lib/auth-context";
 import { useQuery } from "@tanstack/react-query";
-import { fetchPodDashboard, type PodDashboardData } from "../../lib/ops-api";
+import { fetchPodDashboard, fetchClientRoster, type PodDashboardData, type ClientRosterItem } from "../../lib/ops-api";
 
 interface ChatMessage {
   id: string;
@@ -52,6 +176,20 @@ export function SlackChatPage() {
   const podName = podData?.pod?.name || "Pod Operations";
   const defaultPersona = user?.full_name || user?.email?.split("@")[0] || "Team Member";
 
+  const isOpsOrSuperAdmin = user?.role === "admin" || user?.role === "super_admin" || user?.role === "ops_admin";
+
+  const { data: rawClientRoster } = useQuery<ClientRosterItem[]>({
+    queryKey: ["client_roster"],
+    queryFn: () => fetchClientRoster(),
+    enabled: isOpsOrSuperAdmin,
+  });
+
+  const clientRoster = (rawClientRoster || []).map(c => ({
+    id: c.client_id,
+    name: c.company_name || c.email.split("@")[0] || "Unknown Client",
+    pod_name: (c as any).pod_name || undefined
+  }));
+
   // Active channel / DM selection
   const [activeChannel, setActiveChannel] = useState<string>("general");
   const [activeDm, setActiveDm] = useState<string | null>(null);
@@ -70,6 +208,10 @@ export function SlackChatPage() {
 
   // Input states
   const [messageText, setMessageText] = useState("");
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiCategory, setEmojiCategory] = useState("smileys");
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [pickerTargetMsgId, setPickerTargetMsgId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" } | null>(null);
 
   // Modals
@@ -85,8 +227,71 @@ export function SlackChatPage() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Messages by channel (clean dynamic state, empty by default)
-  const [channelMessages, setChannelMessages] = useState<Record<string, ChatMessage[]>>({});
+  // Persistent Messages loaded from localStorage with initial seeds
+  const [channelMessages, setChannelMessages] = useState<Record<string, ChatMessage[]>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Object.keys(parsed).length > 0) return parsed;
+      }
+    } catch (err) {
+      console.warn("Failed to load slack messages from storage:", err);
+    }
+    return SEED_MESSAGES;
+  });
+
+  // Sync messages to localStorage whenever changed
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(channelMessages));
+    } catch (err) {
+      console.warn("Failed to persist slack messages:", err);
+    }
+  }, [channelMessages]);
+
+  // Real-time multi-tab / multi-window broadcast synchronization
+  useEffect(() => {
+    let broadcast: BroadcastChannel | null = null;
+    try {
+      broadcast = new BroadcastChannel("creo_slack_sync_channel");
+      broadcast.onmessage = (event) => {
+        if (event.data && event.data.type === "SLACK_MSG_SYNC" && event.data.payload) {
+          setChannelMessages(event.data.payload);
+        }
+      };
+    } catch (e) {
+      console.log("BroadcastChannel fallback to storage event");
+    }
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          setChannelMessages(parsed);
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => {
+      broadcast?.close();
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
+
+  const broadcastUpdate = (updated: Record<string, ChatMessage[]>) => {
+    setChannelMessages(updated);
+    try {
+      const bc = new BroadcastChannel("creo_slack_sync_channel");
+      bc.postMessage({ type: "SLACK_MSG_SYNC", payload: updated });
+      bc.close();
+    } catch (e) {
+      // fallback
+    }
+  };
 
   const showToast = (text: string, type: "success" | "info" = "success") => {
     setToastMessage({ text, type });
@@ -97,12 +302,75 @@ export function SlackChatPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [channelMessages, activeChannel, activeDm]);
 
-  const activeKey = activeDm ? `dm-${activeDm}` : activeChannel;
-  const currentMessages = channelMessages[activeKey] || [];
+  const activeClientId = activeChannel.startsWith("client-")
+    ? (isOpsOrSuperAdmin 
+        ? clientRoster?.find((c) => `client-${c.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}` === activeChannel)?.id 
+        : podData?.clients?.find((c) => `client-${c.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}` === activeChannel)?.id)
+    : null;
 
-  const handleSendMessage = (e?: React.FormEvent) => {
+  const { data: serverMessages = [], refetch: refetchServerMessages } = useQuery({
+    queryKey: ["chat_messages", activeChannel, activeDm],
+    queryFn: async () => {
+      let url = "";
+      if (activeDm) {
+        const dmUser = podData?.members?.find((m) => (m.name || m.full_name) === activeDm);
+        if (!dmUser?.id) return [];
+        url = `/api/v1/chat/messages?other_user_id=${dmUser.id}`;
+      } else if (activeChannel.startsWith("client-")) {
+        url = `/api/v1/chat/messages?channel=${activeChannel}`;
+      } else {
+        url = `/api/v1/chat/messages?channel=${activeChannel}`;
+      }
+      
+      const res = await request<any[]>(url);
+      return (res || []).map((m: any) => ({
+        id: m.id,
+        sender: m.sender_name || "Unknown",
+        role: "Specialist", 
+        avatar: (m.sender_name || "U").slice(0, 2).toUpperCase(),
+        avatarBg: "bg-[#7FA0D6]",
+        content: m.message,
+        timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        reactions: [],
+      })) as ChatMessage[];
+    },
+    refetchInterval: 5000,
+    staleTime: 5000,
+  });
+
+  const activeKey = activeDm ? `dm-${activeDm}` : activeChannel;
+  const currentMessages = activeChannel.startsWith("client-") || activeDm ? serverMessages : (channelMessages[activeKey] || []);
+
+  const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!messageText.trim()) return;
+
+    if (activeChannel.startsWith("client-") || activeDm) {
+      try {
+        const payload: any = { message: messageText.trim(), thread_type: "direct" };
+        if (activeDm) {
+          const dmUser = podData?.members?.find((m) => (m.name || m.full_name) === activeDm);
+          if (dmUser?.id) {
+            payload.recipient_id = dmUser.id;
+          }
+        } else {
+          payload.channel = activeChannel;
+          payload.client_id = activeClientId;
+        }
+
+        await request("/api/v1/chat/messages", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessageText("");
+        setShowEmojiPicker(false);
+        refetchServerMessages();
+        return;
+      } catch (err: any) {
+        showToast(err?.message || "Failed to send message", "info");
+        return;
+      }
+    }
 
     const senderRole =
       user?.role === "admin" || user?.role === "super_admin"
@@ -121,59 +389,64 @@ export function SlackChatPage() {
       .slice(0, 2);
 
     const newMsg: ChatMessage = {
-      id: `m-${Date.now()}`,
+      id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       sender: currentPersona,
       role: senderRole,
       avatar: senderInitials,
-      avatarBg: "bg-[#2563EB]",
+      avatarBg: "bg-[#7FA0D6]",
       content: messageText,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       reactions: [],
     };
 
-    setChannelMessages((prev) => ({
-      ...prev,
-      [activeKey]: [...(prev[activeKey] || []), newMsg],
-    }));
+    const updated = {
+      ...channelMessages,
+      [activeKey]: [...(channelMessages[activeKey] || []), newMsg],
+    };
 
+    broadcastUpdate(updated);
     setMessageText("");
+    setShowEmojiPicker(false);
   };
 
   const handleAddReaction = (msgId: string, emoji: string) => {
-    setChannelMessages((prev) => {
-      const msgs = prev[activeKey] || [];
-      const updated = msgs.map((m) => {
-        if (m.id !== msgId) return m;
-        const existing = m.reactions.find((r) => r.emoji === emoji);
-        if (existing) {
-          if (existing.users.includes(currentPersona)) {
-            return {
-              ...m,
-              reactions: m.reactions
-                .map((r) =>
-                  r.emoji === emoji
-                    ? { ...r, count: r.count - 1, users: r.users.filter((u) => u !== currentPersona) }
-                    : r
-                )
-                .filter((r) => r.count > 0),
-            };
-          } else {
-            return {
-              ...m,
-              reactions: m.reactions.map((r) =>
-                r.emoji === emoji ? { ...r, count: r.count + 1, users: [...r.users, currentPersona] } : r
-              ),
-            };
-          }
+    const msgs = channelMessages[activeKey] || [];
+    const updatedMsgs = msgs.map((m) => {
+      if (m.id !== msgId) return m;
+      const existing = m.reactions.find((r) => r.emoji === emoji);
+      if (existing) {
+        if (existing.users.includes(currentPersona)) {
+          return {
+            ...m,
+            reactions: m.reactions
+              .map((r) =>
+                r.emoji === emoji
+                  ? { ...r, count: r.count - 1, users: r.users.filter((u) => u !== currentPersona) }
+                  : r
+              )
+              .filter((r) => r.count > 0),
+          };
         } else {
           return {
             ...m,
-            reactions: [...m.reactions, { emoji, count: 1, users: [currentPersona] }],
+            reactions: m.reactions.map((r) =>
+              r.emoji === emoji ? { ...r, count: r.count + 1, users: [...r.users, currentPersona] } : r
+            ),
           };
         }
-      });
-      return { ...prev, [activeKey]: updated };
+      } else {
+        return {
+          ...m,
+          reactions: [...m.reactions, { emoji, count: 1, users: [currentPersona] }],
+        };
+      }
     });
+
+    const updated = {
+      ...channelMessages,
+      [activeKey]: updatedMsgs,
+    };
+    broadcastUpdate(updated);
   };
 
   const handleConfirmAssignTask = (e: React.FormEvent) => {
@@ -203,7 +476,7 @@ export function SlackChatPage() {
       sender: currentPersona,
       role: senderRole,
       avatar: senderInitials,
-      avatarBg: "bg-[#2563EB]",
+      avatarBg: "bg-[#7FA0D6]",
       content: `⚡ New Task Assigned: **${resolvedTitle}** assigned to **${resolvedAssignee}** for **${resolvedClient}**!`,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       isTaskCard: true,
@@ -228,15 +501,15 @@ export function SlackChatPage() {
     setTaskTitle("");
   };
 
-  // Channels configuration
   const channels = [
     { id: "general", label: "general", desc: `${podName} daily standup & team banter` },
     { id: "deliverables-handoff", label: "deliverables-handoff", desc: "Master asset sync & drops" },
     { id: "urgent-escalations", label: "urgent-escalations", desc: "SLA priority alert queue" },
-    ...(podData?.clients || []).map((c) => ({
+    ...(isOpsOrSuperAdmin ? (clientRoster || []) : (podData?.clients || [])).map((c) => ({
       id: `client-${c.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}`,
       label: `client-${c.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}`,
-      desc: `${c.name} pod communication`,
+      desc: isOpsOrSuperAdmin && 'pod_name' in c ? `${c.name} (${c.pod_name})` : `${c.name} pod communication`,
+      badge: isOpsOrSuperAdmin && 'pod_name' in c ? c.pod_name : undefined,
     })),
   ];
 
@@ -279,7 +552,7 @@ export function SlackChatPage() {
           <div className="p-4 border-b border-[#2A3446] bg-[#0B111C]/80 space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="size-3 rounded-md bg-[#2563EB]" />
+                <span className="size-3 rounded-md bg-[#7FA0D6]" />
                 <span className="font-black text-sm text-white tracking-tight">Creo Slack Hub</span>
               </div>
               <div className="flex items-center gap-2">
@@ -297,29 +570,23 @@ export function SlackChatPage() {
               </div>
             </div>
 
-            {/* Persona Switcher Selector */}
-            <div>
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] mb-1">
-                Chatting as:
+            {/* Authenticated User Identity (Strict - No Role Switching) */}
+            <div className="p-2.5 rounded-xl bg-[#161F2D] border border-[#2A3446] flex items-center gap-2">
+              <div className="size-6 rounded-lg bg-[#7FA0D6] text-white font-black text-[10px] flex items-center justify-center shrink-0">
+                {currentPersona.slice(0, 2).toUpperCase()}
               </div>
-              <select
-                value={currentPersona}
-                onChange={(e) => {
-                  const p = e.target.value;
-                  setCurrentPersona(p);
-                  showToast(`Switched active persona to ${p}`);
-                }}
-                className="w-full px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value={user?.full_name || "Team Member"}>
-                  {user?.full_name || "Team Member"} (You)
-                </option>
-                {(podData?.members || []).map((m) => (
-                  <option key={m.id} value={m.name}>
-                    {m.name} ({m.role})
-                  </option>
-                ))}
-              </select>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-black text-white truncate">{currentPersona}</div>
+                <div className="text-[10px] font-bold text-[#7FA0D6] truncate">
+                  {user?.role === "admin" || user?.role === "super_admin"
+                    ? "Operations Executive (Admin)"
+                    : user?.role === "team_lead"
+                    ? `${podName} Lead`
+                    : user?.role === "client"
+                    ? "Client Representative"
+                    : "Creative Specialist"}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -341,7 +608,7 @@ export function SlackChatPage() {
                 <span className="text-[#97A0B3]">{channels.length}</span>
               </div>
 
-              {channels.map((c) => (
+              {channels.map((c: any) => (
                 <button
                   key={c.id}
                   onClick={() => {
@@ -351,12 +618,17 @@ export function SlackChatPage() {
                   }}
                   className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl font-bold transition-all text-left cursor-pointer ${
                     activeChannel === c.id && !activeDm
-                      ? "bg-[#2563EB] text-white shadow-xs font-black"
+                      ? "bg-[#7FA0D6] text-white shadow-xs font-black"
                       : "text-slate-300 hover:bg-slate-800 hover:text-white"
                   }`}
                 >
                   <Hash className="size-3.5 opacity-70" />
                   <span className="truncate flex-1">{c.label}</span>
+                  {c.badge && (
+                    <span className="px-1.5 py-0.5 rounded text-[8px] uppercase tracking-wider font-bold bg-[#161F2D]/50 text-[#97A0B3] border border-[#2A3446]">
+                      {c.badge}
+                    </span>
+                  )}
                   <ChevronRight className="size-3.5 opacity-40 md:hidden" />
                 </button>
               ))}
@@ -384,12 +656,12 @@ export function SlackChatPage() {
                       }}
                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-semibold transition-all text-left cursor-pointer ${
                         activeDm === displayName
-                          ? "bg-[#2563EB] text-white font-black"
+                          ? "bg-[#7FA0D6] text-white font-black"
                           : "text-slate-300 hover:bg-slate-800 hover:text-white"
                       }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className="size-5 rounded-md bg-[#2563EB] text-white font-black text-[9px] flex items-center justify-center shrink-0">
+                        <div className="size-5 rounded-md bg-[#7FA0D6] text-white font-black text-[9px] flex items-center justify-center shrink-0">
                           {displayName.slice(0, 2).toUpperCase()}
                         </div>
                         <span className="truncate text-xs">{displayName}</span>
@@ -407,7 +679,7 @@ export function SlackChatPage() {
 
           {/* Active User Footer in Sidebar */}
           <div className="p-3 border-t border-slate-800 bg-slate-950/60 flex items-center gap-2.5">
-            <div className="size-8 rounded-xl bg-[#2563EB] text-white font-black text-xs flex items-center justify-center shadow-xs">
+            <div className="size-8 rounded-xl bg-[#7FA0D6] text-white font-black text-xs flex items-center justify-center shadow-xs">
               {currentPersona.slice(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
@@ -433,7 +705,7 @@ export function SlackChatPage() {
               <button
                 type="button"
                 onClick={() => setMobileView("channels")}
-                className="md:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] font-bold text-xs shrink-0 transition-colors cursor-pointer"
+                className="md:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#161F2D] hover:bg-slate-200 text-[#F1F5F9] font-bold text-xs shrink-0 transition-colors cursor-pointer"
                 title="View Channels"
               >
                 <ArrowLeft className="size-3.5" />
@@ -448,7 +720,7 @@ export function SlackChatPage() {
                   <h2 className="text-sm sm:text-base font-black text-white truncate">
                     {activeDm ? activeDm : `#${activeChannel}`}
                   </h2>
-                  <span className="px-1.5 sm:px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-[#1F2C3F] text-[#F1F5F9] shrink-0">
+                  <span className="px-1.5 sm:px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-[#161F2D] text-[#F1F5F9] shrink-0">
                     {activeDm ? "DM" : "Channel"}
                   </span>
                 </div>
@@ -473,7 +745,7 @@ export function SlackChatPage() {
 
               <button
                 onClick={() => setCallModalOpen(true)}
-                className="size-8 sm:size-9 rounded-xl bg-[#1F2C3F] hover:bg-slate-700 text-[#F1F5F9] flex items-center justify-center cursor-pointer transition-colors"
+                className="size-8 sm:size-9 rounded-xl bg-[#161F2D] hover:bg-slate-700 text-[#F1F5F9] flex items-center justify-center cursor-pointer transition-colors"
                 title="Start Video Huddle"
               >
                 <Video className="size-3.5 sm:size-4" />
@@ -511,7 +783,7 @@ export function SlackChatPage() {
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                       <span className="text-xs font-black text-white">{msg.sender}</span>
-                      <span className="text-[9px] sm:text-[10px] font-bold text-[#97A0B3] bg-[#1F2C3F] px-1.5 sm:px-2 py-0.5 rounded-md">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-[#97A0B3] bg-[#161F2D] px-1.5 sm:px-2 py-0.5 rounded-md">
                         {msg.role}
                       </span>
                       <span className="text-[10px] text-[#97A0B3] ml-auto">{msg.timestamp}</span>
@@ -573,17 +845,30 @@ export function SlackChatPage() {
                         </button>
                       ))}
 
-                      {/* Quick Reaction Buttons on Hover */}
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ml-2">
-                        {["👍", "❤️", "🚀", "⚡"].map((emoji) => (
+                      {/* WhatsApp Floating Reaction Bar on Hover */}
+                      <div className="opacity-0 group-hover:opacity-100 transition-all duration-200 flex items-center gap-0.5 ml-2 bg-[#0B111C] border border-[#2A3446] rounded-full px-1.5 py-0.5 shadow-lg">
+                        {["👍", "❤️", "😂", "😮", "😢", "🙏", "🚀", "🔥"].map((emoji) => (
                           <button
                             key={emoji}
+                            type="button"
                             onClick={() => handleAddReaction(msg.id, emoji)}
-                            className="size-6 rounded-md hover:bg-slate-800 flex items-center justify-center text-xs transition cursor-pointer"
+                            className="size-6 rounded-full hover:bg-[#161F2D] flex items-center justify-center text-xs transition-transform hover:scale-125 cursor-pointer"
+                            title={`React with ${emoji}`}
                           >
                             {emoji}
                           </button>
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPickerTargetMsgId(msg.id);
+                            setShowEmojiPicker(true);
+                          }}
+                          className="size-5.5 rounded-full bg-[#161F2D] hover:bg-[#7FA0D6] hover:text-white text-[#97A0B3] border border-[#2A3446] flex items-center justify-center text-xs font-bold transition-all cursor-pointer ml-0.5"
+                          title="Choose any WhatsApp emoji reaction"
+                        >
+                          +
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -594,7 +879,107 @@ export function SlackChatPage() {
           </div>
 
           {/* Message Input Bar */}
-          <div className="p-3 sm:p-4 border-t border-[#2A3446] bg-[#161F2D]">
+          <div className="p-3 sm:p-4 border-t border-[#2A3446] bg-[#161F2D] relative">
+            {/* FULL WHATSAPP EMOJI PICKER POPOVER */}
+            {showEmojiPicker && (
+              <div className="absolute bottom-16 right-2 sm:right-4 z-50 w-[92vw] max-w-sm sm:w-96 bg-[#161F2D] border border-[#2A3446] rounded-3xl p-3 sm:p-4 shadow-2xl animate-in fade-in slide-in-from-bottom-2">
+                {/* Header */}
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#2A3446]">
+                  <div className="flex items-center gap-2">
+                    <Smile className="size-4 text-[#7FA0D6]" />
+                    <span className="text-xs font-black text-white">
+                      {pickerTargetMsgId ? "React with Emoji" : "WhatsApp Emoji Suite"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEmojiPicker(false);
+                      setPickerTargetMsgId(null);
+                    }}
+                    className="text-[#97A0B3] hover:text-white text-xs font-bold p-1 rounded hover:bg-slate-800"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Emoji Search Box */}
+                <div className="relative mb-2.5">
+                  <Search className="size-3.5 absolute left-3 top-2.5 text-[#97A0B3]" />
+                  <input
+                    type="text"
+                    value={emojiSearch}
+                    onChange={(e) => setEmojiSearch(e.target.value)}
+                    placeholder="Search 200+ emojis..."
+                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-[#0B111C] border border-[#2A3446] rounded-xl text-white focus:outline-none focus:border-[#7FA0D6]"
+                  />
+                  {emojiSearch && (
+                    <button
+                      onClick={() => setEmojiSearch("")}
+                      className="absolute right-2.5 top-2 text-[10px] text-[#97A0B3] hover:text-white"
+                    >
+                      clear
+                    </button>
+                  )}
+                </div>
+
+                {/* WhatsApp Category Navigation Tabs */}
+                {!emojiSearch && (
+                  <div className="flex items-center justify-between gap-1 pb-2 border-b border-[#2A3446] overflow-x-auto no-scrollbar mb-2">
+                    {EMOJI_CATEGORIES.map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setEmojiCategory(cat.id)}
+                        className={`p-1.5 rounded-xl text-sm transition-all cursor-pointer ${
+                          emojiCategory === cat.id
+                            ? "bg-[#7FA0D6] text-white shadow-xs font-bold scale-110"
+                            : "hover:bg-slate-800 text-slate-400"
+                        }`}
+                        title={cat.name}
+                      >
+                        {cat.icon}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Emoji Grid Display */}
+                <div className="grid grid-cols-8 gap-1 max-h-56 overflow-y-auto pr-1">
+                  {((emojiSearch.trim()
+                    ? EMOJI_CATEGORIES.flatMap((c) => c.emojis).filter((e) => e.includes(emojiSearch.trim()))
+                    : (EMOJI_CATEGORIES.find((c) => c.id === emojiCategory) || EMOJI_CATEGORIES[0])!.emojis)
+                  ).length === 0 ? (
+                    <div className="col-span-8 py-6 text-center text-xs text-[#97A0B3]">
+                      No matching emojis found
+                    </div>
+                  ) : (
+                    (emojiSearch.trim()
+                      ? EMOJI_CATEGORIES.flatMap((c) => c.emojis).filter((e) => e.includes(emojiSearch.trim()))
+                      : (EMOJI_CATEGORIES.find((c) => c.id === emojiCategory) || EMOJI_CATEGORIES[0])!.emojis
+                    ).map((emoji, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          if (pickerTargetMsgId) {
+                            handleAddReaction(pickerTargetMsgId, emoji);
+                            setPickerTargetMsgId(null);
+                            setShowEmojiPicker(false);
+                          } else {
+                            setMessageText((prev) => prev + emoji);
+                          }
+                        }}
+                        className="size-8 rounded-lg hover:bg-slate-800 flex items-center justify-center text-lg transition-transform active:scale-125 cursor-pointer"
+                      >
+                        {emoji}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleSendMessage} className="space-y-2">
               <div className="relative flex items-center">
                 <input
@@ -602,9 +987,17 @@ export function SlackChatPage() {
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
                   placeholder={`Message #${activeChannel}...`}
-                  className="w-full bg-[#0B111C] border border-[#2A3446] rounded-2xl pl-4 pr-24 py-3 text-xs sm:text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                  className="w-full bg-[#0B111C] border border-[#2A3446] rounded-2xl pl-4 pr-32 py-3 text-xs sm:text-sm text-white focus:outline-none focus:border-[#7FA0D6] transition-colors"
                 />
                 <div className="absolute right-2 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowEmojiPicker((prev) => !prev)}
+                    className="p-1.5 text-[#97A0B3] hover:text-[#7FA0D6] rounded-lg transition-colors cursor-pointer"
+                    title="Add Emoji (WhatsApp)"
+                  >
+                    <Smile className="size-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => showToast("Attachment upload ready", "info")}
@@ -616,7 +1009,7 @@ export function SlackChatPage() {
                   <button
                     type="submit"
                     disabled={!messageText.trim()}
-                    className="p-2 rounded-xl bg-[#2563EB] hover:bg-blue-600 disabled:opacity-40 text-white transition cursor-pointer"
+                    className="p-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-600 disabled:opacity-40 text-white transition cursor-pointer"
                   >
                     <Send className="size-4" />
                   </button>
@@ -750,7 +1143,7 @@ export function SlackChatPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 cursor-pointer"
                 >
                   Confirm & Post Task
                 </button>
@@ -794,7 +1187,7 @@ export function SlackChatPage() {
                   setCallModalOpen(false);
                   showToast(`Started video huddle in #${activeChannel}!`);
                 }}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
               >
                 Launch Huddle
               </button>

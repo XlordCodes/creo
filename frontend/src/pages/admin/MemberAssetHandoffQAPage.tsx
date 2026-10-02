@@ -130,7 +130,7 @@ export function MemberAssetHandoffQAPage() {
             </button>
             <button
               onClick={() => setPackageModalOpen(true)}
-              className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+              className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
             >
               <Plus className="size-3.5 sm:size-4" />
               <span>+ New Package</span>
@@ -161,7 +161,7 @@ export function MemberAssetHandoffQAPage() {
               </div>
 
               {/* Version Selector Tabs */}
-              <div className="flex items-center gap-2 bg-[#1F2C3F]/80 p-1.5 rounded-2xl text-xs font-bold">
+              <div className="flex items-center gap-2 bg-[#161F2D]/80 p-1.5 rounded-2xl text-xs font-bold">
                 <button
                   onClick={() => setActiveVersionTab("verA")}
                   className={`flex-1 py-2 rounded-xl transition-all ${
@@ -322,7 +322,7 @@ export function MemberAssetHandoffQAPage() {
                           dispatch: "AWS S302",
                         })
                       }
-                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#1F2C3F] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
+                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#161F2D] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
                     >
                       <Eye className="size-3" /> View Asset
                     </button>
@@ -346,7 +346,7 @@ export function MemberAssetHandoffQAPage() {
                     <span className="text-[11px] text-[#97A0B3] font-mono">Held for v2</span>
                     <button
                       onClick={() => setResubmitModalOpen(true)}
-                      className="px-3 py-1 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs cursor-pointer"
+                      className="px-3 py-1 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs cursor-pointer"
                     >
                       Resubmit v2
                     </button>
@@ -368,7 +368,7 @@ export function MemberAssetHandoffQAPage() {
                     <span className="text-[11px] text-[#97A0B3] font-mono">AWS S411</span>
                     <button
                       onClick={() => showToast("Downloading lossless stems ZIP...")}
-                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#1F2C3F] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
+                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#161F2D] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
                     >
                       <Download className="size-3" /> Download ZIP
                     </button>
@@ -420,7 +420,7 @@ export function MemberAssetHandoffQAPage() {
                               dispatch: "AWS S302",
                             })
                           }
-                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#1F2C3F] cursor-pointer"
+                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer"
                         >
                           <Eye className="size-4" />
                         </button>
@@ -452,7 +452,7 @@ export function MemberAssetHandoffQAPage() {
                       <td className="py-3 px-3 text-right">
                         <button
                           onClick={() => setResubmitModalOpen(true)}
-                          className="px-3 py-1 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer"
+                          className="px-3 py-1 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer"
                         >
                           Resubmit Revision v2
                         </button>
@@ -482,7 +482,7 @@ export function MemberAssetHandoffQAPage() {
                       <td className="py-3 px-3 text-right">
                         <button
                           onClick={() => showToast("Downloading lossless stems ZIP...")}
-                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#1F2C3F] cursor-pointer"
+                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer"
                         >
                           <Download className="size-4" />
                         </button>
@@ -637,7 +637,7 @@ export function MemberAssetHandoffQAPage() {
                 <button
                   type="button"
                   onClick={() => setHandoffConfirmModalOpen(true)}
-                  className="flex-1 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer text-center flex items-center justify-center gap-1.5"
+                  className="flex-1 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer text-center flex items-center justify-center gap-1.5"
                 >
                   <Send className="size-3.5" />
                   Send to Pod Lead for Sign-Off
@@ -686,7 +686,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={handleSendToLeadForSignOff}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
               >
                 Confirm & Dispatch
               </button>
@@ -713,7 +713,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setResubmitModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -746,7 +746,7 @@ export function MemberAssetHandoffQAPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Submit Revision v2
                 </button>
@@ -771,7 +771,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setAuditLogModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -798,7 +798,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setAuditLogModalOpen(false)}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold cursor-pointer"
               >
                 Close Audit Logs
               </button>
@@ -822,7 +822,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setPackageModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -865,7 +865,7 @@ export function MemberAssetHandoffQAPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Initialize Package
                 </button>
@@ -890,7 +890,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setSelectedAssetToView(null)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -915,7 +915,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setSelectedAssetToView(null)}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold cursor-pointer"
               >
                 Done
               </button>

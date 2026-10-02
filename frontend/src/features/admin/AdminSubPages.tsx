@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Link, useParams, useSearchParams, Navigate } from "react-router";
-import { fetchClientRoster } from "../../lib/ops-api";
+import { useQuery } from "@tanstack/react-query";
+import { fetchClientRoster, fetchPlanNegotiations, updatePlanNegotiation, createPlanNegotiation, fetchPodDashboard } from "../../lib/ops-api";
+import type { PlanNegotiationApiItem } from "../../lib/ops-api";
 import type { ClientRosterItem } from "../../types/ops";
 import {
   BarChart,
@@ -52,9 +54,14 @@ import {
   ExternalLink,
   FileText,
   Edit3,
+  Trash2,
   Folder,
   Lock,
   ShieldCheck,
+  Film,
+  Smartphone,
+  Pin,
+  Pencil,
 } from "lucide-react";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
 import { CustomSelect } from "../../components/ui/CustomSelect";
@@ -162,6 +169,12 @@ export function AdminClientsPage() {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
+  const [isCancelClientModalOpen, setIsCancelClientModalOpen] = useState(false);
+  const [isOnboardPodModalOpen, setIsOnboardPodModalOpen] = useState(false);
+  const [isRemovePodModalOpen, setIsRemovePodModalOpen] = useState(false);
+  const [newPodNameInput, setNewPodNameInput] = useState("");
+  const [newPodLeadInput, setNewPodLeadInput] = useState("");
+  const [podToRemoveInput, setPodToRemoveInput] = useState("Pod C");
   const [previewDeliverable, setPreviewDeliverable] = useState<any | null>(null);
 
   const [newRequestForm, setNewRequestForm] = useState({
@@ -213,10 +226,10 @@ export function AdminClientsPage() {
           "Energetic, holistic wellness with clean organic minimalism and modern typography. Punchy video hooks and high-contrast benefit callouts.",
         toneTags: ["Vitality", "High Energy", "Clean Aesthetics"],
         colors: [
-          { name: "Matcha Slate", hex: "#166534" },
-          { name: "Cream Ivory", hex: "#FEFCE8", isLight: true },
-          { name: "Core Charcoal", hex: "#0F172A" },
-          { name: "Glow Amber", hex: "#F59E0B" },
+          { name: "Matcha Slate", hex: "#7FA0D6" },
+          { name: "Cream Ivory", hex: "#161F2D", isLight: true },
+          { name: "Core Charcoal", hex: "#0B111C" },
+          { name: "Glow Amber", hex: "#D8BF9B" },
         ],
         social: {
           handle: "@ryzesocial",
@@ -285,9 +298,9 @@ export function AdminClientsPage() {
           "Authoritative, technically rigorous cloud software communication. Architectural clarity, latency reduction metrics, and developer-first storytelling.",
         toneTags: ["High Trust", "Developer First", "Algorithmic Speed"],
         colors: [
-          { name: "Deep Obsidian", hex: "#0F172A" },
-          { name: "Electric Azure", hex: "#2563EB" },
-          { name: "Terminal Cyan", hex: "#06B6D4" },
+          { name: "Deep Obsidian", hex: "#0B111C" },
+          { name: "Electric Azure", hex: "#7FA0D6" },
+          { name: "Terminal Cyan", hex: "#7FA0D6" },
           { name: "Clean Slate", hex: "#F8FAFC", isLight: true },
         ],
         social: {
@@ -357,10 +370,10 @@ export function AdminClientsPage() {
           "High-conversion retail creative with dynamic pacing, kinetic typography, and bold product highlights designed for immediate customer engagement.",
         toneTags: ["Conversion First", "Punchy Edits", "High CTR"],
         colors: [
-          { name: "Vibrant Crimson", hex: "#E11D48" },
-          { name: "Neon Rose", hex: "#F43F5E" },
+          { name: "Vibrant Crimson", hex: "#D8BF9B" },
+          { name: "Neon Rose", hex: "#D8BF9B" },
           { name: "Pure White", hex: "#FFFFFF", isLight: true },
-          { name: "Jet Slate", hex: "#0F172A" },
+          { name: "Jet Slate", hex: "#0B111C" },
         ],
         social: {
           handle: "@shanmuga_growth",
@@ -429,8 +442,8 @@ export function AdminClientsPage() {
           "Institutional prestige meets kinetic AI interfaces. Sophisticated 3D physics rendering with uncompromising geometric precision.",
         toneTags: ["Institutional", "3D Kinetic", "Global Scale"],
         colors: [
-          { name: "Galaxy Blue", hex: "#1E40AF" },
-          { name: "Cyan Flare", hex: "#06B6D4" },
+          { name: "Galaxy Blue", hex: "#7FA0D6" },
+          { name: "Cyan Flare", hex: "#7FA0D6" },
           { name: "Obsidian Core", hex: "#0B111C" },
           { name: "Pure Cloud", hex: "#F8FAFC", isLight: true },
         ],
@@ -500,9 +513,9 @@ export function AdminClientsPage() {
         toneSummary: "Institutional, enterprise fintech with sharp geometric clarity.",
         toneTags: ["Algorithmic", "High Trust", "Global Scope"],
         colors: [
-          { name: "Core Navy", hex: "#0F172A" },
-          { name: "Accent Azure", hex: "#2563EB" },
-          { name: "Cyan Highlight", hex: "#06B6D4" },
+          { name: "Core Navy", hex: "#0B111C" },
+          { name: "Accent Azure", hex: "#7FA0D6" },
+          { name: "Cyan Highlight", hex: "#7FA0D6" },
           { name: "Clean Neutral", hex: "#F8FAFC", isLight: true },
         ],
         social: {
@@ -571,10 +584,10 @@ export function AdminClientsPage() {
         toneSummary: "Empathetic, scientifically rigorous clinical communication with modern human-centric interfaces.",
         toneTags: ["Clinical Trust", "Modern Care", "Accessible"],
         colors: [
-          { name: "Care Emerald", hex: "#059669" },
-          { name: "Teal Glow", hex: "#0D9488" },
-          { name: "Soft Cyan", hex: "#ECFEFF", isLight: true },
-          { name: "Deep Slate", hex: "#0F172A" },
+          { name: "Care Emerald", hex: "#7FA0D6" },
+          { name: "Teal Glow", hex: "#7FA0D6" },
+          { name: "Soft Cyan", hex: "#161F2D", isLight: true },
+          { name: "Deep Slate", hex: "#0B111C" },
         ],
         social: {
           handle: "@nova_dynamics",
@@ -642,10 +655,10 @@ export function AdminClientsPage() {
         toneSummary: "Sensory, serene high-end beauty with warm editorial elegance and mindful self-care narratives.",
         toneTags: ["Mindful Luxe", "Botanical", "Warm Editorial"],
         colors: [
-          { name: "Blush Rose", hex: "#F43F5E" },
-          { name: "Petal Mist", hex: "#FFE4E6", isLight: true },
-          { name: "Sage Earth", hex: "#10B981" },
-          { name: "Soft Ivory", hex: "#FFFBEB", isLight: true },
+          { name: "Blush Rose", hex: "#D8BF9B" },
+          { name: "Petal Mist", hex: "#161F2D", isLight: true },
+          { name: "Sage Earth", hex: "#7FA0D6" },
+          { name: "Soft Ivory", hex: "#161F2D", isLight: true },
         ],
         social: {
           handle: "@solaris_beauty",
@@ -813,9 +826,9 @@ export function AdminClientsPage() {
           toneSummary: `Dynamic, high-impact social media creatives engineered for ${formattedName}. High-clarity typography with conversion-optimized video hooks.`,
           toneTags: ["High Conversion", "Brand Authority", "Visual Polish"],
           colors: [
-            { name: "Primary Deep Navy", hex: "#0F172A" },
-            { name: "Accent Royal Blue", hex: "#2563EB" },
-            { name: "Cyan Highlight", hex: "#06B6D4" },
+            { name: "Primary Deep Navy", hex: "#0B111C" },
+            { name: "Accent Royal Blue", hex: "#7FA0D6" },
+            { name: "Cyan Highlight", hex: "#7FA0D6" },
             { name: "Clean Neutral", hex: "#F8FAFC", isLight: true },
           ],
           social: {
@@ -979,6 +992,20 @@ export function AdminClientsPage() {
                     ]}
                   />
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIsOnboardPodModalOpen(true)}
+                  className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:brightness-110 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-600/20 cursor-pointer transition-all shrink-0"
+                >
+                  <Plus className="w-4 h-4" /> Onboard Pod
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsRemovePodModalOpen(true)}
+                  className="px-3 py-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Remove Pod
+                </button>
               </div>
             </div>
 
@@ -993,7 +1020,7 @@ export function AdminClientsPage() {
                   <div className="space-y-4">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-2xl bg-[#0F172A] text-white font-black text-lg flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+                        <div className="w-12 h-12 rounded-2xl bg-[#0B111C] text-white font-black text-lg flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
                           {client.initials}
                         </div>
                         <div>
@@ -1072,7 +1099,7 @@ export function AdminClientsPage() {
             <div className="bg-[#161F2D] rounded-3xl p-6 lg:p-7 border border-[#2A3446] shadow-[0_4px_30px_rgba(0,0,0,0.03)] space-y-4">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-2xl bg-[#0F172A] text-white font-black text-2xl flex items-center justify-center shadow-lg shrink-0">
+                  <div className="w-16 h-16 rounded-2xl bg-[#0B111C] text-white font-black text-2xl flex items-center justify-center shadow-lg shrink-0">
                     {activeClient?.initials}
                   </div>
                   <div className="space-y-1.5">
@@ -1134,9 +1161,16 @@ export function AdminClientsPage() {
                   <button
                     type="button"
                     onClick={() => setIsNewRequestOpen(true)}
-                    className="px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                    className="px-4 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
                   >
                     <Plus className="w-4 h-4 stroke-[3]" /> New Request
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCancelClientModalOpen(true)}
+                    className="px-4 py-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-xs font-bold text-rose-400 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Remove Client & Cancel Plan
                   </button>
                 </div>
               </div>
@@ -1151,7 +1185,7 @@ export function AdminClientsPage() {
                     <span className="text-[11px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
                       PRIMARY CONTACT
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold">
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold">
                       Authorized Signer
                     </span>
                   </div>
@@ -1234,9 +1268,9 @@ export function AdminClientsPage() {
                         {Math.round(((activeClient?.totalAssetsDelivered || 0) / (activeClient?.totalAssetsQuota || 1)) * 100)}%)
                       </span>
                     </div>
-                    <div className="w-full bg-[#1F2C3F] rounded-full h-2.5 overflow-hidden">
+                    <div className="w-full bg-[#161F2D] rounded-full h-2.5 overflow-hidden">
                       <div
-                        className="bg-[#2563EB] h-full rounded-full transition-all"
+                        className="bg-[#7FA0D6] h-full rounded-full transition-all"
                         style={{
                           width: `${Math.min(
                             (((activeClient?.totalAssetsDelivered || 0) / (activeClient?.totalAssetsQuota || 1)) * 100),
@@ -1291,7 +1325,7 @@ export function AdminClientsPage() {
                       Client Brand Ecosystem & Guidelines
                     </h2>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold">
                     {activeClient?.brand.kitVersion}
                   </span>
                 </div>
@@ -1476,9 +1510,9 @@ export function AdminClientsPage() {
                         {activeClient?.pod.capacityAllocatedHrs} hrs/week allocated
                       </span>
                     </div>
-                    <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                    <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
                       <div
-                        className="bg-[#2563EB] h-full rounded-full transition-all"
+                        className="bg-[#7FA0D6] h-full rounded-full transition-all"
                         style={{ width: `${activeClient?.pod.bandwidthPercent}%` }}
                       />
                     </div>
@@ -1889,7 +1923,7 @@ export function AdminClientsPage() {
                 </button>
               </div>
 
-              <div className="aspect-video bg-[#0F172A] rounded-2xl flex flex-col items-center justify-center text-white p-6 relative overflow-hidden shadow-inner">
+              <div className="aspect-video bg-[#0B111C] rounded-2xl flex flex-col items-center justify-center text-white p-6 relative overflow-hidden shadow-inner">
                 <div className="w-14 h-14 rounded-full bg-[#161F2D]/20 backdrop-blur-md flex items-center justify-center text-white mb-2 cursor-pointer hover:scale-110 transition-transform">
                   <Play className="w-6 h-6 fill-white ml-0.5" />
                 </div>
@@ -1920,6 +1954,182 @@ export function AdminClientsPage() {
                 >
                   Approve Deliverable
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. Cancel Client Plan & Remove Retainer Modal */}
+        {isCancelClientModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-500/40">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-5 h-5 text-rose-500" />
+                  <h3 className="text-base font-black text-white">Cancel Plan & Remove Client</h3>
+                </div>
+                <button type="button" onClick={() => setIsCancelClientModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs text-[#F1F5F9]">
+                <p className="text-[#97A0B3] leading-relaxed">
+                  Are you sure you want to cancel the retainer plan for <strong className="text-white">{activeClient?.name}</strong>?
+                </p>
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-300 font-semibold space-y-1">
+                  <div>• Monthly Retainer: ₹{activeClient?.monthlyFee.toLocaleString()}/mo</div>
+                  <div>• Status: CANCELLED (Plan & Access Revoked)</div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                <button
+                  type="button"
+                  onClick={() => setIsCancelClientModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                >
+                  Keep Active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeClient) {
+                      activeClient.status = "CANCELLED";
+                    }
+                    showToast(`Cancelled plan & removed ${activeClient?.name} from active retainers.`);
+                    setIsCancelClientModalOpen(false);
+                    setSelectedClientId(null);
+                  }}
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                >
+                  Confirm Cancellation
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 6. Onboard New Pod Modal */}
+        {isOnboardPodModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-[#2A3446]">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Plus className="w-5 h-5 text-[#7FA0D6]" />
+                  <h3 className="text-base font-black text-white">Onboard New Creative Pod</h3>
+                </div>
+                <button type="button" onClick={() => setIsOnboardPodModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newPodNameInput.trim()) return;
+                  showToast(`Successfully onboarded "${newPodNameInput}" with Lead ${newPodLeadInput || "Assigned"}.`);
+                  setIsOnboardPodModalOpen(false);
+                  setNewPodNameInput("");
+                  setNewPodLeadInput("");
+                }}
+                className="space-y-3.5 text-xs"
+              >
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Pod Designation / Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Pod D - 3D VFX & Motion"
+                    value={newPodNameInput}
+                    onChange={(e) => setNewPodNameInput(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs font-medium text-white focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Pod Lead Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Alex Rivera (Senior Producer)"
+                    value={newPodLeadInput}
+                    onChange={(e) => setNewPodLeadInput(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs font-medium text-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                  <button
+                    type="button"
+                    onClick={() => setIsOnboardPodModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm cursor-pointer"
+                  >
+                    Onboard Pod
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 7. Remove Pod from Team Modal */}
+        {isRemovePodModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-500/40">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-5 h-5 text-rose-500" />
+                  <h3 className="text-base font-black text-white">Decommission / Remove Pod</h3>
+                </div>
+                <button type="button" onClick={() => setIsRemovePodModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Select Pod to Remove</label>
+                  <select
+                    value={podToRemoveInput}
+                    onChange={(e) => setPodToRemoveInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-bold bg-[#161F2D] text-white"
+                  >
+                    <option value="Pod A">Pod A (Creative & Brand Strategy)</option>
+                    <option value="Pod B">Pod B (Performance & Video Ops)</option>
+                    <option value="Pod C">Pod C (3D Motion & Visual Design)</option>
+                  </select>
+                </div>
+
+                <p className="text-[#97A0B3] text-[11px] leading-relaxed">
+                  Decommissioning <strong className="text-white">{podToRemoveInput}</strong> will release active specialists back into the main talent pool for reallocation.
+                </p>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                  <button
+                    type="button"
+                    onClick={() => setIsRemovePodModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      showToast(`Decommissioned ${podToRemoveInput} and reallocated squad.`);
+                      setIsRemovePodModalOpen(false);
+                    }}
+                    className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                  >
+                    Remove Pod
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1989,6 +2199,62 @@ export function AdminDeliverablesPage() {
     }
   };
 
+  const { data: podData } = useQuery({
+    queryKey: ["pod_dashboard"],
+    queryFn: () => fetchPodDashboard(),
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
+  useEffect(() => {
+    if (podData?.tasks) {
+      const allTasks = [
+        ...(podData.tasks.backlog || []),
+        ...(podData.tasks.in_production || []),
+        ...(podData.tasks.internal_qa || []),
+        ...(podData.tasks.client_review || []),
+        ...(podData.tasks.ready_to_publish || []),
+        ...(podData.tasks.completed || []),
+      ];
+      const mapped = allTasks.map((t: any) => ({
+        id: t.id,
+        assetCode: t.id ? t.id.slice(0, 8) : "DEL-00",
+        title: t.title || "Deliverable",
+        client: t.client_name || "Client",
+        pod: t.pod_name || "Pod Alpha",
+        status: t.status,
+        statusLabel: (t.status || "").replace("_", " ").toUpperCase(),
+        statusBadge: "bg-[#161F2D] text-[#7FA0D6] border-[#2A3446]",
+        formatType: t.type || "Reels",
+        formatLabel: t.type || "Reels",
+        previewUrl: t.file_url || null,
+        assigneeName: t.assignee_name || "Specialist",
+        assigneeAvatar: t.assignee_name ? t.assignee_name.slice(0, 2).toUpperCase() : "SP",
+        dueDate: t.due_date || "Today",
+        slaType: "active",
+        slaText: "On Track",
+        slaColor: "text-emerald-400 font-bold",
+      }));
+      setDeliverablesList(mapped);
+    }
+  }, [podData]);
+
+  const movedToProductionCount = deliverablesList.filter(
+    (d) => d.status === "in_production" || d.status === "in_progress" || d.status === "backlog"
+  ).length;
+
+  const pendingReviewCount = deliverablesList.filter(
+    (d) => d.status === "internal_qa" || d.status === "client_review" || d.status === "in_review"
+  ).length;
+
+  const approvedTodayCount = deliverablesList.filter(
+    (d) => d.status === "ready_to_publish" || d.status === "approved" || d.status === "completed"
+  ).length;
+
+  const declinedCount = deliverablesList.filter(
+    (d) => d.status === "declined" || d.status === "rejected" || d.status === "revision_requested"
+  ).length;
+
   const filteredDeliverables = deliverablesList.filter((d) => {
     const matchesSearch =
       !searchQuery.trim() ||
@@ -2022,7 +2288,7 @@ export function AdminDeliverablesPage() {
       <main className="flex-1 px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6">
         {/* Toast Notification */}
         {toastMessage && (
-          <div className="fixed top-24 right-8 z-50 bg-[#0F172A] text-white px-5 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 animate-bounce">
+          <div className="fixed top-24 right-8 z-50 bg-[#0B111C] text-white px-5 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 animate-bounce">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
@@ -2030,7 +2296,7 @@ export function AdminDeliverablesPage() {
 
         {/* 4 KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
                 MOVED TO PRODUCTION
@@ -2039,54 +2305,54 @@ export function AdminDeliverablesPage() {
                 <Zap className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">42</div>
-            <div className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-              ↗ +12% this week
+            <div className="text-3xl font-black text-white tracking-tight">{movedToProductionCount}</div>
+            <div className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+              {movedToProductionCount === 0 ? "0 active in production" : `${movedToProductionCount} active tasks`}
             </div>
           </div>
 
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
                 PENDING REVIEW
               </span>
-              <div className="w-7 h-7 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center font-bold">
                 <Clock className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">24</div>
-            <div className="text-xs font-bold text-amber-600 flex items-center gap-1">
-              ⚡ 4 near SLA limit
+            <div className="text-3xl font-black text-white tracking-tight">{pendingReviewCount}</div>
+            <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
+              {pendingReviewCount === 0 ? "0 awaiting review" : `${pendingReviewCount} in QA / review`}
             </div>
           </div>
 
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
                 APPROVED TODAY
               </span>
-              <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-bold">
                 <CheckCircle2 className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">116</div>
-            <div className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-              ✓ 98.4% First-Pass
+            <div className="text-3xl font-black text-white tracking-tight">{approvedTodayCount}</div>
+            <div className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+              {approvedTodayCount === 0 ? "0 approved today" : `${approvedTodayCount} approved deliverables`}
             </div>
           </div>
 
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
                 DECLINED / REVISE
               </span>
-              <div className="w-7 h-7 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-rose-500/15 text-rose-400 flex items-center justify-center font-bold">
                 <AlertTriangle className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">8</div>
-            <div className="text-xs font-bold text-rose-600 flex items-center gap-1">
-              ↘ -2 vs yesterday
+            <div className="text-3xl font-black text-white tracking-tight">{declinedCount}</div>
+            <div className="text-xs font-bold text-rose-400 flex items-center gap-1">
+              {declinedCount === 0 ? "0 revision requests" : `${declinedCount} requiring revision`}
             </div>
           </div>
         </div>
@@ -2265,7 +2531,7 @@ export function AdminDeliverablesPage() {
                   <button
                     type="button"
                     onClick={() => handleDecline(item.id, item.title)}
-                    className="flex-1 py-2.5 bg-[#1F2C3F] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="flex-1 py-2.5 bg-[#161F2D] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5 stroke-[2.5]" /> Request Edit
                   </button>
@@ -2295,7 +2561,7 @@ export function AdminDeliverablesPage() {
                 <button
                   type="button"
                   onClick={() => setPreviewItem(null)}
-                  className="p-1.5 rounded-xl hover:bg-[#1F2C3F] text-[#97A0B3] hover:text-white cursor-pointer"
+                  className="p-1.5 rounded-xl hover:bg-[#161F2D] text-[#97A0B3] hover:text-white cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -2326,7 +2592,7 @@ export function AdminDeliverablesPage() {
                     handleDecline(previewItem.id, previewItem.title);
                     setPreviewItem(null);
                   }}
-                  className="px-4 py-2 rounded-xl bg-[#1F2C3F] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 text-xs font-bold cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-[#161F2D] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 text-xs font-bold cursor-pointer"
                 >
                   Request Revision
                 </button>
@@ -2372,7 +2638,7 @@ export function AdminDeliverablesPage() {
                     <span>Today 10:45 AM</span>
                   </div>
                   <p className="text-xs text-[#F1F5F9] leading-relaxed font-medium">
-                    "Typography and layout look crisp. Please ensure the hex code for brand teal matches #06B6D4."
+                    "Typography and layout look crisp. Please ensure the hex code for brand teal matches #7FA0D6."
                   </p>
                 </div>
                 <div className="p-3 bg-[#7FA0D6]/15/50 rounded-2xl border border-[#7FA0D6]/30 space-y-1">
@@ -2443,7 +2709,7 @@ export function AdminTasksPage() {
           ? "bg-rose-600 text-white font-black"
           : newTaskForm.priority === "High"
           ? "bg-rose-50 text-rose-600 border-rose-100"
-          : "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]",
+          : "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
       title: newTaskForm.title.trim(),
       type: newTaskForm.category,
       avatar: newTaskForm.assignee
@@ -2509,7 +2775,7 @@ export function AdminTasksPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30">
-              <span className="w-2 h-2 rounded-full bg-[#2563EB] animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-[#7FA0D6] animate-pulse" />
               Live Sync
             </span>
           </div>
@@ -2551,7 +2817,7 @@ export function AdminTasksPage() {
             <button
               type="button"
               onClick={() => setIsCreateModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
             >
               <Plus className="w-4 h-4 stroke-[3]" /> Create Task
             </button>
@@ -2591,7 +2857,7 @@ export function AdminTasksPage() {
                   </div>
                   <h4 className="text-xs font-bold text-white line-clamp-2">{task.title}</h4>
                   {task.imageUrl && (
-                    <div className="h-24 rounded-xl overflow-hidden bg-[#1F2C3F]">
+                    <div className="h-24 rounded-xl overflow-hidden bg-[#161F2D]">
                       <img src={task.imageUrl} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -2640,7 +2906,7 @@ export function AdminTasksPage() {
                   </div>
                   <h4 className="text-xs font-bold text-white line-clamp-2">{task.title}</h4>
                   {task.imageUrl && (
-                    <div className="h-24 rounded-xl overflow-hidden bg-[#1F2C3F]">
+                    <div className="h-24 rounded-xl overflow-hidden bg-[#161F2D]">
                       <img src={task.imageUrl} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -2733,7 +2999,7 @@ export function AdminTasksPage() {
                   </div>
                   <h4 className="text-xs font-bold text-white line-clamp-2">{task.title}</h4>
                   {task.imageUrl && (
-                    <div className="h-24 rounded-xl overflow-hidden bg-[#1F2C3F]">
+                    <div className="h-24 rounded-xl overflow-hidden bg-[#161F2D]">
                       <img src={task.imageUrl} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -2929,7 +3195,7 @@ export function AdminCalendarPage() {
         type: "Reel",
         assignee: "Karthik Raja",
         avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
+        avatarBg: "bg-[#0B111C]",
         tag: "Approved",
         tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
         time: "11:30 AM",
@@ -2959,7 +3225,7 @@ export function AdminCalendarPage() {
         type: "Reel",
         assignee: "Karthik Raja",
         avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
+        avatarBg: "bg-[#0B111C]",
         tag: "Final Polish",
         tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
         time: "4:30 PM",
@@ -3013,7 +3279,7 @@ export function AdminCalendarPage() {
         type: "Story",
         assignee: "Karthik Raja",
         avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
+        avatarBg: "bg-[#0B111C]",
         tag: "Approved",
         tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
         time: "10:00 AM",
@@ -3067,7 +3333,7 @@ export function AdminCalendarPage() {
         type: "Reel",
         assignee: "Karthik Raja",
         avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
+        avatarBg: "bg-[#0B111C]",
         tag: "Color Grading",
         tagColor: "bg-purple-50 text-purple-700 border-purple-100",
         time: "4:00 PM",
@@ -3097,7 +3363,7 @@ export function AdminCalendarPage() {
         avatar: "CT",
         avatarBg: "bg-teal-600",
         tag: "Drafting",
-        tagColor: "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]",
+        tagColor: "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
         time: "2:00 PM",
       },
     ],
@@ -3110,7 +3376,7 @@ export function AdminCalendarPage() {
         type: "Reel",
         assignee: "Karthik Raja",
         avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
+        avatarBg: "bg-[#0B111C]",
         tag: "Final Polish",
         tagColor: "bg-amber-50 text-amber-700 border-amber-100",
         time: "12:00 PM",
@@ -3153,7 +3419,7 @@ export function AdminCalendarPage() {
         type: "Reel",
         assignee: "Karthik Raja",
         avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
+        avatarBg: "bg-[#0B111C]",
         tag: "Final Polish",
         tagColor: "bg-amber-50 text-amber-700 border-amber-100",
         time: "5:00 PM",
@@ -3320,7 +3586,7 @@ export function AdminCalendarPage() {
             <button
               type="button"
               onClick={() => handleOpenScheduleForDay(selectedDayNumber)}
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
             >
               <Plus className="w-4 h-4 stroke-[3]" /> Schedule Asset
             </button>
@@ -3381,11 +3647,11 @@ export function AdminCalendarPage() {
                   >
                     <div className="flex items-center justify-between w-full">
                       <span
-                        className={`text-xs font-black inline-block size-6 rounded-full flex items-center justify-center transition-colors ${
+                        className={`text-xs font-black size-6 rounded-full flex items-center justify-center text-center shrink-0 transition-colors ${
                           isSelected
-                            ? "bg-blue-600 text-white shadow-xs"
+                            ? "bg-[#7FA0D6] text-[#050810] shadow-xs"
                             : isToday
-                            ? "bg-[#7FA0D6]/20 text-blue-800 font-bold"
+                            ? "bg-[#7FA0D6]/30 text-white border border-[#7FA0D6]/50 font-black"
                             : "text-[#F1F5F9] group-hover:text-[#7FA0D6]"
                         }`}
                       >
@@ -3393,8 +3659,8 @@ export function AdminCalendarPage() {
                       </span>
                       {dayTasks.length > 0 && (
                         <span
-                          className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
-                            isSelected ? "bg-blue-600 text-white" : "bg-gray-200 text-[#F1F5F9]"
+                          className={`text-[9px] font-black size-5 rounded-full flex items-center justify-center text-center shrink-0 ${
+                            isSelected ? "bg-[#7FA0D6] text-[#050810]" : "bg-[#2A3446] text-[#BCCCE6]"
                           }`}
                         >
                           {dayTasks.length}
@@ -3402,26 +3668,30 @@ export function AdminCalendarPage() {
                       )}
                     </div>
 
-                    {/* Day Deliverables Badges */}
-                    <div className="space-y-1 mt-1 w-full">
+                    {/* Day Deliverables Badges with Pencil/Line Drawings */}
+                    <div className="space-y-1 mt-1.5 w-full">
                       {reelsCount > 0 && (
-                        <span className="block text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 truncate">
-                          🎬 {reelsCount} {reelsCount === 1 ? "Reel" : "Reels"}
+                        <span className="flex items-center gap-1.5 text-[9.5px] font-bold px-2 py-1 rounded-lg bg-[#161F2D] text-[#7FA0D6] border border-[#2A3446] truncate">
+                          <Film className="size-3 text-[#7FA0D6] shrink-0 stroke-[1.75]" />
+                          <span>{reelsCount} {reelsCount === 1 ? "Reel" : "Reels"}</span>
                         </span>
                       )}
                       {storiesCount > 0 && (
-                        <span className="block text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 truncate">
-                          📲 {storiesCount} {storiesCount === 1 ? "Story" : "Stories"}
+                        <span className="flex items-center gap-1.5 text-[9.5px] font-bold px-2 py-1 rounded-lg bg-[#161F2D] text-[#BCCCE6] border border-[#2A3446] truncate">
+                          <Smartphone className="size-3 text-[#BCCCE6] shrink-0 stroke-[1.75]" />
+                          <span>{storiesCount} {storiesCount === 1 ? "Story" : "Stories"}</span>
                         </span>
                       )}
                       {otherCount > 0 && (
-                        <span className="block text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 truncate">
-                          📌 {otherCount} Deliverable{otherCount > 1 ? "s" : ""}
+                        <span className="flex items-center gap-1.5 text-[9.5px] font-bold px-2 py-1 rounded-lg bg-[#161F2D] text-[#D8BF9B] border border-[#2A3446] truncate">
+                          <Pin className="size-3 text-[#D8BF9B] shrink-0 stroke-[1.75]" />
+                          <span className="truncate">{otherCount} Deliverable{otherCount > 1 ? "s" : ""}</span>
                         </span>
                       )}
                       {dayTasks.length === 0 && (
-                        <span className="block text-[9px] font-medium text-gray-300 group-hover:text-[#97A0B3] transition-colors pt-2">
-                          + Add item
+                        <span className="flex items-center gap-1 text-[9px] font-medium text-[#97A0B3] group-hover:text-white transition-colors pt-2">
+                          <Pencil className="size-2.5 text-[#97A0B3] stroke-[1.5]" />
+                          <span>+ Add item</span>
                         </span>
                       )}
                     </div>
@@ -3818,8 +4088,8 @@ export function AdminTeamManagementPage() {
       pendingReview: 0,
       allocatedHours: 120,
       totalHours: 120,
-      color: "bg-[#0EA5E9]",
-      textColor: "text-[#0EA5E9]",
+      color: "bg-[#7FA0D6]",
+      textColor: "text-[#7FA0D6]",
       pillBg: "bg-sky-50 text-sky-600 border-sky-100",
       squadLoad: 40,
       activeEngagements: 1,
@@ -4236,7 +4506,7 @@ export function AdminTeamManagementPage() {
               <button
                 type="button"
                 onClick={() => setIsAddMemberOpen(true)}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all shrink-0"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all shrink-0"
               >
                 <Plus className="w-4 h-4" /> Add Team Pod
               </button>
@@ -4245,7 +4515,7 @@ export function AdminTeamManagementPage() {
             {/* 3 KPI Summary Cards matching Screenshot 1 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Card 1: NO OF PODS */}
-              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
                     NO OF PODS
@@ -4264,7 +4534,7 @@ export function AdminTeamManagementPage() {
               </div>
 
               {/* Card 2: CAPACITY */}
-              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
                     CAPACITY
@@ -4278,7 +4548,7 @@ export function AdminTeamManagementPage() {
                   <span className="text-xs font-semibold text-[#97A0B3]">optimal bandwidth</span>
                 </div>
                 <div className="mt-4 pt-3 border-t border-[#2A3446] flex items-center gap-2">
-                  <div className="flex-1 bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                  <div className="flex-1 bg-[#161F2D] rounded-full h-2 overflow-hidden">
                     <div className="bg-emerald-600 h-full rounded-full w-[88%]" />
                   </div>
                   <span className="text-xs font-bold text-emerald-600">Healthy</span>
@@ -4286,7 +4556,7 @@ export function AdminTeamManagementPage() {
               </div>
 
               {/* Card 3: TASKS TO BE DONE */}
-              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
                     TASKS TO BE DONE
@@ -4332,7 +4602,7 @@ export function AdminTeamManagementPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-bold text-base text-white">{pod.name}</h4>
-                          <span className="px-2 py-0.5 rounded-full bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold">
+                          <span className="px-2 py-0.5 rounded-full bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold">
                             Sprint Pod
                           </span>
                         </div>
@@ -4372,7 +4642,7 @@ export function AdminTeamManagementPage() {
                       <span>Sprint Velocity</span>
                       <span className="font-bold text-white">{pod.velocityPct}% on track</span>
                     </div>
-                    <div className="w-full bg-[#1F2C3F] rounded-full h-2.5 overflow-hidden">
+                    <div className="w-full bg-[#161F2D] rounded-full h-2.5 overflow-hidden">
                       <div className={`h-full rounded-full ${pod.color}`} style={{ width: `${pod.velocityPct}%` }} />
                     </div>
                     <div className="flex justify-between text-[11px] text-[#97A0B3] font-medium pt-0.5">
@@ -4434,7 +4704,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setIsAddMemberOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                  className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all"
                 >
                   + Add Team Member
                 </button>
@@ -4495,7 +4765,7 @@ export function AdminTeamManagementPage() {
             <div className="bg-[#161F2D] rounded-2xl border border-[#2A3446] p-4 shadow-sm space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {/* Filter Pills matching Screenshot 2 */}
-                <div className="flex flex-wrap items-center gap-1.5 bg-[#1F2C3F] p-1 rounded-xl text-xs font-bold">
+                <div className="flex flex-wrap items-center gap-1.5 bg-[#161F2D] p-1 rounded-xl text-xs font-bold">
                   {[
                     { key: "all", label: `All Members (${membersList.filter((m) => !activePodId || m.podId === activePodId).length})` },
                     { key: "lead", label: "Leads" },
@@ -4512,7 +4782,7 @@ export function AdminTeamManagementPage() {
                       onClick={() => setRoleCategoryFilter(tab.key)}
                       className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                         roleCategoryFilter === tab.key
-                          ? "bg-[#2563EB] text-white shadow-xs"
+                          ? "bg-[#7FA0D6] text-white shadow-xs"
                           : "text-[#F1F5F9] hover:text-white"
                       }`}
                     >
@@ -4609,7 +4879,7 @@ export function AdminTeamManagementPage() {
                         {member.capabilities.map((cap) => (
                           <span
                             key={cap}
-                            className="px-2.5 py-1 rounded-lg bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold border border-[#2A3446]/60"
+                            className="px-2.5 py-1 rounded-lg bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold border border-[#2A3446]/60"
                           >
                             {cap}
                           </span>
@@ -4629,7 +4899,7 @@ export function AdminTeamManagementPage() {
                           {member.allocatedPct}% {member.allocatedPct >= 90 ? "Booked" : "Allocated"}
                         </span>
                       </div>
-                      <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                      <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
                         <div
                           className={`h-full rounded-full ${
                             member.allocatedPct >= 90 ? "bg-rose-500" : member.allocatedPct >= 70 ? "bg-blue-600" : "bg-emerald-500"
@@ -4692,7 +4962,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setAssignModalMember(null)}
-                  className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                  className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <X className="size-4" />
                 </button>
@@ -4741,7 +5011,7 @@ export function AdminTeamManagementPage() {
                         key={preset}
                         type="button"
                         onClick={() => setAssignForm({ ...assignForm, taskTitle: preset })}
-                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] transition-colors cursor-pointer"
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#161F2D] hover:bg-slate-200 text-[#F1F5F9] transition-colors cursor-pointer"
                       >
                         + {preset}
                       </button>
@@ -4791,7 +5061,7 @@ export function AdminTeamManagementPage() {
                           className={`py-1.5 text-center text-xs font-bold rounded-lg border transition-all cursor-pointer ${
                             assignForm.allocationIncrease === pct
                               ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
-                              : "bg-[#0B111C] text-[#F1F5F9] border-[#2A3446] hover:bg-[#1F2C3F]"
+                              : "bg-[#0B111C] text-[#F1F5F9] border-[#2A3446] hover:bg-[#161F2D]"
                           }`}
                         >
                           +{pct}%
@@ -4877,7 +5147,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setScheduleModalMember(null)}
-                  className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                  className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <X className="size-4" />
                 </button>
@@ -4943,7 +5213,7 @@ export function AdminTeamManagementPage() {
                           <span className="text-xs font-bold text-white truncate">{proj.name}</span>
                           <span className="text-[10px] font-bold text-[#97A0B3]">({proj.client})</span>
                         </div>
-                        <div className="w-full bg-[#1F2C3F] rounded-full h-1.5 mt-2 overflow-hidden">
+                        <div className="w-full bg-[#161F2D] rounded-full h-1.5 mt-2 overflow-hidden">
                           <div className={`h-full rounded-full ${proj.color}`} style={{ width: `${proj.progress}%` }} />
                         </div>
                       </div>
@@ -5006,7 +5276,7 @@ export function AdminTeamManagementPage() {
               <button
                 type="button"
                 onClick={() => setSuccessPopup(null)}
-                className="absolute top-4 right-4 size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
+                className="absolute top-4 right-4 size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
                 aria-label="Close modal"
               >
                 <X className="size-4" />
@@ -5065,7 +5335,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setIsAddMemberOpen(false)}
-                  className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                  className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <X className="size-4" />
                 </button>
@@ -5256,14 +5526,14 @@ export function AdminLeaveApprovalsPage() {
           <div className="flex items-center gap-3">
             <Link
               to="/admin/team"
-              className="px-3.5 py-2 rounded-xl bg-[#1F2C3F] hover:bg-slate-200 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="px-3.5 py-2 rounded-xl bg-[#161F2D] hover:bg-slate-200 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
             >
               <UserCog className="w-4 h-4 text-[#97A0B3]" /> Team Roster
             </Link>
             <button
               type="button"
               onClick={() => setIsApplyModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#2B7BC4] hover:bg-[#1A5EA8] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-[#7FA0D6] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Plus className="w-4 h-4" /> Apply for Leave
             </button>
@@ -5316,7 +5586,7 @@ export function AdminLeaveApprovalsPage() {
         {/* Requests Table */}
         <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] shadow-sm overflow-hidden">
           <div className="p-4 border-b border-[#2A3446] flex items-center justify-between bg-[#0B111C]/50">
-            <div className="flex items-center gap-1.5 bg-[#1F2C3F] p-1 rounded-xl text-xs">
+            <div className="flex items-center gap-1.5 bg-[#161F2D] p-1 rounded-xl text-xs">
               {(["all", "pending", "approved", "rejected"] as const).map((tab) => (
                 <button
                   key={tab}
@@ -5440,7 +5710,7 @@ export function AdminLeaveApprovalsPage() {
                 </div>
                 <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
                   <button type="button" onClick={() => setIsApplyModalOpen(false)} className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C]">Cancel</button>
-                  <button type="submit" className="px-4 py-2 rounded-xl bg-[#2B7BC4] text-xs font-bold text-white hover:bg-[#1A5EA8]">Submit</button>
+                  <button type="submit" className="px-4 py-2 rounded-xl bg-[#7FA0D6] text-xs font-bold text-white hover:bg-[#7FA0D6]">Submit</button>
                 </div>
               </form>
             </div>
@@ -5474,16 +5744,17 @@ export interface PlanNegotiationItem {
   id: string;
   clientName: string;
   clientLogo: string;
-  currentPlan: string;
-  proposedPlan: string;
-  originalPrice: number;
-  proposedPrice: number;
-  discountPct: number;
-  notes: string;
-  requestedAt: string;
+  clientEmail?: string;
+  targetTopic: string;
+  proposedOffer: string | null;
+  phoneNumber: string;
+  preferredTime: string;
+  notes: string | null;
+  requestedAt: string | null;
   status: "Pending Review" | "Accepted" | "Declined" | "Counter Offered";
-  counterPrice?: number;
-  declineReason?: string;
+  counterPrice?: number | null;
+  counterNote?: string | null;
+  declineReason?: string | null;
 }
 
 export function AdminRevenuePage() {
@@ -5609,7 +5880,7 @@ export function AdminRevenuePage() {
             <button
               type="button"
               onClick={() => setIsCreateInvoiceOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
             >
               <Plus className="w-4 h-4" /> Create Invoice
             </button>
@@ -5688,7 +5959,7 @@ export function AdminRevenuePage() {
 
               {/* Peak Marker Badge */}
               <div className="flex justify-end mb-2">
-                <span className="px-3 py-1 rounded-full text-[11px] font-black bg-[#2563EB] text-white shadow-md">
+                <span className="px-3 py-1 rounded-full text-[11px] font-black bg-[#7FA0D6] text-white shadow-md">
                   ₹{totalMrr > 0 ? totalMrr.toLocaleString('en-IN') : "24,80,000"} Current MRR
                 </span>
               </div>
@@ -5712,7 +5983,7 @@ export function AdminRevenuePage() {
                       <linearGradient id="revenueBarGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#BCCCE6" stopOpacity={1} />
                         <stop offset="45%" stopColor="#7FA0D6" stopOpacity={0.85} />
-                        <stop offset="100%" stopColor="#354B6E" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#2A3446" stopOpacity={0.35} />
                       </linearGradient>
                       <linearGradient id="revenueBarGradPeak" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#FFFFFF" stopOpacity={1} />
@@ -5804,7 +6075,7 @@ export function AdminRevenuePage() {
                     setToast("Plan tier metrics refreshed.");
                     setTimeout(() => setToast(null), 2500);
                   }}
-                  className="p-2 rounded-xl hover:bg-[#1F2C3F] text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer transition-colors"
+                  className="p-2 rounded-xl hover:bg-[#161F2D] text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer transition-colors"
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
@@ -5820,7 +6091,7 @@ export function AdminRevenuePage() {
                     </span>
                     <span className="text-white font-black">₹95,000 <span className="text-[10px] font-normal text-[#97A0B3]">/ mo</span></span>
                   </div>
-                  <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                  <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
                     <div className="bg-[#7FA0D6] h-full rounded-full w-[46.8%]" />
                   </div>
                   <div className="flex justify-between text-[11px] text-[#97A0B3] font-semibold">
@@ -5837,7 +6108,7 @@ export function AdminRevenuePage() {
                     </span>
                     <span className="text-white font-black">₹50,000 <span className="text-[10px] font-normal text-[#97A0B3]">/ mo</span></span>
                   </div>
-                  <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                  <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
                     <div className="bg-[#BCCCE6] h-full rounded-full w-[36.7%]" />
                   </div>
                   <div className="flex justify-between text-[11px] text-[#97A0B3] font-semibold">
@@ -5854,7 +6125,7 @@ export function AdminRevenuePage() {
                     </span>
                     <span className="text-white font-black">₹25,000 <span className="text-[10px] font-normal text-[#97A0B3]">/ mo</span></span>
                   </div>
-                  <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                  <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
                     <div className="bg-[#D8BF9B] h-full rounded-full w-[16.5%]" />
                   </div>
                   <div className="flex justify-between text-[11px] text-[#97A0B3] font-semibold">
@@ -5903,7 +6174,7 @@ export function AdminRevenuePage() {
               </div>
 
               {/* Status Filter Pills */}
-              <div className="flex items-center gap-1 bg-[#1F2C3F] p-1 rounded-xl text-xs font-bold">
+              <div className="flex items-center gap-1 bg-[#161F2D] p-1 rounded-xl text-xs font-bold">
                 {(["all", "paid", "pending", "overdue"] as const).map((st) => (
                   <button
                     key={st}
@@ -6089,7 +6360,7 @@ export function AdminRevenuePage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-[#2563EB] text-white font-bold hover:bg-blue-700 shadow-sm"
+                  className="px-4 py-2 rounded-xl bg-[#7FA0D6] text-white font-bold hover:bg-blue-700 shadow-sm"
                 >
                   Generate Invoice
                 </button>
@@ -6171,7 +6442,7 @@ export function AdminRevenuePage() {
                   window.print();
                   setSelectedReceipt(null);
                 }}
-                className="flex-1 py-2.5 rounded-xl bg-[#2563EB] text-white font-bold text-xs hover:bg-blue-700 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-[#7FA0D6] text-white font-bold text-xs hover:bg-blue-700 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Download className="w-4 h-4" /> Download PDF
               </button>
@@ -6260,8 +6531,38 @@ export function AdminPlansPage() {
   const [newPropProposedRate, setNewPropProposedRate] = useState("85000");
   const [newPropNotes, setNewPropNotes] = useState("");
 
-  // Client Plan Negotiations List (0 Mock Data - Real client contract proposals appear here)
+  // Client Plan Negotiations List — fetched from backend API
   const [negotiations, setNegotiations] = useState<PlanNegotiationItem[]>([]);
+
+  // Fetch negotiations from backend on mount
+  useEffect(() => {
+    let cancelled = false;
+    fetchPlanNegotiations()
+      .then((data: PlanNegotiationApiItem[]) => {
+        if (cancelled) return;
+        const mapped: PlanNegotiationItem[] = data.map((n) => ({
+          id: n.id,
+          clientName: n.clientName,
+          clientLogo: n.clientLogo,
+          clientEmail: n.clientEmail,
+          targetTopic: n.targetTopic,
+          proposedOffer: n.proposedOffer,
+          phoneNumber: n.phoneNumber,
+          preferredTime: n.preferredTime,
+          notes: n.notes,
+          requestedAt: n.requestedAt,
+          status: n.status,
+          counterPrice: n.counterPrice,
+          counterNote: n.counterNote,
+          declineReason: n.declineReason,
+        }));
+        setNegotiations(mapped);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch negotiations:", err);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Active Deals Pipeline (0 Mock Data - Real commercial pipeline deals appear here)
   const [deals, setDeals] = useState<
@@ -6280,46 +6581,66 @@ export function AdminPlansPage() {
   >([]);
 
   // Actions: ACCEPT Client Plan Negotiation
-  const handleAcceptNegotiation = (item: PlanNegotiationItem) => {
-    setNegotiations((prev) =>
-      prev.map((n) => (n.id === item.id ? { ...n, status: "Accepted" } : n))
-    );
-    setToast(`Plan Negotiation ACCEPTED for ${item.clientName}! Retainer activated at ₹${item.proposedPrice.toLocaleString('en-IN')}/mo.`);
+  const handleAcceptNegotiation = async (item: PlanNegotiationItem) => {
+    try {
+      await updatePlanNegotiation(item.id, "accept");
+      setNegotiations((prev) =>
+        prev.map((n) => (n.id === item.id ? { ...n, status: "Accepted" } : n))
+      );
+      setToast(`Plan Negotiation ACCEPTED for ${item.clientName}!`);
+    } catch (err) {
+      setToast(`Failed to accept negotiation: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
     setTimeout(() => setToast(null), 4000);
   };
 
   // Actions: DECLINE Client Plan Negotiation
-  const handleConfirmDecline = (e: React.FormEvent) => {
+  const handleConfirmDecline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!declineModalItem) return;
 
-    setNegotiations((prev) =>
-      prev.map((n) =>
-        n.id === declineModalItem.id
-          ? { ...n, status: "Declined", declineReason: declineReasonInput || "Price outside allowable margin." }
-          : n
-      )
-    );
-    setToast(`Plan Negotiation DECLINED for ${declineModalItem.clientName}. Notification sent.`);
+    try {
+      await updatePlanNegotiation(declineModalItem.id, "decline", {
+        decline_reason: declineReasonInput || "Price outside allowable margin.",
+      });
+      setNegotiations((prev) =>
+        prev.map((n) =>
+          n.id === declineModalItem.id
+            ? { ...n, status: "Declined", declineReason: declineReasonInput || "Price outside allowable margin." }
+            : n
+        )
+      );
+      setToast(`Plan Negotiation DECLINED for ${declineModalItem.clientName}. Notification sent.`);
+    } catch (err) {
+      setToast(`Failed to decline: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
     setDeclineModalItem(null);
     setDeclineReasonInput("");
     setTimeout(() => setToast(null), 4000);
   };
 
   // Actions: COUNTER-OFFER Client Plan Negotiation
-  const handleConfirmCounter = (e: React.FormEvent) => {
+  const handleConfirmCounter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!counterModalItem || !counterPriceInput) return;
 
     const price = parseFloat(counterPriceInput);
-    setNegotiations((prev) =>
-      prev.map((n) =>
-        n.id === counterModalItem.id
-          ? { ...n, status: "Counter Offered", counterPrice: price }
-          : n
-      )
-    );
-    setToast(`Counter offer of ₹${price.toLocaleString('en-IN')}/mo submitted to ${counterModalItem.clientName}.`);
+    try {
+      await updatePlanNegotiation(counterModalItem.id, "counter", {
+        counter_price: price,
+        counter_note: counterNoteInput || undefined,
+      });
+      setNegotiations((prev) =>
+        prev.map((n) =>
+          n.id === counterModalItem.id
+            ? { ...n, status: "Counter Offered", counterPrice: price, counterNote: counterNoteInput }
+            : n
+        )
+      );
+      setToast(`Counter offer of ₹${price.toLocaleString('en-IN')}/mo submitted to ${counterModalItem.clientName}.`);
+    } catch (err) {
+      setToast(`Failed to submit counter: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
     setCounterModalItem(null);
     setCounterPriceInput("");
     setCounterNoteInput("");
@@ -6327,30 +6648,39 @@ export function AdminPlansPage() {
   };
 
   // Actions: Create New Proposal Submit
-  const handleCreateProposalSubmit = (e: React.FormEvent) => {
+  const handleCreateProposalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPropClient || !newPropProposedRate) return;
 
-    const orig = parseFloat(newPropStandardRate) || 95000;
     const prop = parseFloat(newPropProposedRate) || 85000;
-    const disc = Math.max(0, Math.round(((orig - prop) / orig) * 100 * 10) / 10);
 
-    const newNeg: PlanNegotiationItem = {
-      id: `neg-${Math.floor(100 + Math.random() * 900)}`,
-      clientName: newPropClient,
-      clientLogo: newPropClient.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
-      currentPlan: newPropCurrentPlan,
-      proposedPlan: newPropTargetPlan,
-      originalPrice: orig,
-      proposedPrice: prop,
-      discountPct: disc,
-      notes: newPropNotes || "Custom enterprise proposal initiated by sales lead.",
-      requestedAt: "Just now",
-      status: "Pending Review",
-    };
+    try {
+      const res = await createPlanNegotiation({
+        client_name: newPropClient,
+        target_topic: `${newPropCurrentPlan} → ${newPropTargetPlan}`,
+        proposed_offer: `₹${prop.toLocaleString('en-IN')}/mo`,
+        notes: newPropNotes || "Custom enterprise proposal initiated by sales lead.",
+      });
 
-    setNegotiations((prev) => [newNeg, ...prev]);
-    setToast(`Custom retainer proposal initiated for ${newPropClient} (₹${prop.toLocaleString('en-IN')}/mo)!`);
+      const newNeg: PlanNegotiationItem = {
+        id: res.id || `neg-${Math.floor(100 + Math.random() * 900)}`,
+        clientName: newPropClient,
+        clientLogo: newPropClient.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
+        targetTopic: `${newPropCurrentPlan} → ${newPropTargetPlan}`,
+        proposedOffer: `₹${prop.toLocaleString('en-IN')}/mo`,
+        phoneNumber: "—",
+        preferredTime: "—",
+        notes: newPropNotes || "Custom enterprise proposal initiated by sales lead.",
+        requestedAt: new Date().toISOString(),
+        status: "Pending Review",
+      };
+
+      setNegotiations((prev) => [newNeg, ...prev]);
+      setToast(`Custom retainer proposal initiated for ${newPropClient} (₹${prop.toLocaleString('en-IN')}/mo)!`);
+    } catch (err) {
+      setToast(`Failed to create proposal: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+
     setIsNewProposalOpen(false);
     setNewPropClient("");
     setNewPropNotes("");
@@ -6459,8 +6789,8 @@ export function AdminPlansPage() {
     const matchesSearch =
       !search.trim() ||
       item.clientName.toLowerCase().includes(search.toLowerCase()) ||
-      item.proposedPlan.toLowerCase().includes(search.toLowerCase()) ||
-      item.notes.toLowerCase().includes(search.toLowerCase());
+      item.targetTopic.toLowerCase().includes(search.toLowerCase()) ||
+      (item.notes || "").toLowerCase().includes(search.toLowerCase());
 
     const matchesTab =
       filterTab === "all"
@@ -6499,7 +6829,7 @@ export function AdminPlansPage() {
             TOP 4 COMMERCIAL & PLAN KPI CARDS
         ───────────────────────────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">ACTIVE RETAINERS</span>
               <div className="w-7 h-7 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center font-bold">
@@ -6512,7 +6842,7 @@ export function AdminPlansPage() {
             <p className="text-xs text-[#7FA0D6] font-bold">MRR: ₹{totalRetainerRevenue.toLocaleString("en-IN")}</p>
           </div>
 
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">PENDING NEGOTIATIONS</span>
               <div className="w-7 h-7 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
@@ -6523,7 +6853,7 @@ export function AdminPlansPage() {
             <p className="text-xs text-amber-600 font-bold">Requires executive review</p>
           </div>
 
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">AVG RETAINER VALUE</span>
               <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-sm">
@@ -6534,7 +6864,7 @@ export function AdminPlansPage() {
             <p className="text-xs text-emerald-600 font-bold">High LTV retention</p>
           </div>
 
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">WIN / CLOSING RATE</span>
               <div className="w-7 h-7 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
@@ -6592,7 +6922,7 @@ export function AdminPlansPage() {
                     setEditPriceInput(String(plan.price_monthly));
                     setEditFeaturesInput(plan.features.join("\n"));
                   }}
-                  className="w-full py-2.5 rounded-xl bg-[#161F2D] hover:bg-[#1F2C3F] text-white text-xs font-bold border border-[#2A3446] transition-colors cursor-pointer shadow-2xs"
+                  className="w-full py-2.5 rounded-xl bg-[#161F2D] hover:bg-[#161F2D] text-white text-xs font-bold border border-[#2A3446] transition-colors cursor-pointer shadow-2xs"
                 >
                   Edit Tier Terms
                 </button>
@@ -6632,7 +6962,7 @@ export function AdminPlansPage() {
 
           {/* Search and Tabs */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#2A3446] pb-4">
-            <div className="flex items-center gap-1 bg-[#1F2C3F] p-1 rounded-xl text-xs font-bold text-[#F1F5F9] overflow-x-auto">
+            <div className="flex items-center gap-1 bg-[#161F2D] p-1 rounded-xl text-xs font-bold text-[#F1F5F9] overflow-x-auto">
               {[
                 { id: "all", label: "All Negotiations" },
                 { id: "pending", label: `Pending Review (${pendingCount})` },
@@ -6690,24 +7020,27 @@ export function AdminPlansPage() {
                           <h4 className="font-bold text-sm text-white">{item.clientName}</h4>
                           <span className="text-[10px] text-[#97A0B3] font-semibold">{item.requestedAt}</span>
                         </div>
-                        <p className="text-xs text-[#F1F5F9] font-medium">{item.currentPlan}</p>
+                        <p className="text-xs text-[#F1F5F9] font-medium">{item.targetTopic}</p>
+                        {item.clientEmail && <p className="text-[10px] text-[#97A0B3]">{item.clientEmail}</p>}
                       </div>
                     </div>
 
-                    {/* Pricing Comparison */}
-                    <div className="flex items-center gap-4 bg-[#161F2D] p-3 rounded-xl border border-[#2A3446]">
-                      <div className="text-right">
-                        <span className="text-[10px] text-[#97A0B3] uppercase block font-bold">Standard Rate</span>
-                        <span className="text-xs line-through text-[#97A0B3] font-bold">₹{item.originalPrice.toLocaleString("en-IN")}/mo</span>
-                      </div>
-                      <span className="text-gray-300 font-light">&rarr;</span>
+                    {/* Negotiation Details */}
+                    <div className="flex items-center gap-4 bg-[#161F2D] p-3 rounded-xl border border-[#2A3446] flex-wrap">
+                      {item.proposedOffer && (
+                        <div>
+                          <span className="text-[10px] text-[#7FA0D6] uppercase block font-bold">Proposed Offer</span>
+                          <span className="text-sm font-black text-emerald-400">{item.proposedOffer}</span>
+                        </div>
+                      )}
                       <div>
-                        <span className="text-[10px] text-[#7FA0D6] uppercase block font-bold">Proposed Rate</span>
-                        <span className="text-sm font-black text-emerald-600">₹{item.proposedPrice.toLocaleString("en-IN")}/mo</span>
+                        <span className="text-[10px] text-[#97A0B3] uppercase block font-bold">Contact</span>
+                        <span className="text-xs font-bold text-white">{item.phoneNumber}</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        {item.discountPct}% Off
-                      </span>
+                      <div>
+                        <span className="text-[10px] text-[#97A0B3] uppercase block font-bold">Preferred Time</span>
+                        <span className="text-xs font-bold text-white">{item.preferredTime}</span>
+                      </div>
                     </div>
 
                     {/* Status & Actions */}
@@ -6747,9 +7080,9 @@ export function AdminPlansPage() {
                             type="button"
                             onClick={() => {
                               setCounterModalItem(item);
-                              setCounterPriceInput(String(item.proposedPrice + 4000));
+                              setCounterPriceInput("");
                             }}
-                            className="px-3 py-2 rounded-xl bg-[#1F2C3F] hover:bg-gray-200 text-white font-bold text-xs cursor-pointer"
+                            className="px-3 py-2 rounded-xl bg-[#161F2D] hover:bg-gray-200 text-white font-bold text-xs cursor-pointer"
                           >
                             Counter
                           </button>
@@ -6759,9 +7092,11 @@ export function AdminPlansPage() {
                   </div>
 
                   {/* Scope Notes */}
-                  <div className="p-3 bg-[#161F2D] rounded-xl text-xs text-[#F1F5F9] border border-[#2A3446] font-medium">
-                    <strong className="text-white font-bold">Client Requested Terms:</strong> "{item.notes}"
-                  </div>
+                  {item.notes && (
+                    <div className="p-3 bg-[#161F2D] rounded-xl text-xs text-[#F1F5F9] border border-[#2A3446] font-medium">
+                      <strong className="text-white font-bold">Client Notes:</strong> "{item.notes}"
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -6827,7 +7162,7 @@ export function AdminPlansPage() {
                         <button
                           type="button"
                           onClick={() => handleOpenManageDeal(d)}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#1F2C3F] hover:bg-blue-600 hover:text-white text-white font-bold text-xs cursor-pointer shadow-2xs transition-all active:scale-95"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#161F2D] hover:bg-blue-600 hover:text-white text-white font-bold text-xs cursor-pointer shadow-2xs transition-all active:scale-95"
                         >
                           Manage
                         </button>
@@ -7113,14 +7448,14 @@ export function AdminPlansPage() {
                   setManageDealModal(null);
                   setManageMode("edit");
                 }}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
               >
                 <X className="size-4" />
               </button>
             </div>
 
             {/* Quick Action Navigation Bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 p-1.5 bg-[#1F2C3F]/80 rounded-2xl">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 p-1.5 bg-[#161F2D]/80 rounded-2xl">
               <button
                 type="button"
                 onClick={() => setManageMode("edit")}
@@ -7299,7 +7634,7 @@ export function AdminPlansPage() {
             <button
               type="button"
               onClick={() => setDealSuccessModal(null)}
-              className="absolute top-4 right-4 size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
+              className="absolute top-4 right-4 size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
               aria-label="Close modal"
             >
               <X className="size-4" />

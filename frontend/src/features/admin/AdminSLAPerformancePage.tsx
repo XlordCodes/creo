@@ -18,8 +18,8 @@ export function AdminSLAPerformancePage() {
     {
       pod: "Pod A",
       lead: "Vikram Malhotra",
-      bg: "bg-[#E0E7FF]",
-      text: "text-[#4338CA]",
+      bg: "bg-[#161F2D]",
+      text: "text-[#7FA0D6]",
       slaMet: "99.4%",
       avgResponse: "6.2m",
       resolved: "42 tickets",
@@ -29,8 +29,8 @@ export function AdminSLAPerformancePage() {
     {
       pod: "Pod B",
       lead: "Sarah Connor",
-      bg: "bg-[#DBEAFE]",
-      text: "text-[#1E40AF]",
+      bg: "bg-[#161F2D]",
+      text: "text-[#7FA0D6]",
       slaMet: "98.8%",
       avgResponse: "7.8m",
       resolved: "38 tickets",
@@ -40,8 +40,8 @@ export function AdminSLAPerformancePage() {
     {
       pod: "Pod C",
       lead: "Rohan Mehta",
-      bg: "bg-[#FEE2E2]",
-      text: "text-[#991B1B]",
+      bg: "bg-[#161F2D]",
+      text: "text-[#D8BF9B]",
       slaMet: "97.5%",
       avgResponse: "9.1m",
       resolved: "35 tickets",
@@ -150,12 +150,12 @@ export function AdminSLAPerformancePage() {
                   <svg className="w-full h-full" viewBox="0 0 500 110" preserveAspectRatio="none">
                     <defs>
                       <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.35" />
-                        <stop offset="100%" stopColor="#3B82F6" stopOpacity="0.02" />
+                        <stop offset="0%" stopColor="#7FA0D6" stopOpacity="0.35" />
+                        <stop offset="100%" stopColor="#7FA0D6" stopOpacity="0.02" />
                       </linearGradient>
                       <linearGradient id="indigoGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#6366F1" stopOpacity="0.25" />
-                        <stop offset="100%" stopColor="#6366F1" stopOpacity="0.0" />
+                        <stop offset="0%" stopColor="#7FA0D6" stopOpacity="0.25" />
+                        <stop offset="100%" stopColor="#7FA0D6" stopOpacity="0.0" />
                       </linearGradient>
                     </defs>
                     {/* Area Fill */}
@@ -167,7 +167,7 @@ export function AdminSLAPerformancePage() {
                     <path
                       d="M 0 68 C 60 40, 120 72, 180 44 C 240 20, 300 58, 360 32 C 420 14, 470 48, 500 24"
                       fill="none"
-                      stroke="#3B82F6"
+                      stroke="#7FA0D6"
                       strokeWidth="3.5"
                       strokeLinecap="round"
                     />
@@ -175,7 +175,7 @@ export function AdminSLAPerformancePage() {
                     <path
                       d="M 0 82 C 60 55, 120 68, 180 54 C 240 34, 300 50, 360 40 C 420 24, 470 38, 500 34"
                       fill="none"
-                      stroke="#818CF8"
+                      stroke="#BCCCE6"
                       strokeWidth="2.5"
                       strokeDasharray="5 3"
                       strokeLinecap="round"

@@ -169,7 +169,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
           type="button"
           onClick={onClose}
           disabled={loading}
-          className="absolute top-5 right-5 size-8 rounded-full bg-[#1F2C3F] text-[#97A0B3] hover:bg-[#25344A] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+          className="absolute top-5 right-5 size-8 rounded-full bg-[#161F2D] text-[#97A0B3] hover:bg-[#2A3446] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
         >
           <X className="size-4" />
         </button>
@@ -196,7 +196,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-950/40 border border-rose-800/50 text-rose-300 text-xs font-medium">
+          <div className="mb-4 p-3 rounded-xl bg-blue-950/50 border border-blue-800/60 text-blue-200 text-xs font-medium">
             {error}
           </div>
         )}
@@ -264,7 +264,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <h4 className="font-bold text-xs text-white">{preset.name}</h4>
                         {isCurrent && (
-                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-800 px-1.5 py-0.2 rounded-md">
+                          <span className="text-[9px] font-bold text-[#BCCCE6] bg-blue-950/60 border border-blue-800 px-1.5 py-0.2 rounded-md">
                             Current
                           </span>
                         )}
@@ -305,7 +305,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                         className={`w-full py-1.5 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                           isSelected
                             ? "bg-[#BCCCE6] text-[#0B111C] shadow-xs"
-                            : "bg-[#161F2D] text-[#F1F5F9] hover:bg-[#1F2C3F] border border-[#2A3446]"
+                            : "bg-[#161F2D] text-[#F1F5F9] hover:bg-[#161F2D] border border-[#2A3446]"
                         }`}
                       >
                         <CheckCircle2 className="size-3" />
@@ -400,7 +400,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                       key={amt}
                       type="button"
                       onClick={() => setCustomPrice(amt)}
-                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] text-[#F1F5F9] cursor-pointer"
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] text-[#F1F5F9] cursor-pointer"
                     >
                       ₹{amt / 1000}k
                     </button>
@@ -428,7 +428,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                     <button
                       type="button"
                       onClick={() => setCustomReels((prev) => Math.max(0, prev - 1))}
-                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
+                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
                     >
                       <Minus className="size-3" />
                     </button>
@@ -436,7 +436,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                     <button
                       type="button"
                       onClick={() => setCustomReels((prev) => prev + 1)}
-                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
+                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
                     >
                       <Plus className="size-3" />
                     </button>
@@ -455,7 +455,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                     <button
                       type="button"
                       onClick={() => setCustomPosters((prev) => Math.max(0, prev - 1))}
-                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
+                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
                     >
                       <Minus className="size-3" />
                     </button>
@@ -463,7 +463,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                     <button
                       type="button"
                       onClick={() => setCustomPosters((prev) => prev + 1)}
-                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
+                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
                     >
                       <Plus className="size-3" />
                     </button>
@@ -482,7 +482,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                     <button
                       type="button"
                       onClick={() => setCustomStories((prev) => Math.max(0, prev - 1))}
-                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
+                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
                     >
                       <Minus className="size-3" />
                     </button>
@@ -490,7 +490,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
                     <button
                       type="button"
                       onClick={() => setCustomStories((prev) => prev + 1)}
-                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#1F2C3F] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
+                      className="size-7 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:bg-[#161F2D] flex items-center justify-center text-[#97A0B3] hover:text-white cursor-pointer"
                     >
                       <Plus className="size-3" />
                     </button>
@@ -537,7 +537,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#1F2C3F] transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#97A0B3] hover:text-white hover:bg-[#161F2D] transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -545,7 +545,7 @@ export function FixPlanModal({ isOpen, client, onClose, onSuccess }: FixPlanModa
               type="button"
               disabled={loading}
               onClick={handleConfirm}
-              className="px-5 py-2.5 rounded-xl bg-[#BCCCE6] hover:bg-[#D4E2F5] text-[#0B111C] text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl bg-[#BCCCE6] hover:bg-[#BCCCE6] text-[#0B111C] text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               {loading ? (
                 <Loader2 className="size-3.5 animate-spin" />

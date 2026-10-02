@@ -11,6 +11,7 @@ import type {
 } from "../types/ops";
 import { request } from "./http";
 export { request };
+export type { ClientRosterItem, AdminDashboardData, AdminKPIs, AdminQueueData, SLABreachItem };
 
 export async function autoAssignTask(
   taskId: string,
@@ -300,6 +301,12 @@ export interface PodTask {
   client_id: string;
   client_name: string;
   assigned_to: string | null;
+  assignee: {
+    id: string;
+    full_name: string;
+    email: string;
+    role?: string;
+  } | null;
   assignee_name: string;
   assignee_role: string | null;
   deliverable_type: "reel" | "carousel" | "story" | "static_post" | "shoot_day" | string;
@@ -419,4 +426,69 @@ export async function reassignPodTask(
     }
   );
 }
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan Negotiations API
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PlanNegotiationApiItem {
+  id: string;
+  clientName: string;
+  clientEmail: string;
+  clientLogo: string;
+  targetTopic: string;
+  proposedOffer: string | null;
+  phoneNumber: string;
+  preferredTime: string;
+  notes: string | null;
+  status: "Pending Review" | "Accepted" | "Declined" | "Counter Offered";
+  counterPrice: number | null;
+  counterNote: string | null;
+  declineReason: string | null;
+  requestedAt: string | null;
+  reviewedAt: string | null;
+}
+
+export async function fetchPlanNegotiations(): Promise<PlanNegotiationApiItem[]> {
+  return request<PlanNegotiationApiItem[]>(`/api/v1/admin/negotiations`);
+}
+
+export async function updatePlanNegotiation(
+  negId: string,
+  action: "accept" | "decline" | "counter",
+  extra?: { decline_reason?: string; counter_price?: number; counter_note?: string },
+): Promise<{ status: string; message: string; negotiation_id: string; new_status: string }> {
+  return request<{ status: string; message: string; negotiation_id: string; new_status: string }>(
+    `/api/v1/admin/negotiations/${negId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ action, ...extra }),
+    }
+  );
+}
+
+export async function createPlanNegotiation(payload: {
+  client_name: string;
+  target_topic: string;
+  proposed_offer?: string;
+  phone_number?: string;
+  preferred_time?: string;
+  notes?: string;
+  client_email?: string;
+  client_id?: string;
+}): Promise<{ status: string; id: string; message: string }> {
+  return request<{ status: string; id: string; message: string }>(
+    `/api/v1/admin/negotiations`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function fetchClientNegotiations(): Promise<PlanNegotiationApiItem[]> {
+  return request<PlanNegotiationApiItem[]>(`/api/v1/portal/negotiations`);
+}
+
 

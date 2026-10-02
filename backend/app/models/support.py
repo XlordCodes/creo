@@ -60,6 +60,7 @@ class Ticket(Base, UUIDPrimaryKeyMixin):
     )
 
     assignee: Mapped[User | None] = relationship("User", foreign_keys=[assigned_to])
+    client: Mapped[User] = relationship("User", foreign_keys=[client_id])
     deliverable: Mapped[Deliverable | None] = relationship("Deliverable", foreign_keys=[deliverable_id])
     messages: Mapped[list[TicketMessage]] = relationship(
         "TicketMessage", back_populates="ticket", cascade="all, delete-orphan"
@@ -93,3 +94,4 @@ class TicketMessage(Base, UUIDPrimaryKeyMixin):
     )
 
     ticket: Mapped[Ticket] = relationship("Ticket", back_populates="messages")
+    sender: Mapped["User"] = relationship("User", foreign_keys=[sender_id])

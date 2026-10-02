@@ -5,7 +5,6 @@ const QUICK_LINKS = [
   { label: "Home", href: "/" },
   { label: "About Us", href: "/about" },
   { label: "Pricing & Plans", href: "/pricing" },
-  { label: "FAQ Documentation", href: "/faq" },
 ];
 
 const LEGAL_LINKS = [
@@ -20,7 +19,6 @@ export function Footer() {
         
         {/* 1. Pre-Footer Conversion Bento Banner */}
         <div className="bg-[#121926] border border-[#222F44] rounded-3xl p-6 sm:p-10 text-center mb-10 sm:mb-12 shadow-2xl relative overflow-hidden">
-          <div className="absolute -top-24 right-1/4 size-96 bg-[#7FA0D6]/5 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10">
             <h2 className="text-2xl sm:text-4xl font-black text-[#F8FAFC] tracking-tight">
               Stop managing the chaos. Start operating the momentum.
@@ -31,7 +29,7 @@ export function Footer() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link 
                 to="/pricing" 
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#BCCCE6] text-[#050810] hover:bg-white font-bold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] px-7 py-3.5 rounded-full text-xs sm:text-sm"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#BCCCE6] text-[#050810] hover:bg-white font-bold transition-all shadow-sm px-7 py-3.5 rounded-full text-xs sm:text-sm"
               >
                 <span>Deploy CREO in Your Agency</span>
                 <ArrowRight className="size-4" />
@@ -40,7 +38,7 @@ export function Footer() {
                 href="https://wa.me/919941999415" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#0A0F18] border border-[#222F44] text-[#F8FAFC] hover:bg-[#1A2333] transition-colors px-6 py-3.5 rounded-full text-xs sm:text-sm font-semibold"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#0A0F18] border border-[#222F44] text-[#F8FAFC] hover:bg-[#0B111C] transition-colors px-6 py-3.5 rounded-full text-xs sm:text-sm font-semibold"
               >
                 <MessageCircle className="size-4 text-emerald-400" />
                 <span>Schedule Live Demo</span>
@@ -62,7 +60,7 @@ export function Footer() {
             </p>
             <div className="pt-2 text-xs text-[#97A0B3] flex items-center gap-2">
               <MapPin className="size-3.5 text-[#7FA0D6] shrink-0" />
-              <span>Chennai &amp; Bengaluru, India</span>
+              <span>Bangalore, India</span>
             </div>
           </div>
 
@@ -151,7 +149,7 @@ export function Footer() {
                 href="https://www.linkedin.com/in/creo-tool-3bb3b841b?utm_source=share_via&utm_content=profile&utm_medium=member_android"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex size-9 items-center justify-center rounded-xl border border-[#222F44] bg-[#0A0F18] text-[#97A0B3] hover:text-white hover:bg-[#0A66C2] hover:border-transparent transition-all shadow-xs"
+                className="flex size-9 items-center justify-center rounded-xl border border-[#222F44] bg-[#0A0F18] text-[#97A0B3] hover:text-white hover:bg-[#7FA0D6] hover:border-transparent transition-all shadow-xs"
                 aria-label="LinkedIn"
                 title="LinkedIn"
               >
@@ -165,7 +163,7 @@ export function Footer() {
                 href="https://www.facebook.com/share/1GKDeenkvC/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex size-9 items-center justify-center rounded-xl border border-[#222F44] bg-[#0A0F18] text-[#97A0B3] hover:text-white hover:bg-[#1877F2] hover:border-transparent transition-all shadow-xs"
+                className="flex size-9 items-center justify-center rounded-xl border border-[#222F44] bg-[#0A0F18] text-[#97A0B3] hover:text-white hover:bg-[#7FA0D6] hover:border-transparent transition-all shadow-xs"
                 aria-label="Facebook"
                 title="Facebook"
               >

@@ -49,7 +49,7 @@ export function CreoTopNavbar() {
       return await request<NotificationPayload>("/api/v1/notifications");
     },
     enabled: !!user?.id,
-    refetchInterval: 15000,
+    refetchInterval: 5000,
   });
 
   const rawNotifications = notifData?.items || [];

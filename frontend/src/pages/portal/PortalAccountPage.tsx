@@ -47,7 +47,7 @@ export function PortalAccountPage() {
     voiceWords: [] as string[],
     audience: "",
     competitors: "",
-    colors: ["#BA5A2B", "#F3EBDD", "#2B1D14", "#5D7A45"],
+    colors: ["#D8BF9B", "#161F2D", "#0B111C", "#7FA0D6"],
   });
 
   useEffect(() => {
@@ -182,13 +182,13 @@ export function PortalAccountPage() {
             <div className="border-2 border-dashed border-white/[0.1] rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-white/[0.2] transition-colors">
               <Upload className="w-5 h-5 text-[#97A0B3] mb-3" />
               <p className="text-[13px] font-bold text-white mb-1">Drop your logo, fonts and product photos</p>
-              <p className="text-xs text-[#7E889C]">Optional now, you can add them later in Brand DNA</p>
+              <p className="text-xs text-[#97A0B3]">Optional now, you can add them later in Brand DNA</p>
             </div>
 
             <div className="flex items-center justify-between pt-4">
-              <span className="text-xs text-[#7E889C]">Saved automatically</span>
+              <span className="text-xs text-[#97A0B3]">Saved automatically</span>
               <div className="flex items-center gap-3">
-                <button onClick={() => setSearchParams({ tab: "brand" })} className="px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors">
+                <button onClick={() => setSearchParams({ tab: "brand" })} className="px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#161F2D] transition-colors">
                   Back
                 </button>
                 <button onClick={handleSaveBrandDNA} className="px-5 py-2.5 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors flex items-center justify-center">
@@ -208,13 +208,13 @@ export function PortalAccountPage() {
       <div className="animate-in fade-in duration-500">
         <div className="flex items-end justify-between mb-6">
           <div>
-            <p className="text-[11px] font-bold text-[#7E889C] uppercase tracking-[0.15em] mb-1">
+            <p className="text-[11px] font-bold text-[#97A0B3] uppercase tracking-[0.15em] mb-1">
               VERSION 3 · UPDATED BY YOU ON 2 SEP
             </p>
             <h1 className="text-3xl font-semibold text-white">Brand DNA</h1>
           </div>
           <div className="flex items-center gap-3">
-            <button className="px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors">
+            <button className="px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#161F2D] transition-colors">
               Version history
             </button>
             <button onClick={() => setSearchParams({ tab: "edit-brand" })} className="px-5 py-2.5 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors">
@@ -231,21 +231,23 @@ export function PortalAccountPage() {
                 {profile?.brand_dna?.summary_line || form.whatYouSell || "Strategic, engaging, and aligned with your target audience brand guidelines."}
               </p>
               <div className="flex flex-wrap gap-2">
-                {form.voiceWords.map(word => (
+                {((profile?.brand_dna?.tone?.voice_words || form.voiceWords) as string[])?.map((word: string) => (
                   <span key={word} className="px-3 py-1.5 rounded-lg border border-[#2A3446] text-[13px] font-medium text-white">{word}</span>
                 ))}
               </div>
             </div>
 
-            <div className="bg-[#161F2D] border border-[#2A3446] rounded-[24px] p-6 lg:p-8 flex gap-8">
+            <div className="bg-[#161F2D] border border-[#2A3446] rounded-[24px] p-6 lg:p-8 flex flex-col gap-6">
               <div className="flex-1">
-                <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#7E889C] mb-2">MAIN AUDIENCE</h3>
-                <p className="text-[13px] text-white leading-relaxed">{form.audience || profile?.brand_dna?.target_audience || "Target customer demographic and core audience segment."}</p>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#7E889C] mb-2">WHAT THEY CARE ABOUT</h3>
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#97A0B3] mb-2">MAIN AUDIENCE</h3>
                 <p className="text-[13px] text-white leading-relaxed">
-                  {profile?.brand_dna?.value_propositions || "Authenticity, product quality, value proposition, and brand reliability."}
+                  {profile?.brand_dna?.audience_segments?.[0]?.description || form.audience || profile?.brand_dna?.target_audience || "Target customer demographic and core audience segment."}
+                </p>
+              </div>
+              <div className="flex-1 pt-6 border-t border-[#2A3446]">
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#97A0B3] mb-2">CORE PAIN POINTS & WHAT THEY CARE ABOUT</h3>
+                <p className="text-[13px] text-white leading-relaxed">
+                  {profile?.brand_dna?.audience_segments?.[0]?.core_pain_point || profile?.brand_dna?.value_propositions || "Authenticity, product quality, value proposition, and brand reliability."}
                 </p>
               </div>
             </div>
@@ -255,9 +257,9 @@ export function PortalAccountPage() {
               <div className="flex gap-8">
                 <div className="flex-1 space-y-3">
                   <h4 className="text-[13px] font-bold text-white">Do</h4>
-                  <ul className="text-[13px] text-[#97A0B3] space-y-2">
-                    {profile?.brand_dna?.guidelines?.dos?.length > 0 ? (
-                      profile.brand_dna.guidelines.dos.map((item: string, i: number) => <li key={i}>{item}</li>)
+                  <ul className="text-[13px] text-[#97A0B3] space-y-2 list-disc list-inside">
+                    {profile?.brand_dna?.tone?.writing_rules?.length > 0 ? (
+                      profile.brand_dna.tone.writing_rules.map((item: string, i: number) => <li key={i} className="leading-snug">{item}</li>)
                     ) : (
                       <>
                         <li>Highlight clear product value & storytelling</li>
@@ -269,9 +271,9 @@ export function PortalAccountPage() {
                 </div>
                 <div className="flex-1 space-y-3">
                   <h4 className="text-[13px] font-bold text-[#F87171]">Don't</h4>
-                  <ul className="text-[13px] text-[#97A0B3] space-y-2">
-                    {profile?.brand_dna?.guidelines?.donts?.length > 0 ? (
-                      profile.brand_dna.guidelines.donts.map((item: string, i: number) => <li key={i}>{item}</li>)
+                  <ul className="text-[13px] text-[#97A0B3] space-y-2 list-disc list-inside">
+                    {(profile?.brand_dna?.guidelines?.donts?.length > 0 || profile?.brand_dna?.do_not?.length > 0) ? (
+                      (profile.brand_dna.guidelines?.donts || profile.brand_dna.do_not).map((item: string, i: number) => <li key={i} className="leading-snug">{item}</li>)
                     ) : (
                       <>
                         <li>Generic stock photos without custom grading</li>
@@ -291,14 +293,14 @@ export function PortalAccountPage() {
               <div className="grid grid-cols-4 gap-3 mb-6">
                 {form.colors.map((hex, idx) => (
                   <div key={idx}>
-                    <div className="w-full aspect-[4/3] rounded-lg mb-2 border border-[#2A3446]" style={{ backgroundColor: hex || "#1F2C3F" }} />
+                    <div className="w-full aspect-[4/3] rounded-lg mb-2 border border-[#2A3446]" style={{ backgroundColor: hex || "#161F2D" }} />
                     <p className="text-xs font-bold text-white">Color {idx + 1}</p>
-                    <p className="text-[11px] text-[#7E889C] uppercase">{hex || "None"}</p>
+                    <p className="text-[11px] text-[#97A0B3] uppercase">{hex || "None"}</p>
                   </div>
                 ))}
               </div>
               <div className="pt-4 border-t border-[#2A3446]">
-                <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#7E889C] mb-1">TYPE</h3>
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#97A0B3] mb-1">TYPE</h3>
                 <p className="text-[13px] text-[#97A0B3]">
                   Headlines: {profile?.brand_dna?.typography?.headline || "Inter"} · Body: {profile?.brand_dna?.typography?.body || "Inter"}
                 </p>
@@ -316,7 +318,7 @@ export function PortalAccountPage() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-[13px] text-[#7E889C] py-2">
+                  <p className="text-[13px] text-[#97A0B3] py-2">
                     Campaign hook angles and high-CTR concepts generated during sprints will appear here.
                   </p>
                 )}
@@ -330,11 +332,11 @@ export function PortalAccountPage() {
                   profile.brand_dna.files.map((file: any, idx: number) => (
                     <div key={idx} className="flex items-center justify-between py-2 text-[13px]">
                       <span className="text-[#97A0B3]">{file.name || `Asset-${idx + 1}`}</span>
-                      <span className="text-[#7E889C] text-xs">{file.size || "Ready"}</span>
+                      <span className="text-[#97A0B3] text-xs">{file.size || "Ready"}</span>
                     </div>
                   ))
                 ) : (
-                  <p className="text-[13px] text-[#7E889C] py-2">
+                  <p className="text-[13px] text-[#97A0B3] py-2">
                     No brand files or logo packs uploaded yet.
                   </p>
                 )}
@@ -354,7 +356,7 @@ export function PortalAccountPage() {
     <div className="animate-in fade-in duration-500">
       <div className="flex items-end justify-between mb-8">
         <div>
-          <p className="text-[11px] font-bold text-[#7E889C] uppercase tracking-[0.15em] mb-1">
+          <p className="text-[11px] font-bold text-[#97A0B3] uppercase tracking-[0.15em] mb-1">
             ACCOUNT
           </p>
           <h1 className="text-3xl font-semibold text-white">Settings</h1>
@@ -398,7 +400,7 @@ export function PortalAccountPage() {
                 </div>
                 <div>
                   <h4 className="text-[13px] font-bold text-white mb-0.5">Not connected yet</h4>
-                  <p className="text-xs text-[#7E889C]">Connect to publish automatically and see results.</p>
+                  <p className="text-xs text-[#97A0B3]">Connect to publish automatically and see results.</p>
                 </div>
               </div>
               <button className="px-4 py-2 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors whitespace-nowrap">
@@ -416,10 +418,10 @@ export function PortalAccountPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[13px] text-[#97A0B3]">Marketing manager</span>
-                <button className="px-4 py-1.5 rounded-full border border-[#2A3446] text-white text-[13px] font-bold hover:bg-[#1F2C3F] transition-colors">Invite</button>
+                <button className="px-4 py-1.5 rounded-full border border-[#2A3446] text-white text-[13px] font-bold hover:bg-[#161F2D] transition-colors">Invite</button>
               </div>
             </div>
-            <p className="text-xs text-[#7E889C]">Invited people can review and comment; only admins can approve and pay.</p>
+            <p className="text-xs text-[#97A0B3]">Invited people can review and comment; only admins can approve and pay.</p>
           </div>
           
         </div>
@@ -449,18 +451,18 @@ export function PortalAccountPage() {
             <div className="space-y-5 mb-6">
               <div className="flex items-center justify-between border-b border-[#2A3446] pb-5">
                 <span className="text-[13px] text-white">Password</span>
-                <button className="px-4 py-1.5 rounded-full border border-[#2A3446] text-white text-[13px] font-bold hover:bg-[#1F2C3F] transition-colors">Change password</button>
+                <button className="px-4 py-1.5 rounded-full border border-[#2A3446] text-white text-[13px] font-bold hover:bg-[#161F2D] transition-colors">Change password</button>
               </div>
               <div className="flex items-center justify-between border-b border-[#2A3446] pb-5">
                 <span className="text-[13px] text-white">2-step verification</span>
-                <button className="px-4 py-1.5 rounded-full border border-[#2A3446] text-white text-[13px] font-bold hover:bg-[#1F2C3F] transition-colors">Set up</button>
+                <button className="px-4 py-1.5 rounded-full border border-[#2A3446] text-white text-[13px] font-bold hover:bg-[#161F2D] transition-colors">Set up</button>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[13px] text-white">Signed-in devices</span>
-                <span className="text-[13px] text-[#7E889C]">2 devices</span>
+                <span className="text-[13px] text-[#97A0B3]">2 devices</span>
               </div>
             </div>
-            <p className="text-xs text-[#7E889C]">Changing your password asks for your current one first.</p>
+            <p className="text-xs text-[#97A0B3]">Changing your password asks for your current one first.</p>
           </div>
         </div>
       </div>

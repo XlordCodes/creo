@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, Link, useNavigate } from "react-router";
 import { motion } from "motion/react";
 import { request } from "../../lib/http";
 import {
@@ -27,6 +27,7 @@ import {
   Share2,
   Archive,
   Sparkles,
+  RotateCcw,
 } from "lucide-react";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
 
@@ -42,8 +43,18 @@ interface MessageEntry {
   isSystemAudit?: boolean;
 }
 
+const getInitials = (name?: string) => {
+  if (!name) return "?";
+  const parts = name.trim().split(" ").filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return (parts[0] || "").slice(0, 2).toUpperCase();
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase();
+};
+
 export function AdminTicketDetailPage() {
-  const { ticketId = "1039" } = useParams();
+  const navigate = useNavigate();
+  const { id, ticketId } = useParams();
+  const activeId = id || ticketId || "1039";
   const [activeTab, setActiveTab] = useState<"public" | "internal">("public");
   const [replyText, setReplyText] = useState("");
   const [isResolved, setIsResolved] = useState(false);
@@ -64,6 +75,8 @@ export function AdminTicketDetailPage() {
     priority: string;
     status: string;
     time: string;
+    assignee_name?: string;
+    assignee_role?: string;
   } | null>(null);
 
   // Modals & Menus
@@ -106,124 +119,183 @@ export function AdminTicketDetailPage() {
   ]);
 
   useEffect(() => {
-    // Special predefined details for ticket 1781
-    if (ticketId === "1781" || ticketId.includes("1781")) {
-      setTicketData({
-        id: "1781",
-        client: "Sushmitaa",
-        email: "sushmitaa1407@gmail.com",
-        tier: "Enterprise Acceleration",
-        title: "deliverables not received on time, checkout",
-        description: "I've not received my deliverables which was scheduled yesterday",
-        priority: "High",
-        status: "Resolved",
-        time: "Yesterday, 4:15 PM",
-      });
-      setIsResolved(true);
-      setMessages([
-        {
-          id: "msg-1781-1",
-          author: "Sushmitaa",
-          role: "Enterprise Acceleration • Client",
-          avatar: "S",
-          avatarBg: "bg-blue-600",
-          timestamp: "Yesterday at 4:15 PM",
-          text: "I've not received my deliverables which was scheduled yesterday",
-        },
-        {
-          id: "msg-1781-2",
-          author: "Pod Lead",
-          role: "Pod Lead • Creative Pod Alpha",
-          avatar: "PL",
-          avatarBg: "bg-[#0F172A]",
-          timestamp: "Yesterday at 4:48 PM",
-          text: "Hi Sushmitaa, we apologize for the short delay! The final 4K color grade has been expedited and is now ready in your Deliverables tab.",
-        },
-      ]);
-    }
-
-    // 1. Try shared storage
-    try {
-      const stored = JSON.parse(localStorage.getItem("creo_support_tickets") || "[]");
-      const found = stored.find(
-        (t: any) =>
-          String(t.id).toLowerCase() === ticketId.toLowerCase() ||
-          ticketId.toLowerCase().includes(String(t.id).toLowerCase())
-      );
-      if (found) {
+    const fetchData = () => {
+      // Special predefined details for ticket 1781
+      if (activeId === "1781" || activeId.includes("1781")) {
         setTicketData({
-          id: String(found.id),
-          client: found.client || "Client",
-          email: found.email || "client@creo.agency",
-          tier: found.tier || "Active Retainer",
-          title: found.issueTitle || found.title || "Support Request",
-          description: found.issueDesc || found.description || "",
-          priority: found.priority || "Urgent",
-          status: found.status || "Open",
-          time: found.timeLog || "Recently",
+          id: "1781",
+          client: "Sushmitaa",
+          email: "sushmitaa1407@gmail.com",
+          tier: "Enterprise Acceleration",
+          title: "deliverables not received on time, checkout",
+          description: "I've not received my deliverables which was scheduled yesterday",
+          priority: "High",
+          status: "Resolved",
+          time: "Yesterday, 4:15 PM",
         });
-        if (found.status === "Resolved") {
-          setIsResolved(true);
-        }
-        if (found.issueDesc || found.description) {
-          setMessages([
-            {
-              id: "msg-initial",
-              author: found.client || "Client Account",
-              role: `${found.tier || "Active Retainer"} • Client`,
-              avatar: (found.client || "C")[0].toUpperCase(),
-              avatarBg: "bg-slate-800",
-              timestamp: found.timeLog || "Recently",
-              text: found.issueDesc || found.description,
-            },
-          ]);
-        }
+        setIsResolved(true);
+        setMessages([
+          {
+            id: "msg-1781-1",
+            author: "Sushmitaa",
+            role: "Enterprise Acceleration • Client",
+            avatar: "S",
+            avatarBg: "bg-blue-600",
+            timestamp: "Yesterday at 4:15 PM",
+            text: "I've not received my deliverables which was scheduled yesterday",
+          },
+          {
+            id: "msg-1781-2",
+            author: "Pod Lead",
+            role: "Pod Lead • Creative Pod Alpha",
+            avatar: "PL",
+            avatarBg: "bg-[#0B111C]",
+            timestamp: "Yesterday at 4:48 PM",
+            text: "Hi Sushmitaa, we apologize for the short delay! The final 4K color grade has been expedited and is now ready in your Deliverables tab.",
+          },
+        ]);
         return;
       }
-    } catch {}
 
-    // 2. Try server API
-    request<any[]>(`/api/v1/admin/support/tickets`)
-      .then((tickets) => {
-        if (Array.isArray(tickets)) {
-          const match = tickets.find(
-            (t) =>
-              String(t.id).toLowerCase() === ticketId.toLowerCase() ||
-              ticketId.toLowerCase().includes(String(t.id).toLowerCase())
-          );
-          if (match) {
-            setTicketData({
-              id: String(match.id),
-              client: match.client || "Client",
-              email: match.email || "client@creo.agency",
-              tier: match.tier || "Active Retainer",
-              title: match.title || match.subject || "Support Request",
-              description: match.description || "",
-              priority: match.priority || "Urgent",
-              status: match.status || "Open",
-              time: match.time || "Recently",
-            });
-            if (match.status === "resolved") {
-              setIsResolved(true);
-            }
-            if (match.description) {
-              setMessages([
-                {
-                  id: "msg-initial",
-                  author: match.client || "Client Account",
-                  role: `${match.tier || "Active Retainer"} • Client`,
-                  avatar: (match.client || "C")[0].toUpperCase(),
-                  avatarBg: "bg-slate-800",
-                  timestamp: match.time || "Recently",
-                  text: match.description,
-                },
-              ]);
-            }
+      // Try shared storage
+      try {
+        const stored = JSON.parse(localStorage.getItem("creo_support_tickets") || "[]");
+        const found = stored.find(
+          (t: any) =>
+            String(t.id).toLowerCase() === activeId.toLowerCase() ||
+            activeId.toLowerCase().includes(String(t.id).toLowerCase())
+        );
+        if (found) {
+          setTicketData({
+            id: String(found.id),
+            client: found.client || "Client",
+            email: found.email || "client@creo.agency",
+            tier: found.tier || "Active Retainer",
+            title: found.issueTitle || found.title || "Support Request",
+            description: found.issueDesc || found.description || "",
+            priority: found.priority || "Urgent",
+            status: found.status || "Open",
+            time: found.timeLog || "Recently",
+          });
+          if (found.status === "Resolved") {
+            setIsResolved(true);
           }
+          if (found.issueDesc || found.description) {
+            setMessages([
+              {
+                id: "msg-initial",
+                author: found.client || "Client Account",
+                role: `${found.tier || "Active Retainer"} • Client`,
+                avatar: (found.client || "C")[0].toUpperCase(),
+                avatarBg: "bg-slate-800",
+                timestamp: found.timeLog || "Recently",
+                text: found.issueDesc || found.description,
+              },
+            ]);
+          }
+          return;
         }
-      })
-      .catch(() => {});
-  }, [ticketId]);
+      } catch {}
+
+      // Fetch real ticket from the backend API
+      request<any>(`/api/v1/tickets/${activeId}`)
+        .then((data) => {
+          setTicketData({
+            id: String(data.id),
+            client: data.client || "Client",
+            email: data.email || "client@creo.agency",
+            tier: data.tier || "Active Retainer",
+            title: data.title || data.subject || "Support Request",
+            description: data.description || "",
+            priority: data.priority || "Medium",
+            status: data.status || "Open",
+            time: data.created_at ? new Date(data.created_at).toLocaleString() : "Recently",
+            assignee_name: data.assignee ? data.assignee.full_name : data.assignee_name,
+            assignee_role: data.assignee ? data.assignee.role : data.assignee_role,
+          });
+          if (data.status === "resolved") {
+            setIsResolved(true);
+          }
+
+          const msgArray = Array.isArray(data.messages) ? data.messages : [];
+          const msgs = msgArray.map((m: any) => {
+            const senderName = m.sender_name || "Unknown User";
+            const senderRole = (m.sender_role || "MEMBER").toUpperCase();
+            return {
+              id: m.id,
+              author: senderName,
+              role: senderRole,
+              avatar: getInitials(senderName),
+              avatarBg: "bg-blue-600",
+              timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+              text: m.message,
+              isInternal: false,
+            };
+          });
+          
+          if (data.title !== "Client Pod Thread" && data.description) {
+            msgs.unshift({
+              id: "msg-initial",
+              author: data.client || "Client Account",
+              role: "Client",
+              avatar: (data.client || "C")[0].toUpperCase(),
+              avatarBg: "bg-slate-800",
+              timestamp: new Date(data.created_at).toLocaleString(),
+              text: data.description,
+            });
+          }
+          
+          setMessages(msgs);
+        })
+        .catch((err) => {
+          console.error("Failed to load real ticket, falling back to mock logic.", err);
+          request<any[]>(`/api/v1/admin/support/tickets`)
+            .then((tickets) => {
+              if (Array.isArray(tickets)) {
+                const match = tickets.find(
+                  (t) =>
+                    String(t.id).toLowerCase() === activeId.toLowerCase() ||
+                    activeId.toLowerCase().includes(String(t.id).toLowerCase())
+                );
+                if (match) {
+                  setTicketData({
+                    id: String(match.id),
+                    client: match.client || "Client",
+                    email: match.email || "client@creo.agency",
+                    tier: match.tier || "Active Retainer",
+                    title: match.title || match.subject || "Support Request",
+                    description: match.description || "",
+                    priority: match.priority || "Urgent",
+                    status: match.status || "Open",
+                    time: match.time || "Recently",
+                  });
+                  if (match.status === "resolved") {
+                    setIsResolved(true);
+                  }
+                  if (match.description) {
+                    setMessages([
+                      {
+                        id: "msg-initial",
+                        author: match.client || "Client Account",
+                        role: `${match.tier || "Active Retainer"} • Client`,
+                        avatar: (match.client || "C")[0].toUpperCase(),
+                        avatarBg: "bg-slate-800",
+                        timestamp: match.time || "Recently",
+                        text: match.description,
+                      },
+                    ]);
+                  }
+                }
+              }
+            })
+            .catch(() => {});
+        });
+    };
+
+    fetchData();
+    const intervalId = setInterval(fetchData, 5000);
+    return () => clearInterval(intervalId);
+  }, [activeId]);
 
   const showToast = (text: string, type: "success" | "error" | "info" = "success") => {
     setToastMessage({ type, text });
@@ -263,7 +335,7 @@ export function AdminTicketDetailPage() {
     };
     setMessages((prev) => [...prev, auditMsg]);
     setReassignModalOpen(false);
-    showToast(`Ticket #${ticketId} successfully reassigned to ${selectedLead.name}`, "success");
+    showToast(`Ticket #${activeId} successfully reassigned to ${selectedLead.name}`, "success");
   };
 
   // Escalate confirm handler
@@ -285,8 +357,18 @@ export function AdminTicketDetailPage() {
   };
 
   // Toggle resolve
-  const handleToggleResolve = () => {
+  const handleToggleResolve = async () => {
     const nextState = !isResolved;
+    if (ticketData?.id && ticketData.id.length > 8) {
+      try {
+        await request(`/api/v1/tickets/${ticketData.id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextState ? "RESOLVED" : "OPEN" }),
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
     setIsResolved(nextState);
     const auditMsg: MessageEntry = {
       id: `audit-${Date.now()}`,
@@ -303,15 +385,42 @@ export function AdminTicketDetailPage() {
     setMessages((prev) => [...prev, auditMsg]);
     showToast(
       nextState
-        ? `Ticket #${ticketId} marked as Resolved. SLA guarantee met.`
-        : `Ticket #${ticketId} reopened.`,
+        ? `Ticket #${activeId} marked as Resolved. SLA guarantee met.`
+        : `Ticket #${activeId} reopened.`,
       "success"
     );
   };
 
+  const handleCloseTicket = async () => {
+    if (ticketData?.id && ticketData.id.length > 8) {
+      try {
+        await request(`/api/v1/tickets/${ticketData.id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "CLOSED" }),
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    showToast(`Ticket #${activeId} closed successfully.`, "success");
+    navigate("/admin/support");
+  };
+
   // Send message
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!replyText.trim() && attachedFiles.length === 0) return;
+
+    // Call backend API if it's a real ticket ID
+    if (ticketData && ticketData.id.length > 8) {
+      try {
+        await request(`/api/v1/tickets/${ticketData.id}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ message: replyText.trim() }),
+        });
+      } catch (err) {
+        console.error("Failed to post message", err);
+      }
+    }
 
     const newMsg: MessageEntry = {
       id: `msg-${Date.now()}`,
@@ -350,7 +459,7 @@ export function AdminTicketDetailPage() {
     const logContent = `--- CREO SENTRY DIAGNOSTICS LOG ---
 Trace ID: trc_98812_useast_prod
 Timestamp: ${new Date().toISOString()}
-Ticket: #${ticketId} (API Webhook Timeout on Deliverables Sync)
+Ticket: #${activeId} (API Webhook Timeout on Deliverables Sync)
 Client: ${clientName} (#DL-8821)
 Target Endpoint: https://api.clientdomain.com/v1/deliverables/sync
 Status: 504 Gateway Timeout
@@ -364,7 +473,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `sync_failure_trace_ticket_${ticketId}.log`);
+    link.setAttribute("download", `sync_failure_trace_ticket_${activeId}.log`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -377,7 +486,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
     const clientName = ticketData?.client || "Client Workspace";
     const payloadData = {
       batch_id: "BATCH-DL-8821",
-      ticket_id: ticketId,
+      ticket_id: activeId,
       timestamp: new Date().toISOString(),
       client_id: "cli_account",
       client_name: clientName,
@@ -394,7 +503,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `webhook_payload_dump_ticket_${ticketId}.json`);
+    link.setAttribute("download", `webhook_payload_dump_ticket_${activeId}.json`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -407,19 +516,19 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
     const clientName = ticketData?.client || "Client Workspace";
     const headers = ["Ticket ID", "Client", "Priority", "Status", "Assigned Lead", "Ingress", "Created", "Resolved", "SLA Compliance"];
     const rows = [
-      [`"#${ticketId}"`, `"${clientName}"`, `"${isEscalated ? "P0 (Escalated)" : "P1 Urgent"}"`, `"${isResolved ? "Resolved" : "Open"}"`, `"${selectedLead.name} (${selectedLead.pod})"`, `"Automated Sentry & Webhook"`, `"Today 09:42 AM"`, `"${isResolved ? "Completed" : "In Progress"}"`, `"99.98% Met"`],
+      [`"#${activeId}"`, `"${clientName}"`, `"${isEscalated ? "P0 (Escalated)" : "P1 Urgent"}"`, `"${isResolved ? "Resolved" : "Open"}"`, `"${selectedLead.name} (${selectedLead.pod})"`, `"Automated Sentry & Webhook"`, `"Today 09:42 AM"`, `"${isResolved ? "Completed" : "In Progress"}"`, `"99.98% Met"`],
     ];
     const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `Incident_Audit_Report_Ticket_${ticketId}_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute("download", `Incident_Audit_Report_Ticket_${activeId}_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast(`Downloaded Incident Audit CSV for Ticket #${ticketId}`, "success");
+    showToast(`Downloaded Incident Audit CSV for Ticket #${activeId}`, "success");
   };
 
   return (
@@ -438,23 +547,23 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               Support Tickets
             </Link>
             <span className="text-slate-300">/</span>
-            <span className="font-bold text-white">Ticket #{ticketId}</span>
+            <span className="font-bold text-white">Ticket #{activeId}</span>
             <span className="text-slate-300">/</span>
             <span className="text-[#97A0B3]">Deliverables Pipeline</span>
           </div>
 
           <div className="flex items-center gap-2">
             {alarmSilenced && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1F2C3F] text-[#F1F5F9] border border-[#2A3446] font-semibold text-[11px]">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#161F2D] text-[#F1F5F9] border border-[#2A3446] font-semibold text-[11px]">
                 <BellOff className="size-3.5 text-[#97A0B3]" />
                 Alarms Silenced (1h)
               </span>
             )}
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[11px]">
-              <Shield className="size-3.5 text-amber-600" />
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 text-[#BCCCE6] border border-blue-500/30 font-semibold text-[11px]">
+              <Shield className="size-3.5 text-[#BCCCE6]" />
               <span>Enterprise Gold SLA Active</span>
-              <span className="text-amber-400">•</span>
-              <span className="font-mono text-amber-700">BATCH-DL-8821</span>
+              <span className="text-[#7FA0D6]">•</span>
+              <span className="font-mono text-[#BCCCE6]">BATCH-DL-8821</span>
             </div>
           </div>
         </div>
@@ -471,10 +580,10 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
           <div
             className={`p-4 rounded-2xl border text-xs font-bold flex items-center justify-between shadow-xl animate-fade-in ${
               toastMessage.type === "error"
-                ? "bg-rose-50 border-rose-200 text-rose-700"
+                ? "bg-blue-900/40 border-blue-500/30 text-[#BCCCE6]"
                 : toastMessage.type === "info"
                 ? "bg-[#7FA0D6]/15 border-[#7FA0D6]/30 text-[#7FA0D6]"
-                : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-blue-600/15 border-blue-500/30 text-[#BCCCE6]"
             }`}
           >
             <span>{toastMessage.text}</span>
@@ -494,19 +603,19 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               <span
                 className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
                   isResolved
-                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                    : "bg-rose-100 text-rose-700 border-rose-200"
+                    ? "bg-blue-600/15 text-[#BCCCE6] border-blue-500/30"
+                    : "bg-blue-500/15 text-[#BCCCE6] border-blue-500/30"
                 }`}
               >
-                <span className={`size-1.5 rounded-full ${isResolved ? "bg-emerald-600" : "bg-rose-600 animate-pulse"}`} />
+                <span className={`size-1.5 rounded-full ${isResolved ? "bg-[#BCCCE6]" : "bg-[#BCCCE6] animate-pulse"}`} />
                 {isResolved ? "RESOLVED" : "OPEN"}
               </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-rose-500 text-white shadow-xs">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-blue-600 text-white shadow-xs">
                 <Zap className="size-3" />
                 {isEscalated ? "P0 (CRITICAL BLOCKER)" : (ticketData?.priority || "URGENT")}
               </span>
               {isEscalated && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-600 text-white shadow-xs animate-pulse">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-700 text-white shadow-xs animate-pulse">
                   <AlertTriangle className="size-3" />
                   CORE ESCALATED (#INC-9204)
                 </span>
@@ -526,45 +635,66 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               </span>
               <span>•</span>
               <span>
-                Assigned Lead: <strong className="text-[#7FA0D6] font-bold">{selectedLead.name} ({selectedLead.pod})</strong>
+                Assigned Lead: <strong className="text-[#7FA0D6] font-bold">{ticketData?.assignee_name || selectedLead.name} ({ticketData?.assignee_role || selectedLead.pod})</strong>
               </span>
             </div>
           </div>
 
           {/* Quick Header Actions */}
           <div className="flex items-center gap-2.5 shrink-0 flex-wrap relative">
-            <button
-              type="button"
-              onClick={() => setReassignModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] shadow-2xs transition-all cursor-pointer"
-            >
-              <UserCheck className="size-3.5 text-[#97A0B3]" />
-              Reassign
-            </button>
-            <button
-              type="button"
-              onClick={() => setEscalateModalOpen(true)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-2xs ${
-                isEscalated
-                  ? "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100"
-                  : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-              }`}
-            >
-              <AlertTriangle className={`size-3.5 ${isEscalated ? "text-indigo-600" : "text-rose-600"}`} />
-              {isEscalated ? "Escalation Active" : "Escalate to Core"}
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleResolve}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all cursor-pointer ${
-                isResolved
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-blue-600 hover:bg-blue-700"
-              }`}
-            >
-              <CheckCircle2 className="size-3.5" />
-              {isResolved ? "Reopen Ticket" : "Mark as Resolved"}
-            </button>
+            {ticketData?.title !== "Client Pod Thread" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setReassignModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] shadow-2xs transition-all cursor-pointer"
+                >
+                  <UserCheck className="size-3.5 text-[#97A0B3]" />
+                  Reassign
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEscalateModalOpen(true)}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-2xs ${
+                    isEscalated
+                      ? "bg-blue-900/40 border-blue-500/40 text-[#BCCCE6] hover:bg-blue-900/60"
+                      : "border-blue-500/30 bg-blue-500/15 text-[#BCCCE6] hover:bg-blue-500/25"
+                  }`}
+                >
+                  <AlertTriangle className="size-3.5 text-[#BCCCE6]" />
+                  {isEscalated ? "Escalation Active" : "Escalate"}
+                </button>
+                
+                {!isResolved ? (
+                  <button
+                    type="button"
+                    onClick={handleToggleResolve}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all cursor-pointer bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    <CheckCircle2 className="size-3.5" />
+                    Mark as Resolved
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleCloseTicket}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all cursor-pointer bg-blue-600 hover:bg-blue-700"
+                    >
+                      Close Ticket
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleToggleResolve}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all cursor-pointer bg-slate-700 hover:bg-slate-600"
+                    >
+                      <RotateCcw className="size-3.5" />
+                      Reopen
+                    </button>
+                  </>
+                )}
+              </>
+            )}
 
             {/* More Options Dropdown Button */}
             <div className="relative">
@@ -675,7 +805,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                           <span
                             className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
                               msg.isSystemAudit
-                                ? "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]"
+                                ? "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]"
                                 : msg.isInternal
                                 ? "bg-amber-100 text-amber-800 border-amber-200"
                                 : "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30"
@@ -704,10 +834,10 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                   {msg.id === "msg-1" && (
                     <>
                       {/* Diagnostics Telemetry & Trace Log */}
-                      <div className="rounded-xl bg-[#0F172A] border border-slate-800 overflow-hidden text-slate-200 font-mono text-xs mt-3">
+                      <div className="rounded-xl bg-[#0B111C] border border-slate-800 overflow-hidden text-slate-200 font-mono text-xs mt-3">
                         <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] text-[#97A0B3] font-bold uppercase tracking-wider">
                           <span className="flex items-center gap-2">
-                            <FileText className="size-3.5 text-rose-400" />
+                            <FileText className="size-3.5 text-[#BCCCE6]" />
                             Diagnostics Telemetry & Trace Log
                           </span>
                           <button
@@ -726,14 +856,14 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                         </div>
                         <div className="p-4 space-y-1.5 text-[11px] leading-relaxed overflow-x-auto text-slate-300">
                           <div className="text-[#97A0B3]"># Gateway trace capture ID: trc_98812_useast_prod</div>
-                          <div className="text-rose-400 font-semibold">
-                            <span className="bg-rose-500/20 px-1 py-0.5 rounded text-rose-300 font-bold mr-1">
+                          <div className="text-[#BCCCE6] font-semibold">
+                            <span className="bg-blue-500/20 px-1 py-0.5 rounded text-[#BCCCE6] font-bold mr-1">
                               [ERROR 504]
                             </span>
                             Webhook delivery failed: https://api.clientdomain.com/v1/deliverables/sync
                           </div>
                           <div className="text-[#97A0B3]">Connection timed out after 30000ms. Retries exhausted (4/4).</div>
-                          <div className="text-emerald-400 pt-1">
+                          <div className="text-[#BCCCE6] pt-1">
                             &gt; TLS Handshake: 14ms | Payload Size: 1.48 GB (4 assets) | Socket Hangup: Digest Verification
                           </div>
                         </div>
@@ -758,9 +888,9 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                           <button
                             type="button"
                             onClick={handleDownloadTraceLog}
-                            className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-xs font-semibold text-[#F1F5F9] hover:bg-rose-50 hover:border-rose-200 hover:text-rose-700 transition-colors cursor-pointer"
+                            className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-xs font-semibold text-[#F1F5F9] hover:bg-[#7FA0D6]/15 hover:border-[#7FA0D6]/30 hover:text-[#7FA0D6] transition-colors cursor-pointer"
                           >
-                            <FileText className="size-4 text-rose-600" />
+                            <FileText className="size-4 text-[#7FA0D6]" />
                             <span>sync_failure_trace.log</span>
                             <span className="text-[10px] text-[#97A0B3] font-mono">(110 KB)</span>
                             <Download className="size-3.5 text-[#97A0B3] ml-1" />
@@ -793,7 +923,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                   onClick={() => setActiveTab("internal")}
                   className={`px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-t border-x cursor-pointer ${
                     activeTab === "internal"
-                      ? "bg-[#161F2D] text-amber-700 border-[#2A3446] shadow-2xs"
+                      ? "bg-[#161F2D] text-[#7FA0D6] border-[#2A3446] shadow-2xs"
                       : "text-[#97A0B3] border-transparent hover:text-white"
                   }`}
                 >
@@ -805,7 +935,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                 {/* Quick Macros */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-bold text-[#97A0B3] uppercase tracking-wider flex items-center gap-1">
-                    <Sparkles className="size-3 text-amber-500" />
+                    <Sparkles className="size-3 text-[#BCCCE6]" />
                     Quick Macros:
                   </span>
                   <button
@@ -826,7 +956,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                         "Patch deployed to edge ingress router. Asset checksums verified successfully across all 4 Reels. Ticket resolved."
                       )
                     }
-                    className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-semibold border border-emerald-200 transition-colors cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-[#BCCCE6] text-[11px] font-semibold border border-blue-500/30 transition-colors cursor-pointer"
                   >
                     Resolved with Patch
                   </button>
@@ -837,7 +967,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                         "Could you please confirm if your destination webhook server accepts chunked transfer encoding for assets over 1GB?"
                       )
                     }
-                    className="px-2.5 py-1 rounded-lg bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] text-[11px] font-semibold border border-[#2A3446] transition-colors cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-[#161F2D] hover:bg-slate-200 text-[#F1F5F9] text-[11px] font-semibold border border-[#2A3446] transition-colors cursor-pointer"
                   >
                     Request Info
                   </button>
@@ -849,7 +979,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                     type="button"
                     onClick={() => handleInsertFormat("**")}
                     title="Bold"
-                    className="p-1.5 hover:bg-[#1F2C3F] rounded text-[#F1F5F9] cursor-pointer"
+                    className="p-1.5 hover:bg-[#161F2D] rounded text-[#F1F5F9] cursor-pointer"
                   >
                     <Bold className="size-3.5" />
                   </button>
@@ -857,7 +987,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                     type="button"
                     onClick={() => handleInsertFormat("*")}
                     title="Italic"
-                    className="p-1.5 hover:bg-[#1F2C3F] rounded text-[#F1F5F9] cursor-pointer"
+                    className="p-1.5 hover:bg-[#161F2D] rounded text-[#F1F5F9] cursor-pointer"
                   >
                     <Italic className="size-3.5" />
                   </button>
@@ -865,7 +995,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                     type="button"
                     onClick={() => handleInsertFormat("`")}
                     title="Code snippet"
-                    className="p-1.5 hover:bg-[#1F2C3F] rounded text-[#F1F5F9] cursor-pointer"
+                    className="p-1.5 hover:bg-[#161F2D] rounded text-[#F1F5F9] cursor-pointer"
                   >
                     <Code className="size-3.5" />
                   </button>
@@ -873,7 +1003,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                     type="button"
                     onClick={() => handleInsertFormat("[Link Title](", ")")}
                     title="Insert Link"
-                    className="p-1.5 hover:bg-[#1F2C3F] rounded text-[#F1F5F9] cursor-pointer"
+                    className="p-1.5 hover:bg-[#161F2D] rounded text-[#F1F5F9] cursor-pointer"
                   >
                     <Link2 className="size-3.5" />
                   </button>
@@ -881,13 +1011,13 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                     type="button"
                     onClick={() => setReplyText((prev) => `${prev}\n- Item 1\n- Item 2`)}
                     title="Bullet List"
-                    className="p-1.5 hover:bg-[#1F2C3F] rounded text-[#F1F5F9] cursor-pointer"
+                    className="p-1.5 hover:bg-[#161F2D] rounded text-[#F1F5F9] cursor-pointer"
                   >
                     <List className="size-3.5" />
                   </button>
                   <label
                     title="Attach File"
-                    className="p-1.5 hover:bg-[#1F2C3F] rounded text-[#F1F5F9] cursor-pointer"
+                    className="p-1.5 hover:bg-[#161F2D] rounded text-[#F1F5F9] cursor-pointer"
                   >
                     <Paperclip className="size-3.5" />
                     <input
@@ -926,6 +1056,12 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                   rows={4}
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
                   placeholder={
                     activeTab === "public"
                       ? `Type your reply to ${ticketData?.client || "client"} team, or insert a macro above...`
@@ -945,7 +1081,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                       }
                       showToast("Draft response saved locally.", "info");
                     }}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold text-[#F1F5F9] hover:bg-[#1F2C3F] transition-colors cursor-pointer"
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-[#F1F5F9] hover:bg-[#161F2D] transition-colors cursor-pointer"
                   >
                     Save Draft
                   </button>
@@ -1037,7 +1173,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               <div className="text-xs space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[#97A0B3]">Ticket ID</span>
-                  <span className="font-mono font-bold text-white">#{ticketId}</span>
+                  <span className="font-mono font-bold text-white">#{activeId}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-[#97A0B3]">Ingress Channel</span>
@@ -1077,7 +1213,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                   {tags.map((tg) => (
                     <span
                       key={tg}
-                      className="px-2 py-0.5 rounded-md bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold border border-[#2A3446] flex items-center gap-1"
+                      className="px-2 py-0.5 rounded-md bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold border border-[#2A3446] flex items-center gap-1"
                     >
                       {tg}
                       <button
@@ -1148,13 +1284,13 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
                   <UserCheck className="size-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white">Reassign Ticket #{ticketId}</h3>
+                  <h3 className="text-base font-black text-white">Reassign Ticket #{activeId}</h3>
                   <p className="text-xs text-[#97A0B3] font-medium">Re-route ticket owner & creative pod responsibility</p>
                 </div>
               </div>
               <button
                 onClick={() => setReassignModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer transition-colors"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -1211,7 +1347,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               <button
                 type="button"
                 onClick={() => setReassignModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[#F1F5F9] hover:bg-[#1F2C3F] cursor-pointer transition-colors"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer transition-colors"
               >
                 Cancel
               </button>
@@ -1249,7 +1385,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               </div>
               <button
                 onClick={() => setEscalateModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer transition-colors"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -1321,7 +1457,7 @@ Resolution Path: Re-route via US-Central High-Bandwidth Gateway with 60s handsha
               <button
                 type="button"
                 onClick={() => setEscalateModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[#F1F5F9] hover:bg-[#1F2C3F] cursor-pointer transition-colors"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer transition-colors"
               >
                 Cancel
               </button>

@@ -64,6 +64,24 @@ class LanguageRules(BaseModel):
     on_screen_text_script: str
 
 
+class PodAlignment(BaseModel):
+    """Why an assigned specialist fits this client (team-facing)."""
+    model_config = ConfigDict(extra="forbid")
+    member_name: str = Field(max_length=80)
+    role: str = Field(max_length=60)
+    match_score: int = Field(ge=0, le=100)
+    rationale: str = Field(max_length=220)
+
+
+class TeamBrief(BaseModel):
+    """Internal brief sent to the team lead and pod after onboarding. Never shown to the client."""
+    model_config = ConfigDict(extra="forbid")
+    brand_summary: str = Field(max_length=700)
+    tone_profile: list[str] = Field(min_length=2, max_length=5)
+    production_directives: list[str] = Field(min_length=3, max_length=5)
+    pod_alignment: list[PodAlignment] = Field(default_factory=list, max_length=5)
+
+
 class BrandDNA(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary_line: str = Field(max_length=160)      # the portal one-liner
@@ -77,6 +95,7 @@ class BrandDNA(BaseModel):
     cta_bank: list[str] = Field(min_length=3, max_length=6)
     do_not: list[str] = Field(min_length=3)        # C6 + C7 + D7 + E7 + E10, VERBATIM
     confidence_notes: list[str] = Field(default_factory=list, max_length=5)
+    team_brief: TeamBrief | None = None
 
 
 # ==============================================================================
@@ -100,6 +119,7 @@ class QuestionnaireStateResponse(BaseModel):
     core_completed: bool
     extended_completed: bool
     version: int
+    last_active_section: str | None = None
 
 
 class BrandDNAStatusResponse(BaseModel):

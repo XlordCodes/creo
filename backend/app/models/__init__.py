@@ -4,6 +4,7 @@ from app.models.auth import IdempotencyKey, RefreshToken
 from app.models.billing import (
     PaymentEvent,
     Plan,
+    PlanNegotiation,
     PlatformPaymentEvent,
     PlatformSubscription,
     Subscription,
@@ -32,6 +33,7 @@ from app.models.support import Ticket, TicketMessage
 from app.models.tenant import Agency, Team, TeamMember
 from app.models.user import ClientProfile, ClientRoleRequirement, StaffProfile, User
 from app.models.work import ClientAssignment, ContentCalendar, Deliverable, Task
+from app.models.chat import DirectMessage
 
 __all__ = [
     # Enums
@@ -51,6 +53,7 @@ __all__ = [
     "ClientRoleRequirement",
     # Billing
     "Plan",
+    "PlanNegotiation",
     "Subscription",
     "PaymentEvent",
     "UsageCounter",

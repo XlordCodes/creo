@@ -22,6 +22,7 @@ import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
 import { useQuery } from "@tanstack/react-query";
 import { fetchPodDashboard, type PodDashboardData } from "../../lib/ops-api";
 import { useAuth } from "../../lib/auth-context";
+import { CreoLoadingScreen } from "../../components/ui/CreoLoadingScreen";
 
 interface LeadNoteItem {
   id: string;
@@ -39,7 +40,7 @@ interface LeadNoteItem {
 export function MemberOverviewPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { data } = useQuery<PodDashboardData>({
+  const { data, isLoading } = useQuery<PodDashboardData>({
     queryKey: ["pod_dashboard"],
     queryFn: () => fetchPodDashboard(),
   });
@@ -95,7 +96,7 @@ export function MemberOverviewPage() {
       content:
         "Updated the legal disclaimer copy for Holiday Bumper C. Bumped character kerning slightly for better readability at 1080p mobile preview.",
       tag: "Synced to Figma Flow Node",
-      avatarBg: "bg-[#0F172A]",
+      avatarBg: "bg-[#0B111C]",
       avatar: "MV",
     },
     {
@@ -126,7 +127,7 @@ export function MemberOverviewPage() {
         role: "Sr. Motion (You) • Just now",
         badge: "Reply",
         content: quickReplyText,
-        avatarBg: "bg-[#2563EB]",
+        avatarBg: "bg-[#7FA0D6]",
         avatar: "DK",
       },
       ...notesList,
@@ -151,6 +152,10 @@ export function MemberOverviewPage() {
     setUploadModalOpen(false);
     showToast(`Successfully uploaded ${uploadAssetTitle} (${uploadClient}) to Frame.io sync pipeline!`);
   };
+
+  if (isLoading || !data) {
+    return <CreoLoadingScreen label="Verifying session..." sublabel="Loading Workstation Overview" />;
+  }
 
   return (
     <div data-surface="ops" className="min-h-screen bg-[#0B111C] text-white font-sans flex flex-col">
@@ -189,17 +194,10 @@ export function MemberOverviewPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setLogHoursModalOpen(true)}
-              className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg bg-[#0B111C] hover:bg-[#1F2C3F] border border-[#2A3446] text-[#F1F5F9] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-lg bg-[#0B111C] hover:bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
               <Clock className="size-3 text-[#97A0B3]" />
               <span>Log Hours</span>
-            </button>
-            <button
-              onClick={() => setUploadModalOpen(true)}
-              className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-            >
-              <Upload className="size-3" />
-              <span>+ Upload</span>
             </button>
           </div>
         </div>
@@ -259,7 +257,7 @@ export function MemberOverviewPage() {
                 <span className="text-[10.5px] sm:text-[11px] font-bold text-[#97A0B3]">/ 40 hrs</span>
               </div>
               {/* Progress bar */}
-              <div className="w-full h-1.5 bg-[#1F2C3F] rounded-full overflow-hidden my-1">
+              <div className="w-full h-1.5 bg-[#161F2D] rounded-full overflow-hidden my-1">
                 <div className="h-full bg-blue-600 rounded-full w-[81%] transition-all duration-700" />
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] pt-1 border-t border-[#2A3446]">
@@ -313,7 +311,7 @@ export function MemberOverviewPage() {
                     Today's Priority Focus & RenderQueue
                   </h2>
                 </div>
-                <span className="text-[9px] font-mono font-bold text-[#97A0B3] bg-[#1F2C3F] px-2 py-0.5 rounded">
+                <span className="text-[9px] font-mono font-bold text-[#97A0B3] bg-[#161F2D] px-2 py-0.5 rounded">
                   OCTANE V2024.1.2
                 </span>
               </div>
@@ -352,7 +350,7 @@ export function MemberOverviewPage() {
                     <span className="font-bold text-[#F1F5F9]">GPU-04 (Dual RTX 4090)</span>
                     <span className="font-black text-[#7FA0D6]">Frame 3,840 / 5,120</span>
                   </div>
-                  <div className="w-full h-1.5 bg-[#1F2C3F] rounded-full overflow-hidden">
+                  <div className="w-full h-1.5 bg-[#161F2D] rounded-full overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500"
                       style={{ width: `${renderProgress}%` }}
@@ -372,14 +370,14 @@ export function MemberOverviewPage() {
                       setRenderPaused(!renderPaused);
                       showToast(renderPaused ? "Resumed Octane GPU Render Cluster" : "Paused Octane GPU Render Cluster", "info");
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#1F2C3F] text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1 transition-colors cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#161F2D] text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1 transition-colors cursor-pointer"
                   >
                     {renderPaused ? <Play className="size-3 text-emerald-600" /> : <Pause className="size-3 text-amber-600" />}
                     {renderPaused ? "Resume" : "Pause"}
                   </button>
                   <button
                     onClick={() => setInspectModalOpen(true)}
-                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#1F2C3F] text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1 transition-colors cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#161F2D] text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1 transition-colors cursor-pointer"
                   >
                     <Layers className="size-3 text-[#97A0B3]" />
                     Inspect Cache
@@ -438,7 +436,7 @@ export function MemberOverviewPage() {
                 <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   <button
                     onClick={() => showToast("Opened After Effects project file ATL-119_v03.aep")}
-                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#1F2C3F] text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1 transition-colors cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#161F2D] text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1 transition-colors cursor-pointer"
                   >
                     <ExternalLink className="size-3 text-[#97A0B3]" />
                     Open in AE
@@ -447,7 +445,7 @@ export function MemberOverviewPage() {
                     onClick={() => {
                       navigate("/workstation/handoff");
                     }}
-                    className="px-3.5 py-1.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer ml-auto"
+                    className="px-3.5 py-1.5 rounded-lg bg-[#7FA0D6] hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer ml-auto"
                   >
                     <Send className="size-3" />
                     Submit for QA
@@ -463,7 +461,7 @@ export function MemberOverviewPage() {
                   <p className="text-[11px] text-[#97A0B3]">Deliverables tracker across client pods</p>
                 </div>
 
-                <div className="flex items-center bg-[#1F2C3F] p-0.5 rounded-lg text-xs font-bold">
+                <div className="flex items-center bg-[#161F2D] p-0.5 rounded-lg text-xs font-bold">
                   <button
                     onClick={() => setDeliverablesTab("active")}
                     className={`px-2.5 py-0.5 rounded-md transition-all ${
@@ -511,11 +509,11 @@ export function MemberOverviewPage() {
                             </span>
                           </div>
                           <div className="flex items-center justify-between pt-1.5 border-t border-[#2A3446]/60 text-xs">
-                            <span className="font-bold text-[#7FA0D6] text-[10px]">{t.assignee_name || "Assigned"}</span>
+                            <span className="font-bold text-[#7FA0D6] text-[10px]">{t.assignee?.full_name || t.assignee_name || "Assigned"}</span>
                             <div className="flex items-center gap-1">
                               <button
                                 onClick={() => setUploadModalOpen(true)}
-                                className="px-2 py-0.5 rounded-md border border-[#2A3446] bg-[#161F2D] hover:bg-[#1F2C3F] text-[#F1F5F9] font-bold text-[10px] cursor-pointer"
+                                className="px-2 py-0.5 rounded-md border border-[#2A3446] bg-[#161F2D] hover:bg-[#161F2D] text-[#F1F5F9] font-bold text-[10px] cursor-pointer"
                               >
                                 Upload
                               </button>
@@ -550,11 +548,11 @@ export function MemberOverviewPage() {
                                   {t.status === "in_production" ? "IN PRODUCTION" : t.status === "internal_qa" ? "PENDING QA" : "READY"}
                                 </span>
                               </td>
-                              <td className="py-2.5 px-2.5 font-bold text-[#F1F5F9] text-xs">{t.assignee_name || "Unassigned"}</td>
+                              <td className="py-2.5 px-2.5 font-bold text-[#F1F5F9] text-xs">{t.assignee?.full_name || t.assignee_name || "Unassigned"}</td>
                               <td className="py-2.5 px-2.5 text-right space-x-1.5">
                                 <button
                                   onClick={() => setUploadModalOpen(true)}
-                                  className="px-2.5 py-1 rounded-md border border-[#2A3446] hover:bg-[#1F2C3F] text-[#F1F5F9] font-bold text-[10px] cursor-pointer"
+                                  className="px-2.5 py-1 rounded-md border border-[#2A3446] hover:bg-[#161F2D] text-[#F1F5F9] font-bold text-[10px] cursor-pointer"
                                 >
                                   Upload
                                 </button>
@@ -633,7 +631,7 @@ export function MemberOverviewPage() {
                 />
                 <button
                   type="submit"
-                  className="size-7 rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                  className="size-7 rounded-lg bg-[#7FA0D6] hover:bg-blue-700 text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
                 >
                   <Send className="size-3" />
                 </button>
@@ -672,7 +670,7 @@ export function MemberOverviewPage() {
                   members.map((m) => (
                     <div key={m.id} className="flex items-center justify-between p-1.5 rounded-lg hover:bg-[#0B111C] transition-colors">
                       <div className="flex items-center gap-2">
-                        <div className="size-6 rounded-md bg-[#2563EB] text-white font-black text-[9px] flex items-center justify-center">
+                        <div className="size-6 rounded-md bg-[#7FA0D6] text-white font-black text-[9px] flex items-center justify-center">
                           {m.full_name?.slice(0, 2).toUpperCase() || "CP"}
                         </div>
                         <div>
@@ -686,7 +684,7 @@ export function MemberOverviewPage() {
                 ) : (
                   <div className="flex items-center justify-between p-1.5 rounded-lg hover:bg-[#0B111C] transition-colors">
                     <div className="flex items-center gap-2">
-                      <div className="size-6 rounded-md bg-[#2563EB] text-white font-black text-[9px] flex items-center justify-center">
+                      <div className="size-6 rounded-md bg-[#7FA0D6] text-white font-black text-[9px] flex items-center justify-center">
                         {leadName.slice(0, 2).toUpperCase()}
                       </div>
                       <div>
@@ -694,7 +692,7 @@ export function MemberOverviewPage() {
                         <span className="text-[9px] text-[#97A0B3]">Lead Producer • Active</span>
                       </div>
                     </div>
-                    <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-[#1F2C3F] text-[#F1F5F9]">
+                    <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-[#161F2D] text-[#F1F5F9]">
                       Pod Lead
                     </span>
                   </div>
@@ -733,7 +731,7 @@ export function MemberOverviewPage() {
               <button
                 type="button"
                 onClick={() => setLogHoursModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -784,7 +782,7 @@ export function MemberOverviewPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Confirm & Save Hours
                 </button>
@@ -817,7 +815,7 @@ export function MemberOverviewPage() {
               <button
                 type="button"
                 onClick={() => setUploadModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -861,7 +859,7 @@ export function MemberOverviewPage() {
                 />
                 <label
                   htmlFor="asset-file-input"
-                  className="inline-block px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] font-bold text-xs hover:bg-[#1F2C3F] cursor-pointer mt-1"
+                  className="inline-block px-3 py-1.5 rounded-lg bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] font-bold text-xs hover:bg-[#161F2D] cursor-pointer mt-1"
                 >
                   Browse Computer
                 </label>
@@ -877,7 +875,7 @@ export function MemberOverviewPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Confirm & Upload Asset
                 </button>
@@ -910,7 +908,7 @@ export function MemberOverviewPage() {
               <button
                 type="button"
                 onClick={() => setInspectModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -935,7 +933,7 @@ export function MemberOverviewPage() {
               <button
                 type="button"
                 onClick={() => setInspectModalOpen(false)}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold cursor-pointer"
               >
                 Close Inspector
               </button>
@@ -975,7 +973,7 @@ export function MemberOverviewPage() {
               <button
                 type="button"
                 onClick={handleConfirmHandoff}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
               >
                 Confirm & Handoff
               </button>

@@ -141,7 +141,7 @@ export function PodScheduleLeavePage() {
             </button>
             <button
               onClick={() => setStandupModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
             >
               <Plus className="size-3.5" />
               Log Standup
@@ -292,7 +292,7 @@ export function PodScheduleLeavePage() {
                         </button>
                         <button
                           onClick={() => handleApprove(leave.id, leave.name)}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1 shadow-xs transition-all cursor-pointer"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1 shadow-xs transition-all cursor-pointer"
                         >
                           <Check className="size-3" />
                           Approve Leave
@@ -335,10 +335,10 @@ export function PodScheduleLeavePage() {
                   <h3 className="text-sm font-black text-white">November 2025</h3>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button className="p-1.5 rounded-lg hover:bg-[#1F2C3F] text-[#97A0B3] cursor-pointer">
+                  <button className="p-1.5 rounded-lg hover:bg-[#161F2D] text-[#97A0B3] cursor-pointer">
                     <ChevronLeft className="size-4" />
                   </button>
-                  <button className="p-1.5 rounded-lg hover:bg-[#1F2C3F] text-[#97A0B3] cursor-pointer">
+                  <button className="p-1.5 rounded-lg hover:bg-[#161F2D] text-[#97A0B3] cursor-pointer">
                     <ChevronRight className="size-4" />
                   </button>
                 </div>
@@ -521,7 +521,7 @@ export function PodScheduleLeavePage() {
             <div className="flex justify-end gap-3 pt-2">
               <button
                 onClick={() => setStandupModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
               >
                 Cancel
               </button>

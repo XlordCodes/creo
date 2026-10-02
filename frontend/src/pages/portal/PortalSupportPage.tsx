@@ -1,15 +1,19 @@
 import React, { useState } from "react";
+import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
   Send,
   X,
   Plus,
+  ShieldAlert,
+  ArrowRight,
+  PhoneCall,
 } from "lucide-react";
 import { request } from "../../lib/http";
 import { useAuth } from "../../lib/auth-context";
-import { useOnboardingGate } from "../../lib/useOnboardingGate";
-import { SubscriptionLockedState } from "../../components/portal/SubscriptionLockedState";
+import { PlanBargainCallModal } from "../../components/portal/PlanBargainCallModal";
+import { CreoLoadingScreen } from "../../components/ui/CreoLoadingScreen";
 import type { TicketItem } from "../../types/api";
 
 interface SupportTicketData {
@@ -23,6 +27,7 @@ interface SupportTicketData {
   meta: string;
   category?: string;
   messages?: Array<{ id: string; sender: string; text: string; time: string; isMe?: boolean }>;
+  rawId?: string;
 }
 
 const CATEGORIES = ["Content", "Billing", "Technical", "Brand", "Other"];
@@ -42,9 +47,7 @@ export function PortalSupportPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const gate = useOnboardingGate();
-
-  const { data: subData } = useQuery({
+  const { data: subData, isLoading: isSubLoading } = useQuery({
     queryKey: ["client-subscription"],
     queryFn: () => request<any>("/api/v1/payments/subscription"),
   });
@@ -54,25 +57,19 @@ export function PortalSupportPage() {
     subData?.subscription?.status === "expired" ||
     subData?.subscription?.status === "canceled";
   const isStaffOrAdmin = user?.role && user.role !== "client";
-  const isSubscribed =
-    isStaffOrAdmin ||
-    (gate.isPaid && !isExpired) ||
-    (!isExpired &&
-      (subData?.is_active === true ||
-        (!!subData?.subscription && ["active", "trialing"].includes(subData?.subscription?.status))));
 
-  const { data: serverTickets = NO_TICKETS } = useQuery<TicketItem[]>({
+  const { data: serverTickets = NO_TICKETS, isLoading: isTicketsLoading } = useQuery<TicketItem[]>({
     queryKey: ["tickets", user?.id],
     queryFn: async () => {
       try {
-        const res = await request<TicketItem[]>("/api/v1/tickets");
-        return Array.isArray(res) ? res : [];
+        const res = await request<any>("/api/v1/tickets");
+        return res?.items ?? (Array.isArray(res) ? res : []);
       } catch {
         return [];
       }
     },
-    enabled: isSubscribed,
-    refetchInterval: 30000,
+    enabled: !!user?.id,
+    refetchInterval: 2 * 60_000,
   });
 
   // Local state
@@ -82,23 +79,28 @@ export function PortalSupportPage() {
   const [description, setDescription] = useState("");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+  const [bargainModalOpen, setBargainModalOpen] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+
+
   // Sync server tickets
   React.useEffect(() => {
-    if (serverTickets && serverTickets.length > 0) {
-      const mapped: SupportTicketData[] = serverTickets.map((t) => ({
-        id: `#TKT-${t.id.slice(0, 4).toUpperCase()}`,
-        status: (t.status === "resolved" || t.status === "closed" ? "resolved" : t.status === "in_progress" ? "in_progress" : "open") as any,
-        priority: ((t.priority as any) || "medium") as any,
-        priorityLabel: t.priority === "urgent" ? "Urgent" : t.priority === "high" ? "High" : t.priority === "low" ? "Low" : "Medium",
-        timeAgo: t.created_at ? new Date(t.created_at).toLocaleDateString() : "Recently",
-        title: t.title,
-        description: t.description,
+    const safeTickets = (Array.isArray(serverTickets) ? serverTickets : []);
+    if (safeTickets.length > 0) {
+      const mapped: SupportTicketData[] = safeTickets.map((t: any) => ({
+        rawId: t?.id,
+        id: `#TKT-${String(t?.id || "").slice(0, 4).toUpperCase()}`,
+        status: (t?.status === "resolved" || t?.status === "closed" ? "resolved" : t?.status === "in_progress" ? "in_progress" : "open") as any,
+        priority: ((t?.priority as any) || "medium") as any,
+        priorityLabel: t?.priority === "urgent" ? "Urgent" : t?.priority === "high" ? "High" : t?.priority === "low" ? "Low" : "Medium",
+        timeAgo: t?.created_at ? new Date(t.created_at).toLocaleDateString() : "Recently",
+        title: t?.title || "General Support Thread",
+        description: t?.description || "",
         meta: `Opened by ${user?.full_name || "You"}`,
         category: "General",
       }));
@@ -117,6 +119,12 @@ export function PortalSupportPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      showToast(`Ticket submitted successfully!`);
+      setSubject("");
+      setDescription("");
+    },
+    onError: (error: any) => {
+      showToast(`Failed to create ticket: ${error.message || "Validation Error"}`);
     },
   });
 
@@ -127,39 +135,49 @@ export function PortalSupportPage() {
       return;
     }
 
-    const newTicketId = `#TKT-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newTicket: SupportTicketData = {
-      id: newTicketId,
-      status: "in_progress",
-      priority: "medium",
-      priorityLabel: "Medium",
-      timeAgo: "Just now",
-      title: subject.trim(),
-      description: description.trim(),
-      meta: `Opened by ${user?.full_name || "You"}`,
-      category: selectedCategory,
-    };
-
-    setTicketsList((prev) => [newTicket, ...prev]);
     createTicketMutation.mutate({ title: subject.trim(), description: description.trim(), priority: "medium" });
-    showToast(`Ticket ${newTicketId} submitted!`);
-    setSubject("");
-    setDescription("");
   };
 
-  if (isExpired && !isStaffOrAdmin) {
-    return (
-      <SubscriptionLockedState
-        title="Support Access Expired"
-        description="Your retainer has expired. Renew to access the support desk."
-      />
-    );
-  }
-
-  return (
+  return (isSubLoading || isTicketsLoading) ? (
+    <CreoLoadingScreen label="Verifying session..." sublabel="Loading Support Desk" />
+  ) : (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-white">Help</h1>
 
+      {/* ── Retainer Notice Banner (Informative & Actionable, Never Blocking Support) ── */}
+      {isExpired && !isStaffOrAdmin && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="size-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0 border border-amber-500/40">
+              <ShieldAlert className="size-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white">Retainer Subscription Inactive or Expired</h4>
+              <p className="text-xs text-[#97A0B3] mt-0.5">
+                Deliverable pipelines and asset reviews are currently paused. Our support desk is 100% active to assist you with renewal, custom quota arrangements, or billing questions.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => setBargainModalOpen(true)}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-[#7FA0D6] hover:text-white hover:border-[#7FA0D6]/50 text-xs font-bold transition-colors cursor-pointer"
+            >
+              <PhoneCall className="size-3.5" />
+              <span>Call & Bargain</span>
+            </button>
+            <Link
+              to="/portal/payments"
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#BCCCE6] hover:bg-white text-[#0B111C] text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            >
+              <span>Renew Retainer</span>
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* ── Main Help Section ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ── Left Column: Ask your pod (Form) ── */}
         <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
@@ -178,7 +196,7 @@ export function PortalSupportPage() {
                     className={`px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
                       selectedCategory === cat
                         ? "bg-[#BCCCE6] text-[#0B111C]"
-                        : "bg-transparent border border-[#2A3446] text-white hover:bg-[#1F2C3F]"
+                        : "bg-transparent border border-[#2A3446] text-white hover:bg-[#161F2D]"
                     }`}
                   >
                     {cat}
@@ -195,7 +213,7 @@ export function PortalSupportPage() {
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="Briefly summarize your request..."
-                className="w-full bg-[#0B111C] border border-[#2A3446] rounded-lg p-3 text-sm text-white placeholder-[#7E889C] focus:outline-none focus:border-white/[0.2] transition-colors"
+                className="w-full bg-[#0B111C] border border-[#2A3446] rounded-lg p-3 text-sm text-white placeholder-[#97A0B3] focus:outline-none focus:border-white/[0.2] transition-colors"
               />
             </div>
 
@@ -207,7 +225,7 @@ export function PortalSupportPage() {
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe your issue or request..."
-                className="w-full bg-[#0B111C] border border-[#2A3446] rounded-lg p-3 text-sm text-white placeholder-[#7E889C] focus:outline-none focus:border-white/[0.2] resize-none transition-colors"
+                className="w-full bg-[#0B111C] border border-[#2A3446] rounded-lg p-3 text-sm text-white placeholder-[#97A0B3] focus:outline-none focus:border-white/[0.2] resize-none transition-colors"
               />
             </div>
 
@@ -215,8 +233,9 @@ export function PortalSupportPage() {
             <div className="flex justify-end">
               <button
                 type="submit"
-                disabled={createTicketMutation.isPending}
-                className="w-10 h-10 rounded-full bg-[#BCCCE6] text-[#0B111C] flex items-center justify-center hover:bg-white transition-colors"
+                onClick={handleFormSubmit}
+                disabled={createTicketMutation.isPending || !subject.trim() || !description.trim()}
+                className="w-10 h-10 rounded-full bg-[#BCCCE6] text-[#0B111C] flex items-center justify-center hover:bg-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {createTicketMutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -235,16 +254,16 @@ export function PortalSupportPage() {
             <h3 className="text-base font-semibold text-white mb-4">Your requests</h3>
 
             {ticketsList.length === 0 ? (
-              <p className="text-sm text-[#7E889C] py-6 text-center">No tickets yet. Submit your first request.</p>
+              <p className="text-sm text-[#97A0B3] py-6 text-center">No tickets yet. Need help? Raise a Ticket</p>
             ) : (
               <div className="space-y-3">
                 {ticketsList.slice(0, 5).map((t) => (
-                  <div key={t.id} className="p-4 bg-[#0B111C] rounded-xl border border-white/[0.04]">
+                  <Link key={t.id} to={`/portal/support/${t.rawId}`} className="block p-4 bg-[#0B111C] rounded-xl border border-white/[0.04] hover:border-[#7FA0D6]/30 transition-colors">
                     {/* Top row */}
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-xs font-mono text-[#7E889C]">{t.id}</span>
-                      <span className="text-xs text-[#7E889C]">· {t.category}</span>
-                      <span className="text-xs text-[#7E889C] ml-auto">{t.timeAgo}</span>
+                      <span className="text-xs font-mono text-[#97A0B3]">{t.id}</span>
+                      <span className="text-xs text-[#97A0B3]">· {t.category}</span>
+                      <span className="text-xs text-[#97A0B3] ml-auto">{t.timeAgo}</span>
                     </div>
                     {/* Title */}
                     <p className="text-sm font-medium text-white mb-2">{t.title}</p>
@@ -254,7 +273,7 @@ export function PortalSupportPage() {
                         t.status === "resolved"
                           ? "bg-[#7FA0D6]/10 text-[#7FA0D6]"
                           : t.status === "in_progress"
-                          ? "bg-[#FCD34D]/10 text-[#FCD34D]"
+                          ? "bg-[#D8BF9B]/10 text-[#D8BF9B]"
                           : "bg-white/[0.05] text-[#97A0B3]"
                       }`}
                     >
@@ -264,7 +283,7 @@ export function PortalSupportPage() {
                         ? "In progress"
                         : "Waiting on you"}
                     </span>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
@@ -284,13 +303,13 @@ export function PortalSupportPage() {
                   >
                     <span className="text-sm text-[#97A0B3] group-hover:text-white transition-colors pr-4">{item.q}</span>
                     <Plus
-                      className={`w-4 h-4 text-[#7E889C] shrink-0 transition-transform duration-200 ${
+                      className={`w-4 h-4 text-[#97A0B3] shrink-0 transition-transform duration-200 ${
                         expandedFaq === i ? "rotate-45" : ""
                       }`}
                     />
                   </button>
                   {expandedFaq === i && (
-                    <div className="pb-4 text-sm text-[#7E889C] animate-in fade-in slide-in-from-top-2">
+                    <div className="pb-4 text-sm text-[#97A0B3] animate-in fade-in slide-in-from-top-2">
                       {item.a}
                     </div>
                   )}
@@ -301,16 +320,22 @@ export function PortalSupportPage() {
         </div>
       </div>
 
-      {/* Toast */}
+      {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#161F2D] text-white px-5 py-3 rounded-xl shadow-2xl border border-white/[0.1] text-sm font-medium flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#6EE7B7]" />
+          <span className="w-2 h-2 rounded-full bg-[#BCCCE6]" />
           {toastMessage}
-          <button type="button" onClick={() => setToastMessage(null)} className="ml-2 text-[#7E889C] hover:text-white">
+          <button type="button" onClick={() => setToastMessage(null)} className="ml-2 text-[#97A0B3] hover:text-white cursor-pointer">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
+
+      {/* Plan Bargain Call Modal */}
+      <PlanBargainCallModal
+        isOpen={bargainModalOpen}
+        onClose={() => setBargainModalOpen(false)}
+      />
     </div>
   );
 }

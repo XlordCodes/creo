@@ -60,7 +60,7 @@ export function PodDeliverablesReviewPage() {
         t.blueprint?.concept_name || `${t.client_name} Asset`,
         t.client_name,
         t.deliverable_type?.toUpperCase(),
-        t.assignee_name,
+        t.assignee?.full_name || t.assignee_name,
         t.due_date ? `Due ${new Date(t.due_date).toLocaleDateString([], { month: "short", day: "numeric" })}` : "Due today",
         "Pending Lead Sign-off",
       ]),
@@ -69,7 +69,7 @@ export function PodDeliverablesReviewPage() {
         t.blueprint?.concept_name || `${t.client_name} Asset`,
         t.client_name,
         t.deliverable_type?.toUpperCase(),
-        t.assignee_name,
+        t.assignee?.full_name || t.assignee_name,
         "Delivered",
         "Client Approved",
       ]),
@@ -130,7 +130,7 @@ export function PodDeliverablesReviewPage() {
             </button>
             <button
               onClick={() => setNewDeliverableModal(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
             >
               <Plus className="size-3.5" />
               New Deliverable
@@ -287,7 +287,7 @@ export function PodDeliverablesReviewPage() {
               if (!currentTask) return null;
               const clientName = currentTask.client_name || "Client";
               const taskTitle = currentTask.blueprint?.concept_name || `${clientName} ${currentTask.deliverable_type?.toUpperCase() || "Asset"}`;
-              const specialistName = currentTask.assignee_name || "Specialist";
+              const specialistName = currentTask.assignee?.full_name || currentTask.assignee_name || "Specialist";
               return (
                 <div className="bg-[#161F2D] rounded-2xl border border-[#2A3446]/80 shadow-2xs p-4 sm:p-5 space-y-4">
                   {/* Header row */}
@@ -385,7 +385,7 @@ export function PodDeliverablesReviewPage() {
                                 : "bg-[#0B111C] border-[#2A3446] text-[#97A0B3]"
                             }`}
                           >
-                            <div className={`size-5 rounded-lg flex items-center justify-center ${rubric1 ? "bg-[#2563EB] text-white" : "border border-[#2A3446]"}`}>
+                            <div className={`size-5 rounded-lg flex items-center justify-center ${rubric1 ? "bg-[#7FA0D6] text-white" : "border border-[#2A3446]"}`}>
                               {rubric1 && <Check className="size-3.5 stroke-[3]" />}
                             </div>
                             <span className="text-xs font-bold">Brand contrast & typography guidelines verified</span>
@@ -399,7 +399,7 @@ export function PodDeliverablesReviewPage() {
                                 : "bg-[#0B111C] border-[#2A3446] text-[#97A0B3]"
                             }`}
                           >
-                            <div className={`size-5 rounded-lg flex items-center justify-center ${rubric2 ? "bg-[#2563EB] text-white" : "border border-[#2A3446]"}`}>
+                            <div className={`size-5 rounded-lg flex items-center justify-center ${rubric2 ? "bg-[#7FA0D6] text-white" : "border border-[#2A3446]"}`}>
                               {rubric2 && <Check className="size-3.5 stroke-[3]" />}
                             </div>
                             <span className="text-xs font-bold">Sound stems & frame pacing synchronized</span>
@@ -413,7 +413,7 @@ export function PodDeliverablesReviewPage() {
                                 : "bg-[#0B111C] border-[#2A3446] text-[#97A0B3]"
                             }`}
                           >
-                            <div className={`size-5 rounded-lg flex items-center justify-center ${rubric3 ? "bg-[#2563EB] text-white" : "border border-[#2A3446]"}`}>
+                            <div className={`size-5 rounded-lg flex items-center justify-center ${rubric3 ? "bg-[#7FA0D6] text-white" : "border border-[#2A3446]"}`}>
                               {rubric3 && <Check className="size-3.5 stroke-[3]" />}
                             </div>
                             <span className="text-xs font-bold">Safe-zone compliance & master export verified</span>
@@ -483,7 +483,7 @@ export function PodDeliverablesReviewPage() {
                                   comment: feedbackNote || "All rubric checks verified. Approved for client sync.",
                                 });
                               }}
-                              className="px-6 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                              className="px-6 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
                             >
                               <Check className="size-4" />
                               Approve & Send to Client
@@ -557,7 +557,7 @@ export function PodDeliverablesReviewPage() {
             <div className="flex justify-end gap-3 pt-3">
               <button
                 onClick={() => setNewDeliverableModal(false)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
               >
                 Cancel
               </button>

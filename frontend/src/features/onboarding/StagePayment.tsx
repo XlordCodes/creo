@@ -56,7 +56,7 @@ function PlanCard({
             <Zap className="size-3 fill-[#0B111C]" /> Most Popular
           </span>
         ) : (
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[#97A0B3]">
             Monthly Retainer
           </span>
         )}
@@ -74,12 +74,12 @@ function PlanCard({
           <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
             {formatINR(plan.price_minor)}
           </span>
-          <span className="text-xs text-[#94A3B8] font-medium">/month</span>
+          <span className="text-xs text-[#97A0B3] font-medium">/month</span>
         </div>
 
         <ul className="space-y-3.5 my-4 flex-1">
           {plan.highlights.map((h) => (
-            <li key={h} className="text-xs text-[#CBD5E1] flex items-start gap-2.5 leading-relaxed font-medium">
+            <li key={h} className="text-xs text-[#BCCCE6] flex items-start gap-2.5 leading-relaxed font-medium">
               <div className="size-4 rounded-full bg-emerald-950/60 border border-emerald-800/60 flex items-center justify-center shrink-0 mt-0.5">
                 <Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" />
               </div>
@@ -93,7 +93,7 @@ function PlanCard({
         className={`w-full mt-6 py-2.5 px-4 rounded-xl text-sm font-bold text-center transition-all flex items-center justify-center gap-1.5 ${
           selected
             ? "bg-[#BCCCE6] text-[#0B111C] shadow-md shadow-[#BCCCE6]/20"
-            : "bg-[#0B111C] text-[#94A3B8] border border-[#2A3446] hover:text-white hover:border-[#7FA0D6]"
+            : "bg-[#0B111C] text-[#97A0B3] border border-[#2A3446] hover:text-white hover:border-[#7FA0D6]"
         }`}
       >
         {selected ? (
@@ -146,7 +146,7 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
         <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
           Subscription Active
         </h2>
-        <p className="text-sm text-[#94A3B8] mt-2 mb-6 max-w-md mx-auto leading-relaxed">
+        <p className="text-sm text-[#97A0B3] mt-2 mb-6 max-w-md mx-auto leading-relaxed">
           Your payment has already been verified and your subscription is active. You do not need to pay again.
         </p>
         <button
@@ -234,10 +234,10 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full space-y-6"
+      className="w-full space-y-4 sm:space-y-5"
     >
       {/* Header Card */}
-      <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-6 sm:p-7 shadow-xl">
+      <div className="rounded-xl border border-[#2A3446] bg-[#161F2D] p-4 sm:p-6 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#7FA0D6]/20 border border-[#7FA0D6]/30 text-[#BCCCE6] text-[11px] font-bold uppercase tracking-wider mb-3 shadow-sm">
@@ -246,7 +246,7 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
             <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight mb-2">
               Choose Your Retainer Plan
             </h2>
-            <p className="text-sm text-[#94A3B8] leading-relaxed max-w-xl">
+            <p className="text-sm text-[#97A0B3] leading-relaxed max-w-xl">
               Select the subscription tier that matches your creative growth ambition. Upgrade, downgrade, or cancel anytime.
             </p>
           </div>
@@ -279,7 +279,7 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
               </div>
               <div>
                 <h4 className="text-sm font-bold text-white">Confirming your payment...</h4>
-                <p className="text-xs text-[#94A3B8] mt-0.5">
+                <p className="text-xs text-[#97A0B3] mt-0.5">
                   Verifying transaction with payment gateway for {selectedPlan?.display_name || "selected plan"}. Please don't close this window.
                 </p>
               </div>
@@ -326,7 +326,7 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
 
       {/* Plan Cards Grid: Equal Heights across all 3 cards */}
       {plansLoading ? (
-        <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-12 text-center text-[#94A3B8]">
+        <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-12 text-center text-[#97A0B3]">
           <Loader2 className="size-7 border-2 border-[#7FA0D6] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-xs font-medium">Loading pricing plans…</p>
         </div>
@@ -351,7 +351,7 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
             type="button"
             onClick={onBack}
             disabled={phase === "processing" || phase === "polling"}
-            className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-[#0B111C] border border-[#2A3446] text-sm font-bold text-[#94A3B8] hover:text-white hover:border-[#7FA0D6] shadow-sm transition-colors cursor-pointer inline-flex items-center justify-center gap-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-[#0B111C] border border-[#2A3446] text-sm font-bold text-[#97A0B3] hover:text-white hover:border-[#7FA0D6] shadow-sm transition-colors cursor-pointer inline-flex items-center justify-center gap-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Back to Service Agreement</span>
@@ -366,7 +366,7 @@ export function StagePayment({ userId, onPaymentComplete, onBack, isAlreadyPaid 
           className={`w-full sm:w-auto min-w-[280px] py-3 px-8 rounded-xl font-bold text-sm transition-all shadow-md inline-flex items-center justify-center gap-2 ${
             selectedPlanId && phase === "select"
               ? "bg-[#BCCCE6] text-[#0B111C] cursor-pointer hover:bg-white shadow-[#BCCCE6]/20"
-              : "bg-[#161F2D] text-[#64748B] border border-[#2A3446] cursor-not-allowed shadow-none"
+              : "bg-[#161F2D] text-[#97A0B3] border border-[#2A3446] cursor-not-allowed shadow-none"
           }`}
         >
           {phase === "processing" ? (

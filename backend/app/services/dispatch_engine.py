@@ -68,7 +68,7 @@ DEFAULT_TEMPLATE: dict[str, dict[str, Any]] = {
     "poster": {"days": [0, 4], "time": "12:30"},      # Mon, Fri at 12:30 PM
     "static_post": {"days": [0, 4], "time": "12:30"}, # Mon, Fri
     "carousel": {"days": [2], "time": "18:00"},        # Wed at 6:00 PM
-    "story": {"days": [0, 1, 2, 3, 4], "time": "20:00"}, # Daily at 8:00 PM
+    "story": {"days": [0, 1, 2, 3, 4, 5, 6], "time": "20:00"}, # Daily at 8:00 PM
 }
 
 
@@ -717,18 +717,36 @@ async def draft_month_calendar(
     except Exception:
         client_tz = ZoneInfo("Asia/Kolkata")
 
-    # 7-Day Strategy & Creative Preparation Lock Buffer:
-    # Days 1 to 7 are strictly locked for brand research, scripting, and asset prep (no deliverables scheduled).
-    # Content allocation begins on Day 8 and distributes monthly plan quotas across a 30-day window (Day 8 to Day 37).
+    # Target month publish window:
+    # Schedule stays strictly within [month_start, month_end] so months never bleed across calendar boundaries.
     sub_start_date = (sub_row[0].created_at.date() if sub_row and sub_row[0].created_at else date.today())
-    start_from = sub_start_date + timedelta(days=7)
-    window_end = start_from + timedelta(days=30)
+    
+    # Check if initial 7-day onboarding buffer applies to the subscription's first month
+    is_initial_cycle = (sub_start_date >= month_start) or (
+        sub_start_date < month_start and (sub_start_date + timedelta(days=7)) >= month_start
+    )
+    if is_initial_cycle:
+        buffer_date = sub_start_date + timedelta(days=7)
+        start_from = max(month_start, buffer_date)
+        if start_from > month_end:
+            start_from = month_start
+    else:
+        start_from = month_start
 
-    # Clean previous draft slots
+    window_end = month_end
+
+    total_days_in_month = (month_end - month_start).days + 1
+    active_days_in_window = (window_end - start_from).days + 1
+    is_partial_first_month = (start_from > month_start) and (active_days_in_window < total_days_in_month)
+
+    # Clean previous unapproved/draft slots strictly for the target month
     await db.execute(
         delete(ContentCalendar)
         .where(ContentCalendar.client_id == client_id)
-        .where(ContentCalendar.status == "draft")
+        .where(ContentCalendar.status.in_(["draft", "scheduled"]))
+        .where(ContentCalendar.deliverable_id.is_(None))
+        .where(ContentCalendar.publish_date >= month_start)
+        .where(ContentCalendar.publish_date <= month_end)
     )
 
     # Fetch client Brand DNA
@@ -736,9 +754,15 @@ async def draft_month_calendar(
 
     created_slots: list[ContentCalendar] = []
 
-    for kind, quota in quotas.items():
-        if quota <= 0:
+    for kind, base_quota in quotas.items():
+        if base_quota <= 0:
             continue
+
+        if is_partial_first_month:
+            # Proportionally allocate deliverables to keep daily pod workload manageable and matching the plan
+            quota = max(1, round(base_quota * (active_days_in_window / total_days_in_month)))
+        else:
+            quota = base_quota
 
         tmpl = template.get(kind, DEFAULT_TEMPLATE.get(kind, {"days": [1, 3], "time": "19:30"}))
         preferred_weekdays = tmpl.get("days", [1, 3])
@@ -807,6 +831,16 @@ async def draft_month_calendar(
     await db.commit()
     logger.info("Drafted %d calendar slots for client %s in timezone %s", len(created_slots), client_id, tz_name)
     return created_slots
+
+
+async def rebalance_month_calendar(
+    db: AsyncSession,
+    client_id: uuid.UUID,
+    month_anchor: date | None = None,
+) -> list[ContentCalendar]:
+    """Rebalance calendar deliverables across the target month to ensure manageable daily pod workload and exact quota match."""
+    return await draft_month_calendar(db, client_id, month_anchor=month_anchor)
+
 
 
 # --- Part 7: Client Approval Gate & Rolling Window Task Generation ---

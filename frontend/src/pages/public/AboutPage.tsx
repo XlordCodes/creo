@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { motion } from "motion/react";
+import { CountUp, EASE_OUT_EXPO, Reveal, SplitText, Stagger, StaggerItem, TiltCard } from "../../components/motion";
 import { 
   MessageSquare, 
   AlertCircle, ChevronRight, BarChart3, FileSpreadsheet, HardDrive
@@ -13,54 +15,79 @@ export function AboutPage() {
     <div className="w-full bg-[#050810] text-[#F8FAFC] min-h-screen pb-20 lg:pb-24 font-sans selection:bg-[#7FA0D6]/30">
       
       {/* ── Section 1: Hero (2-Column Grid) ── */}
-      <section className="max-w-[1240px] mx-auto px-6 pt-6 pb-16 sm:pt-8 sm:pb-20 lg:pt-10 lg:pb-24">
+      <section className="relative isolate max-w-[1240px] mx-auto px-6 pt-8 pb-16 sm:pt-12 sm:pb-20 lg:pt-14 lg:pb-24">
+        <motion.div
+          aria-hidden="true"
+          className="absolute -left-32 top-0 -z-10 size-[30rem] rounded-full bg-[radial-gradient(circle,rgba(127,160,214,0.12),transparent_62%)]"
+          animate={{ x: [0, 40, 0], y: [0, 24, 0] }}
+          transition={{ duration: 14, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
+        />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           
           {/* Left Column */}
           <div className="pr-4 lg:pr-8">
-            <div className="inline-flex items-center gap-2 rounded-full bg-[#161F2D] border border-[#2A3446] text-[#7FA0D6] text-[11px] font-bold px-3 py-1 mb-6">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, ease: EASE_OUT_EXPO }}
+              className="inline-flex items-center gap-2 rounded-full bg-[#161F2D] border border-[#2A3446] text-[#7FA0D6] text-[11px] font-bold px-3 py-1 mb-6"
+            >
               ⚡ OUR MISSION &amp; ORIGIN
-            </div>
-            
-            <h1 className="text-4xl sm:text-5xl lg:text-[56px] font-black tracking-tight leading-[1.05] text-[#F8FAFC] mb-6">
-              Built by agency leaders who refused to accept <span className="text-[#7FA0D6]">the chaos.</span>
-            </h1>
-            
-            <p className="text-sm text-[#97A0B3] max-w-lg mt-4 mb-8 leading-relaxed">
+            </motion.div>
+
+            <SplitText
+              as="h1"
+              animateOnMount
+              text="Built by agency leaders who refused to accept the chaos."
+              accent={["the", "chaos"]}
+              className="block text-4xl sm:text-5xl lg:text-[56px] font-black tracking-tight leading-[1.05] text-[#F8FAFC] mb-6"
+            />
+
+            <motion.p
+              initial={{ opacity: 0, y: 14, filter: "blur(6px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              transition={{ duration: 0.8, delay: 0.45, ease: EASE_OUT_EXPO }}
+              className="text-sm sm:text-base text-[#97A0B3] max-w-lg mt-4 mb-8 leading-relaxed"
+            >
               Creative work should be boundless. Agency operations should be mathematical. We built CREO to replace WhatsApp chasing, lost briefs, and blind margins with a single connected operating system.
-            </p>
+            </motion.p>
             
             {/* 3 Stat Pods */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="backdrop-blur-md bg-[#161F2D]/40 border border-[#2A3446]/40 rounded-xl px-6 py-4 flex flex-col justify-center relative">
+            <Stagger className="grid grid-cols-1 sm:grid-cols-3 gap-4" delay={0.55} gap={0.1}>
+              <StaggerItem className="backdrop-blur-md bg-[#161F2D]/40 border border-[#2A3446]/40 rounded-xl px-6 py-4 flex flex-col justify-center relative transition-colors duration-300 hover:border-[#7FA0D6]/50">
                 <div className="absolute top-4 right-4 size-1.5 flex items-center justify-center">
                   <span className="absolute inset-0 rounded-full bg-[#7FA0D6] animate-ping opacity-40"></span>
                   <span className="relative size-1.5 rounded-full bg-[#7FA0D6]"></span>
                 </div>
-                <div className="text-2xl font-black text-[#F8FAFC] leading-none mb-1.5">48h</div>
+                <CountUp value="48h" className="block text-2xl font-black text-[#F8FAFC] leading-none mb-1.5" />
                 <div className="text-xs text-[#97A0B3] uppercase tracking-wider font-semibold">Average SLA Turnaround</div>
-              </div>
-              <div className="backdrop-blur-md bg-[#161F2D]/40 border border-[#2A3446]/40 rounded-xl px-6 py-4 flex flex-col justify-center relative">
+              </StaggerItem>
+              <StaggerItem className="backdrop-blur-md bg-[#161F2D]/40 border border-[#2A3446]/40 rounded-xl px-6 py-4 flex flex-col justify-center relative transition-colors duration-300 hover:border-[#7FA0D6]/50">
                 <div className="absolute top-4 right-4 size-1.5 flex items-center justify-center">
                   <span className="absolute inset-0 rounded-full bg-[#7FA0D6] animate-ping opacity-40"></span>
                   <span className="relative size-1.5 rounded-full bg-[#7FA0D6]"></span>
                 </div>
-                <div className="text-2xl font-black text-[#F8FAFC] leading-none mb-1.5">99.4%</div>
+                <CountUp value="99.4%" className="block text-2xl font-black text-[#F8FAFC] leading-none mb-1.5" />
                 <div className="text-xs text-[#97A0B3] uppercase tracking-wider font-semibold">On-Time Delivery Rate</div>
-              </div>
-              <div className="backdrop-blur-md bg-[#161F2D]/40 border border-[#2A3446]/40 rounded-xl px-6 py-4 flex flex-col justify-center relative">
+              </StaggerItem>
+              <StaggerItem className="backdrop-blur-md bg-[#161F2D]/40 border border-[#2A3446]/40 rounded-xl px-6 py-4 flex flex-col justify-center relative transition-colors duration-300 hover:border-[#7FA0D6]/50">
                 <div className="absolute top-4 right-4 size-1.5 flex items-center justify-center">
                   <span className="absolute inset-0 rounded-full bg-[#7FA0D6] animate-ping opacity-40"></span>
                   <span className="relative size-1.5 rounded-full bg-[#7FA0D6]"></span>
                 </div>
                 <div className="text-2xl font-black text-[#F8FAFC] leading-none mb-1.5">1-Click</div>
                 <div className="text-xs text-[#97A0B3] uppercase tracking-wider font-semibold">Frictionless Sign-Off</div>
-              </div>
-            </div>
+              </StaggerItem>
+            </Stagger>
           </div>
 
           {/* Right Column — Origin & Architecture Terminal */}
-          <div className="backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-2xl p-6 shadow-2xl relative overflow-hidden flex flex-col gap-6">
+          <motion.div
+            initial={{ opacity: 0, x: 40, rotateY: -8 }}
+            animate={{ opacity: 1, x: 0, rotateY: 0 }}
+            transition={{ duration: 1, delay: 0.3, ease: EASE_OUT_EXPO }}
+          >
+          <TiltCard max={6} className="backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-2xl p-6 shadow-2xl relative overflow-hidden flex flex-col gap-6">
             <div className="flex items-center justify-between border-b border-[#2A3446] pb-4">
               <div className="font-black text-[#F8FAFC] text-sm tracking-tight">CREO Kernel v2.6 &bull; Architecture Blueprint</div>
               <div className="text-[#7FA0D6] text-xs font-semibold flex items-center gap-2">
@@ -72,26 +99,27 @@ export function AboutPage() {
               </div>
             </div>
             
-            <div className="space-y-3">
-              <div className="bg-[#0A0F18] border border-[#2A3446] p-4 rounded-xl space-y-1">
+            <Stagger className="space-y-3" delay={0.6} gap={0.15}>
+              <StaggerItem className="bg-[#0A0F18] border border-[#2A3446] p-4 rounded-xl space-y-1">
                 <div className="text-[#97A0B3] text-[10px] font-bold uppercase">The Fragmented Era (2018–2024)</div>
                 <div className="text-[#97A0B3] text-xs">WhatsApp, Drive, and Sheets created 7 disconnected blindspots.</div>
-              </div>
-              <div className="bg-[#0A0F18] border border-[#2A3446] p-4 rounded-xl space-y-1">
+              </StaggerItem>
+              <StaggerItem className="bg-[#0A0F18] border border-[#2A3446] p-4 rounded-xl space-y-1">
                 <div className="text-[#97A0B3] text-[10px] font-bold uppercase">The Operating Shift (2025)</div>
                 <div className="text-[#F8FAFC] text-xs font-medium">Unifying creative production, capacity heatmaps, and unit margins into one engine.</div>
-              </div>
-              <div className="bg-[#0A0F18] border border-[#2A3446] p-4 rounded-xl space-y-1">
+              </StaggerItem>
+              <StaggerItem className="bg-[#0A0F18] border border-[#2A3446] p-4 rounded-xl space-y-1">
                 <div className="text-[#97A0B3] text-[10px] font-bold uppercase">The Autonomous Studio (2026+)</div>
                 <div className="text-[#7FA0D6] text-xs font-bold">Predictive pod resourcing and automated margin recovery across 52+ agencies.</div>
-              </div>
-            </div>
+              </StaggerItem>
+            </Stagger>
             
             <div className="mt-4 pt-4 border-t border-[#2A3446] flex items-center justify-between text-[10px] font-medium text-[#97A0B3]">
               <div>Engineered in Bengaluru &bull; Deployed Globally</div>
               <div className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-[#7FA0D6]"></span> Live Latency: 24ms</div>
             </div>
-          </div>
+          </TiltCard>
+          </motion.div>
         </div>
       </section>
 
@@ -101,12 +129,18 @@ export function AboutPage() {
           <div className="inline-flex items-center gap-2 rounded-full bg-[#161F2D] border border-[#2A3446] text-[#7FA0D6] text-[11px] font-bold px-3 py-1 mb-6">
             ⚡ THE ORIGIN STORY
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#F8FAFC] mb-4">
-            Why CREO Exists: Breaking the <span className="text-[#7FA0D6]">7 Fragmented Silos.</span>
-          </h2>
-          <p className="text-sm text-[#97A0B3]">Before CREO, running an agency meant gluing together 7 disconnected tools.</p>
+          <SplitText
+            as="h2"
+            text="Why CREO Exists: Breaking the 7 Fragmented Silos."
+            accent={["7", "Fragmented", "Silos"]}
+            className="block text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#F8FAFC] mb-4"
+          />
+          <Reveal delay={0.1}>
+            <p className="text-sm sm:text-base text-[#97A0B3]">Before CREO, running an agency meant gluing together 7 disconnected tools.</p>
+          </Reveal>
         </div>
 
+        <Reveal blur>
         <div className="relative grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-8 items-center">
           
           {/* Left Card - The Past / Chaos */}
@@ -248,8 +282,9 @@ export function AboutPage() {
               </div>
             </div>
           </div>
-          
+
         </div>
+        </Reveal>
       </section>
 
       {/* ── Section 3: Three Principles ── */}
@@ -258,14 +293,17 @@ export function AboutPage() {
           <div className="inline-flex items-center gap-2 rounded-full bg-[#161F2D] border border-[#2A3446] text-[#7FA0D6] text-[11px] font-bold px-3 py-1 mb-6">
             ⚡ OUR CORE PHILOSOPHY
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#F8FAFC] mb-4">
-            Three principles that run every modern agency.
-          </h2>
+          <SplitText
+            as="h2"
+            text="Three principles that run every modern agency."
+            accent={["principles"]}
+            className="block text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#F8FAFC] mb-4"
+          />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Stagger className="grid grid-cols-1 md:grid-cols-3 gap-6" gap={0.12}>
           {/* Card 1 */}
-          <div className="backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-3xl p-6 lg:p-8 flex flex-col">
+          <StaggerItem className="h-full"><TiltCard max={6} className="h-full backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-3xl p-6 lg:p-8 flex flex-col transition-colors duration-300 hover:border-[#7FA0D6]/40">
             <div className="inline-flex items-center rounded-full bg-[#0A0F18] border border-[#2A3446] text-[#7FA0D6] text-[10px] font-bold px-3 py-1 mb-6 w-fit">
               PEOPLE
             </div>
@@ -302,10 +340,10 @@ export function AboutPage() {
                 </div>
               </div>
             </div>
-          </div>
+          </TiltCard></StaggerItem>
 
           {/* Card 2 */}
-          <div className="backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-3xl p-6 lg:p-8 flex flex-col">
+          <StaggerItem className="h-full"><TiltCard max={6} className="h-full backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-3xl p-6 lg:p-8 flex flex-col transition-colors duration-300 hover:border-[#7FA0D6]/40">
             <div className="inline-flex items-center rounded-full bg-[#0A0F18] border border-[#2A3446] text-[#7FA0D6] text-[10px] font-bold px-3 py-1 mb-6 w-fit">
               PROCESS
             </div>
@@ -335,10 +373,10 @@ export function AboutPage() {
             <div className="bg-[#0A0F18] border border-[#2A3446] text-[#7FA0D6] text-xs font-semibold px-3 py-1 rounded-full mt-4 inline-flex items-center gap-1.5 w-fit">
               ⚡ SLA 2.4h avg
             </div>
-          </div>
+          </TiltCard></StaggerItem>
 
           {/* Card 3 */}
-          <div className="backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-3xl p-6 lg:p-8 flex flex-col">
+          <StaggerItem className="h-full"><TiltCard max={6} className="h-full backdrop-blur-md bg-[#161F2D]/50 border border-[#2A3446]/40 rounded-3xl p-6 lg:p-8 flex flex-col transition-colors duration-300 hover:border-[#7FA0D6]/40">
             <div className="inline-flex items-center rounded-full bg-[#0A0F18] border border-[#2A3446] text-[#7FA0D6] text-[10px] font-bold px-3 py-1 mb-6 w-fit">
               PERFORMANCE
             </div>
@@ -375,8 +413,8 @@ export function AboutPage() {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          </TiltCard></StaggerItem>
+        </Stagger>
       </section>
 
       {/* ── Section 4: Leadership Pods ── */}
@@ -385,14 +423,17 @@ export function AboutPage() {
           <div className="inline-flex items-center gap-2 rounded-full bg-[#161F2D] border border-[#2A3446]/50 text-[#7FA0D6] text-[11px] font-bold px-3 py-1 mb-6">
             ⚡ THE PEOPLE BEHIND CREO
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#F8FAFC] mb-4">
-            The team engineering the operating layer.
-          </h2>
+          <SplitText
+            as="h2"
+            text="The team engineering the operating layer."
+            accent={["operating", "layer"]}
+            className="block text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#F8FAFC] mb-4"
+          />
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Stagger className="grid grid-cols-1 md:grid-cols-3 gap-6" gap={0.12}>
           {/* Pod 1 */}
-          <div className="bg-[#161F2D] border border-[#2A3446]/50 rounded-xl p-5 flex flex-col hover:border-[#7FA0D6]/40 transition group cursor-pointer">
+          <StaggerItem className="h-full"><TiltCard max={8} className="h-full bg-[#161F2D] border border-[#2A3446]/50 rounded-xl p-5 flex flex-col hover:border-[#7FA0D6]/40 transition-colors group cursor-pointer">
             <div className="flex items-center gap-4 mb-4">
               <div className="w-12 h-12 rounded-full bg-[#0A0F18] border border-[#2A3446]/50 flex items-center justify-center text-[#7FA0D6] font-bold text-lg">
                 CA
@@ -410,10 +451,10 @@ export function AboutPage() {
             <div className="flex justify-end text-[#7FA0D6]">
               <ChevronRight className="size-4 group-hover:translate-x-1 transition-transform" />
             </div>
-          </div>
+          </TiltCard></StaggerItem>
 
           {/* Pod 2 */}
-          <div className="bg-[#161F2D] border border-[#2A3446]/50 rounded-xl p-5 flex flex-col hover:border-[#7FA0D6]/40 transition group cursor-pointer">
+          <StaggerItem className="h-full"><TiltCard max={8} className="h-full bg-[#161F2D] border border-[#2A3446]/50 rounded-xl p-5 flex flex-col hover:border-[#7FA0D6]/40 transition-colors group cursor-pointer">
             <div className="flex items-center gap-4 mb-4">
               <div className="w-12 h-12 rounded-full bg-[#0A0F18] border border-[#2A3446]/50 flex items-center justify-center text-[#7FA0D6] font-bold text-lg">
                 SP
@@ -431,10 +472,10 @@ export function AboutPage() {
             <div className="flex justify-end text-[#7FA0D6]">
               <ChevronRight className="size-4 group-hover:translate-x-1 transition-transform" />
             </div>
-          </div>
+          </TiltCard></StaggerItem>
 
           {/* Pod 3 */}
-          <div className="bg-[#161F2D] border border-[#2A3446]/50 rounded-xl p-5 flex flex-col hover:border-[#7FA0D6]/40 transition group cursor-pointer">
+          <StaggerItem className="h-full"><TiltCard max={8} className="h-full bg-[#161F2D] border border-[#2A3446]/50 rounded-xl p-5 flex flex-col hover:border-[#7FA0D6]/40 transition-colors group cursor-pointer">
             <div className="flex items-center gap-4 mb-4">
               <div className="w-12 h-12 rounded-full bg-[#0A0F18] border border-[#2A3446]/50 flex items-center justify-center text-[#7FA0D6] font-bold text-lg">
                 IE
@@ -452,8 +493,8 @@ export function AboutPage() {
             <div className="flex justify-end text-[#7FA0D6]">
               <ChevronRight className="size-4 group-hover:translate-x-1 transition-transform" />
             </div>
-          </div>
-        </div>
+          </TiltCard></StaggerItem>
+        </Stagger>
       </section>
 
     </div>

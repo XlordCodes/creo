@@ -84,23 +84,29 @@ async def get_calendar_entries(
         caption = cal.caption or ""
         caption_lower = caption.lower()
         
-        type_str = "reel"
-        if d_type:
+        raw_slot_kind = str(cal.slot_kind or "").lower()
+        if raw_slot_kind in {"reel", "carousel", "story", "poster", "static_post"}:
+            type_str = "post" if raw_slot_kind in {"poster", "static_post"} else raw_slot_kind
+        elif d_type:
             val = str(d_type.value if hasattr(d_type, "value") else d_type).lower()
             if "reel" in val or "video" in val:
                 type_str = "reel"
-            elif "carousel" in val or "story" in val:
+            elif "carousel" in val:
+                type_str = "carousel"
+            elif "story" in val:
                 type_str = "story"
             else:
-                type_str = "poster"
+                type_str = "post"
         elif "reel" in caption_lower or (d and ("video" in (d.file_type or "").lower() or "mp4" in (d.file_type or "").lower())):
             type_str = "reel"
-        elif "story" in caption_lower or "carousel" in caption_lower:
+        elif "carousel" in caption_lower:
+            type_str = "carousel"
+        elif "story" in caption_lower:
             type_str = "story"
         else:
-            type_str = "poster"
+            type_str = "post"
 
-        format_label = "Reel" if type_str == "reel" else "Poster" if type_str == "poster" else "Story"
+        format_label = "Reel" if type_str == "reel" else "Carousel" if type_str == "carousel" else "Story" if type_str == "story" else "Post"
         
         if caption and not caption.startswith("Brand campaign"):
             topic_text = caption
@@ -151,16 +157,15 @@ async def get_calendar_entries(
         if d.id in seen_deliverable_ids:
             continue
         sched_dt = d.scheduled_at or d.created_at
-        type_str = "reel"
         if d_type:
             val = str(d_type.value if hasattr(d_type, "value") else d_type).lower()
-            type_str = "reel" if ("reel" in val or "video" in val) else "story" if ("carousel" in val or "story" in val) else "poster"
+            type_str = "reel" if ("reel" in val or "video" in val) else "carousel" if "carousel" in val else "story" if "story" in val else "post"
         elif "video" in (d.file_type or "").lower():
             type_str = "reel"
         else:
-            type_str = "poster"
+            type_str = "post"
 
-        format_label = "Reel" if type_str == "reel" else "Poster" if type_str == "poster" else "Story"
+        format_label = "Reel" if type_str == "reel" else "Carousel" if type_str == "carousel" else "Story" if type_str == "story" else "Post"
         topic_text = f"Brand {format_label} · Deliverable v{d.version}"
 
         calendar_list.append({
@@ -193,6 +198,7 @@ async def get_calendar_entries(
 @router.post("/{client_id}/draft-month", response_model=dict[str, Any])
 async def draft_calendar_month_endpoint(
     client_id: uuid.UUID | None = None,
+    month: str | None = Query(None, description="Target month in YYYY-MM format (e.g. 2026-10)"),
     actor: Actor = Depends(get_current_actor),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -200,7 +206,15 @@ async def draft_calendar_month_endpoint(
     target_id = client_id or actor.client_id or actor.user_id
     from app.services.dispatch_engine import draft_month_calendar
 
-    slots = await draft_month_calendar(db, target_id)
+    month_anchor = None
+    if month:
+        try:
+            parts = month.strip().split("-")
+            month_anchor = date(int(parts[0]), int(parts[1]), 1)
+        except Exception:
+            pass
+
+    slots = await draft_month_calendar(db, target_id, month_anchor=month_anchor)
     return {
         "status": "drafted",
         "client_id": str(target_id),
@@ -209,6 +223,38 @@ async def draft_calendar_month_endpoint(
         "posters": sum(1 for s in slots if s.slot_kind in ["poster", "static_post"]),
         "stories": sum(1 for s in slots if s.slot_kind in ["story", "carousel"]),
     }
+
+
+@router.post("/rebalance-month", response_model=dict[str, Any])
+@router.post("/{client_id}/rebalance-month", response_model=dict[str, Any])
+async def rebalance_calendar_month_endpoint(
+    client_id: uuid.UUID | None = None,
+    month: str | None = Query(None, description="Target month in YYYY-MM format (e.g. 2026-10)"),
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Rebalance calendar deliverables across the month to ensure manageable daily pod workload and exact quota match."""
+    target_id = client_id or actor.client_id or actor.user_id
+    from app.services.dispatch_engine import rebalance_month_calendar
+
+    month_anchor = None
+    if month:
+        try:
+            parts = month.strip().split("-")
+            month_anchor = date(int(parts[0]), int(parts[1]), 1)
+        except Exception:
+            pass
+
+    slots = await rebalance_month_calendar(db, target_id, month_anchor=month_anchor)
+    return {
+        "status": "rebalanced",
+        "client_id": str(target_id),
+        "total_slots": len(slots),
+        "reels": sum(1 for s in slots if s.slot_kind == "reel"),
+        "posters": sum(1 for s in slots if s.slot_kind in ["poster", "static_post"]),
+        "stories": sum(1 for s in slots if s.slot_kind in ["story", "carousel"]),
+    }
+
 
 
 @router.post("/approve", response_model=dict[str, Any])

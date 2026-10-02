@@ -58,7 +58,7 @@ export function ClientDetailsWidget({ clients }: ClientDetailsWidgetProps) {
     if (t.includes("starter")) {
       return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
     }
-    return "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]";
+    return "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]";
   };
 
   const getMonthlyPrice = (tier: string) => {
@@ -373,7 +373,7 @@ export function ClientDetailsWidget({ clients }: ClientDetailsWidgetProps) {
                     {/* Overall Progress Bar */}
                     <div className="w-full bg-[#161F2D] rounded-full h-2.5 overflow-hidden border border-[#2A3446]">
                       <div
-                        className="bg-[#2563EB] h-full rounded-full transition-all duration-500"
+                        className="bg-[#7FA0D6] h-full rounded-full transition-all duration-500"
                         style={{ width: `${Math.min((deliverables_completed / deliverables_total) * 100, 100)}%` }}
                       />
                     </div>
@@ -472,7 +472,7 @@ export function ClientDetailsWidget({ clients }: ClientDetailsWidgetProps) {
                         setSelectedClient(null);
                         navigate(`/admin/clients/${client.client_id}`);
                       }}
-                      className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-600 text-xs font-bold text-white transition-all shadow-md shadow-blue-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-600 text-xs font-bold text-white transition-all shadow-md shadow-blue-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <span>Open Full Client Page</span>
                       <ExternalLink className="w-3.5 h-3.5" />

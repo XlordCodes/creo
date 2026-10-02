@@ -121,7 +121,7 @@ export function MemberSchedulePTOPage() {
 
           <button
             onClick={() => setRequestPtoModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer w-full sm:w-auto"
+            className="px-3.5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer w-full sm:w-auto"
           >
             <Plane className="size-4" />
             <span>Request Time Off / Leave</span>
@@ -150,7 +150,7 @@ export function MemberSchedulePTOPage() {
                 <span className="text-xl sm:text-2xl font-black text-white">{ptoRemaining}</span>
                 <span className="text-xs font-extrabold text-[#97A0B3]">Days Left</span>
               </div>
-              <div className="w-full h-2 bg-[#1F2C3F] rounded-full overflow-hidden my-1">
+              <div className="w-full h-2 bg-[#161F2D] rounded-full overflow-hidden my-1">
                 <div className="h-full bg-blue-600 rounded-full smooth-progress-fill w-[72%]" />
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-[#2A3446] text-[#97A0B3] font-semibold text-xs">
@@ -289,7 +289,7 @@ export function MemberSchedulePTOPage() {
 
                 <div className="p-3 rounded-xl bg-[#0B111C] border border-[#2A3446] hover-card-innovative flex items-center justify-between text-xs sm:text-sm">
                   <div className="flex items-center gap-3">
-                    <div className="size-8 rounded-lg bg-[#1F2C3F] text-white flex items-center justify-center font-bold text-sm">
+                    <div className="size-8 rounded-lg bg-[#161F2D] text-white flex items-center justify-center font-bold text-sm">
                       🏖️
                     </div>
                     <div>
@@ -304,7 +304,7 @@ export function MemberSchedulePTOPage() {
 
                 <div className="p-3 rounded-xl bg-[#0B111C] border border-[#2A3446] hover-card-innovative flex items-center justify-between text-xs sm:text-sm">
                   <div className="flex items-center gap-3">
-                    <div className="size-8 rounded-lg bg-[#1F2C3F] text-white flex items-center justify-center font-bold text-sm">
+                    <div className="size-8 rounded-lg bg-[#161F2D] text-white flex items-center justify-center font-bold text-sm">
                       🎉
                     </div>
                     <div>
@@ -330,11 +330,11 @@ export function MemberSchedulePTOPage() {
                 </div>
 
                 <div className="flex items-center gap-1">
-                  <button className="p-1.5 rounded-lg hover:bg-[#1F2C3F] text-[#97A0B3] cursor-pointer">
+                  <button className="p-1.5 rounded-lg hover:bg-[#161F2D] text-[#97A0B3] cursor-pointer">
                     <ChevronLeft className="size-4" />
                   </button>
                   <span className="text-xs sm:text-sm font-bold text-[#F1F5F9] px-2">Nov 2025</span>
-                  <button className="p-1.5 rounded-lg hover:bg-[#1F2C3F] text-[#97A0B3] cursor-pointer">
+                  <button className="p-1.5 rounded-lg hover:bg-[#161F2D] text-[#97A0B3] cursor-pointer">
                     <ChevronRight className="size-4" />
                   </button>
                 </div>
@@ -434,7 +434,7 @@ export function MemberSchedulePTOPage() {
                             ? "bg-rose-500/25 text-rose-300 border border-rose-500/40"
                             : item.holiday
                             ? "bg-purple-500/25 text-purple-300 border border-purple-500/40"
-                            : "bg-[#1F2C3F] text-[#F1F5F9]"
+                            : "bg-[#161F2D] text-[#F1F5F9]"
                         }`}
                       >
                         {item.label}
@@ -630,7 +630,7 @@ export function MemberSchedulePTOPage() {
 
                 <button
                   type="submit"
-                  className="w-full py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  className="w-full py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <Send className="size-3" />
                   Submit for Lead Approval
@@ -711,7 +711,7 @@ export function MemberSchedulePTOPage() {
               <button
                 type="button"
                 onClick={() => setModifyModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -746,7 +746,7 @@ export function MemberSchedulePTOPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Save Modifications
                 </button>
@@ -779,7 +779,7 @@ export function MemberSchedulePTOPage() {
               <button
                 type="button"
                 onClick={() => setRequestPtoModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -869,7 +869,7 @@ export function MemberSchedulePTOPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Submit for Lead Approval
                 </button>

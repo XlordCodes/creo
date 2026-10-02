@@ -220,3 +220,49 @@ class PlatformPaymentEvent(Base, UUIDPrimaryKeyMixin):
             postgresql_where=(processed_at.is_(None)),
         ),
     )
+
+
+class PlanNegotiation(Base, UUIDPrimaryKeyMixin):
+    """Client-submitted plan negotiation / bargain call requests visible to admin."""
+
+    __tablename__ = "plan_negotiations"
+
+    agency_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agencies.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    client_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    client_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    proposed_offer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    preferred_time: Mapped[str] = mapped_column(String(255), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(50), default="Pending Review", nullable=False
+    )
+    counter_price: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    counter_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decline_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_plan_neg_status", "status", "created_at"),
+    )

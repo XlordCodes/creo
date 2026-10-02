@@ -15,7 +15,19 @@ export interface RazorpayOptions {
     email?: string;
     contact?: string;
   };
-  theme?: { color?: string };
+  theme?: {
+    color?: string;
+    backdrop_color?: string;
+  };
+  backdrop_color?: string;
+  modal?: {
+    backdropclose?: boolean;
+    escape?: boolean;
+    handleback?: boolean;
+    confirm_close?: boolean;
+    animation?: boolean;
+    ondismiss?: () => void;
+  };
 }
 
 export interface RazorpayPaymentSuccess {
@@ -58,7 +70,7 @@ export async function openRazorpayCheckout(
 ): Promise<void> {
   try {
     await loadRazorpayScript();
-  } catch (err) {
+  } catch {
     onDismiss?.();
     throw new Error("Payment gateway could not be loaded. Please check your connection and try again.");
   }
@@ -70,15 +82,57 @@ export async function openRazorpayCheckout(
     throw new Error("Payment gateway could not be initialized.");
   }
 
+  // Keep the usual dark app background visible and blurred, preventing white canvas flash
+  const applyDarkBackdrop = () => {
+    const container = document.querySelector(".razorpay-container") as HTMLElement | null;
+    if (container) {
+      container.style.setProperty("color-scheme", "light", "important");
+      container.style.setProperty("background", "rgba(5, 8, 16, 0.82)", "important");
+      container.style.setProperty("backdrop-filter", "blur(8px)", "important");
+      container.style.setProperty("-webkit-backdrop-filter", "blur(8px)", "important");
+    }
+    const frames = document.querySelectorAll<HTMLIFrameElement>(
+      'iframe[src*="razorpay"], iframe.razorpay-checkout-frame, .razorpay-container iframe',
+    );
+    frames.forEach((f) => {
+      f.style.setProperty("color-scheme", "light", "important");
+      f.style.setProperty("background", "transparent", "important");
+      f.style.setProperty("background-color", "transparent", "important");
+      f.setAttribute("allowtransparency", "true");
+    });
+  };
+
+  applyDarkBackdrop();
+  const observer = new MutationObserver(() => {
+    applyDarkBackdrop();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  const cleanup = () => {
+    observer.disconnect();
+  };
+
   const rzp = new Razorpay({
     ...options,
-    handler: (response: RazorpayPaymentSuccess) => {
-      onSuccess(response);
+    backdrop_color: options.backdrop_color || "rgba(5, 8, 16, 0.82)",
+    theme: {
+      color: "#7FA0D6",
+      backdrop_color: "rgba(5, 8, 16, 0.82)",
+      ...options.theme,
     },
     modal: {
+      backdropclose: false,
+      escape: true,
+      animation: true,
+      ...options.modal,
       ondismiss: () => {
+        cleanup();
         onDismiss?.();
       },
+    },
+    handler: (response: RazorpayPaymentSuccess) => {
+      cleanup();
+      onSuccess(response);
     },
   });
 

@@ -20,12 +20,12 @@ export function generateInvoicePDF(inv: InvoiceData) {
   });
 
   type RGB = [number, number, number];
-  const primaryColor: RGB = [13, 33, 55]; // #0D2137
-  const accentColor: RGB = [43, 123, 196]; // #2B7BC4
+  const primaryColor: RGB = [13, 33, 55]; // #0B111C
+  const accentColor: RGB = [43, 123, 196]; // #7FA0D6
   const lightBg: RGB = [248, 250, 252]; // #F8FAFC
-  const darkText: RGB = [30, 41, 59]; // #1E293B
-  const mutedText: RGB = [100, 116, 139]; // #64748B
-  const emeraldColor: RGB = [16, 185, 129]; // #10B981
+  const darkText: RGB = [30, 41, 59]; // #161F2D
+  const mutedText: RGB = [100, 116, 139]; // #97A0B3
+  const emeraldColor: RGB = [16, 185, 129]; // #7FA0D6
 
   // Parse amount number
   const numericAmount = parseFloat(inv.amount.replace(/[^0-9.]/g, "")) || 25000;

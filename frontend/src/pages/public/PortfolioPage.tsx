@@ -43,12 +43,12 @@ export function PortfolioPage() {
             </p>
             
             <div className="flex flex-col sm:flex-row items-center gap-4 mb-10">
-              <Link to="/pricing" className="bg-[#BCCCE6] text-[#050810] font-semibold text-xs sm:text-sm px-6 py-3 rounded-full transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] hover:bg-[#D5E1F2] w-full sm:w-auto text-center">
+              <Link to="/pricing" className="bg-[#BCCCE6] text-[#050810] font-semibold text-xs sm:text-sm px-6 py-3 rounded-full transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] hover:bg-[#BCCCE6] w-full sm:w-auto text-center">
                 Deploy CREO in Your Agency &rarr;
               </Link>
-              <Link to="/faq" className="bg-transparent border border-[#2A3446]/30 text-[#F8FAFC] text-xs sm:text-sm px-6 py-3 rounded-full hover:bg-[#121926] transition w-full sm:w-auto text-center shadow-sm">
+              <a href="https://wa.me/919941999415" target="_blank" rel="noopener noreferrer" className="bg-transparent border border-[#2A3446]/30 text-[#F8FAFC] text-xs sm:text-sm px-6 py-3 rounded-full hover:bg-[#121926] transition w-full sm:w-auto text-center shadow-sm">
                 Schedule Live Demo
-              </Link>
+              </a>
             </div>
             
             {/* 4 Stat Pods */}
@@ -229,8 +229,8 @@ export function PortfolioPage() {
             </div>
             
             <div className="flex gap-4 mb-6 border-b border-[#2A3446]/30 pb-3">
-              <button onClick={() => setDossierTab('scope')} className={dossierTab === 'scope' ? "bg-[#1C2638] text-[#F8FAFC] border border-[#7FA0D6]/40 font-bold text-xs px-3 py-1 rounded-md" : "text-[#97A0B3] text-xs px-3 py-1 hover:text-[#F8FAFC]"}>Scope</button>
-              <button onClick={() => setDossierTab('metrics')} className={dossierTab === 'metrics' ? "bg-[#1C2638] text-[#F8FAFC] border border-[#7FA0D6]/40 font-bold text-xs px-3 py-1 rounded-md" : "text-[#97A0B3] text-xs px-3 py-1 hover:text-[#F8FAFC]"}>Metrics</button>
+              <button onClick={() => setDossierTab('scope')} className={dossierTab === 'scope' ? "bg-[#161F2D] text-[#F8FAFC] border border-[#7FA0D6]/40 font-bold text-xs px-3 py-1 rounded-md" : "text-[#97A0B3] text-xs px-3 py-1 hover:text-[#F8FAFC]"}>Scope</button>
+              <button onClick={() => setDossierTab('metrics')} className={dossierTab === 'metrics' ? "bg-[#161F2D] text-[#F8FAFC] border border-[#7FA0D6]/40 font-bold text-xs px-3 py-1 rounded-md" : "text-[#97A0B3] text-xs px-3 py-1 hover:text-[#F8FAFC]"}>Metrics</button>
             </div>
 
             <div className="grid grid-cols-3 gap-3 mb-8">
@@ -505,7 +505,7 @@ export function PortfolioPage() {
             
             {approvalStatus === 'pending' && (
               <div className="flex flex-col sm:flex-row w-full gap-3 mb-5">
-                <button onClick={() => setApprovalStatus('approved')} className="flex-1 bg-[#BCCCE6] hover:bg-[#D5E1F2] text-[#050810] font-semibold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] text-xs px-4 py-2.5 rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2">
+                <button onClick={() => setApprovalStatus('approved')} className="flex-1 bg-[#BCCCE6] hover:bg-[#BCCCE6] text-[#050810] font-semibold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] text-xs px-4 py-2.5 rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2">
                   <CheckCircle2 className="size-4" /> Approve Asset
                 </button>
                 <button onClick={() => setApprovalStatus('revision')} className="flex-1 bg-[#0B111C] border border-[#2A3446]/30 text-[#F8FAFC] font-bold text-xs px-4 py-2.5 rounded-lg hover:bg-[#121926] transition-colors flex items-center justify-center gap-2">
@@ -621,7 +621,7 @@ export function PortfolioPage() {
                   ) : (
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-[#D8BF9B] font-bold shrink-0">{inv1}</span>
-                      <button onClick={() => setInv1('Paid ✓')} className="bg-[#BCCCE6] hover:bg-[#D5E1F2] text-[#050810] text-[10px] font-semibold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] px-2 py-1 rounded transition-colors shrink-0">Resolve</button>
+                      <button onClick={() => setInv1('Paid ✓')} className="bg-[#BCCCE6] hover:bg-[#BCCCE6] text-[#050810] text-[10px] font-semibold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] px-2 py-1 rounded transition-colors shrink-0">Resolve</button>
                       <button onClick={() => setInv1('Reminder Sent ')} className="bg-[#7FA0D6] hover:bg-white text-[#050810] text-[10px] font-bold px-2 py-1 rounded transition-colors shrink-0">Chase</button>
                     </div>
                   )}
@@ -648,7 +648,7 @@ export function PortfolioPage() {
                   ) : (
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-[#D8BF9B] font-bold shrink-0">{inv2}</span>
-                      <button onClick={() => setInv2('Paid ✓')} className="bg-[#BCCCE6] hover:bg-[#D5E1F2] text-[#050810] text-[10px] font-semibold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] px-2 py-1 rounded transition-colors shrink-0">Resolve</button>
+                      <button onClick={() => setInv2('Paid ✓')} className="bg-[#BCCCE6] hover:bg-[#BCCCE6] text-[#050810] text-[10px] font-semibold transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] px-2 py-1 rounded transition-colors shrink-0">Resolve</button>
                       <button onClick={() => setInv2('Reminder Sent ')} className="bg-[#7FA0D6] hover:bg-white text-[#050810] text-[10px] font-bold px-2 py-1 rounded transition-colors shrink-0">Chase</button>
                     </div>
                   )}

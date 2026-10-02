@@ -8,20 +8,21 @@ import {
   X,
   Activity,
   Plus,
-  Play,
-  Pause,
   Sparkles,
   ShieldCheck,
   Eye,
   Check,
   ArrowRight,
   Sliders,
+  Upload,
 } from "lucide-react";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchPodDashboard, type PodDashboardData } from "../../lib/ops-api";
 import { CustomSelect } from "../../components/ui/CustomSelect";
+
+import { useAuth } from "../../lib/auth-context";
 
 interface TaskDeliverable {
   id: string;
@@ -68,6 +69,9 @@ interface TaskDeliverable {
 const INITIAL_TASKS: TaskDeliverable[] = [];
 
 export function MemberTaskBoardPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+
   const { data } = useQuery<PodDashboardData>({
     queryKey: ["pod_dashboard"],
     queryFn: () => fetchPodDashboard(),
@@ -82,6 +86,11 @@ export function MemberTaskBoardPage() {
   const [tasks, setTasks] = useState<TaskDeliverable[]>(INITIAL_TASKS);
 
   useEffect(() => {
+    if (isAdmin) {
+      // 0 Tasks for Admin as requested
+      setTasks([]);
+      return;
+    }
     if (data?.tasks) {
       const mapped: TaskDeliverable[] = [
         ...(data.tasks.backlog || []).map((t) => ({
@@ -95,7 +104,7 @@ export function MemberTaskBoardPage() {
           priority: "Normal" as const,
           status: "assigned" as const,
           deadline: "Active Sprint",
-          description: `Sprint task assigned to ${t.assignee_name || "specialist"}.`,
+          description: `Sprint task assigned to ${t.assignee?.full_name || t.assignee_name || "specialist"}.`,
           tags: [t.deliverable_type || "Deliverable"],
           reviewData: {
             reviewer: leadName,
@@ -117,7 +126,7 @@ export function MemberTaskBoardPage() {
           priority: "High" as const,
           status: "production" as const,
           deadline: "In Progress",
-          description: `In active production with ${t.assignee_name || "specialist"}.`,
+          description: `In active production with ${t.assignee?.full_name || t.assignee_name || "specialist"}.`,
           tags: [t.deliverable_type || "Deliverable"],
           progress: 50,
           reviewData: {
@@ -176,11 +185,9 @@ export function MemberTaskBoardPage() {
           },
         })),
       ];
-      if (mapped.length > 0) {
-        setTasks(mapped);
-      }
+      setTasks(mapped);
     }
-  }, [data, leadName]);
+  }, [data, leadName, isAdmin]);
 
   // Search and Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -190,7 +197,7 @@ export function MemberTaskBoardPage() {
   const [mobileKanbanTab, setMobileKanbanTab] = useState<"all" | "assigned" | "production" | "qa" | "dispatched">("production");
 
   // Daily tracker state
-  const [loggedHours, setLoggedHours] = useState(6.5);
+  
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" } | null>(null);
 
   // Interactive Card Modals
@@ -216,8 +223,6 @@ export function MemberTaskBoardPage() {
 
   // 2. IN-TASK REVIEW & QA MODAL STATE
   const [reviewModalCard, setReviewModalCard] = useState<TaskDeliverable | null>(null);
-  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
-  const [previewScrub, setPreviewScrub] = useState(65);
   const [specialistNotesInput, setSpecialistNotesInput] = useState("");
   const [masterUrlInput, setMasterUrlInput] = useState("");
   const [rubricState, setRubricState] = useState({
@@ -233,19 +238,13 @@ export function MemberTaskBoardPage() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  const handleQuickLog30m = () => {
-    setLoggedHours((prev) => {
-      const next = Math.min(8.0, Number((prev + 0.5).toFixed(1)));
-      showToast(`+30m logged! Total today: ${next} / 8.0 hrs`);
-      return next;
-    });
-  };
+  
 
   const handleConfirmLogTime = (e: React.FormEvent) => {
     e.preventDefault();
     if (!logTimeModalCard) return;
     const added = parseFloat(logTimeInput) || 0.5;
-    setLoggedHours((prev) => Number((prev + added).toFixed(1)));
+    
     setTasks((prev) =>
       prev.map((t) =>
         t.id === logTimeModalCard.id
@@ -327,8 +326,6 @@ export function MemberTaskBoardPage() {
   // Open In-Task Review Modal
   const handleOpenReviewModal = (task: TaskDeliverable) => {
     setReviewModalCard(task);
-    setIsPlayingPreview(false);
-    setPreviewScrub(task.progress || 60);
     setSpecialistNotesInput(task.reviewData?.specialistNotes || "");
     setMasterUrlInput(task.reviewData?.masterAssetUrl || "https://creo.studio/vault/renders/" + task.id + ".mov");
     if (task.reviewData?.rubricChecks) {
@@ -534,7 +531,7 @@ export function MemberTaskBoardPage() {
               {/* ADD DELIVERABLE PRIMARY ACTION (Single Plus Symbol) */}
               <button
                 onClick={() => setAddDeliverableModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                className="px-3 py-1.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer whitespace-nowrap active:scale-95"
               >
                 <Plus className="size-3.5" />
                 <span>Add Deliverable</span>
@@ -588,14 +585,14 @@ export function MemberTaskBoardPage() {
         </div>
 
         {/* 2. Four Kanban Columns */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3.5 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3.5 items-stretch h-[560px] sm:h-[600px] lg:h-[calc(100vh-270px)] min-h-[500px]">
           {/* COLUMN 1: Assigned & Queued */}
           <div
             className={`${
-              mobileKanbanTab === "all" || mobileKanbanTab === "assigned" ? "block" : "hidden md:block"
-            } bg-[#1F2C3F]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5`}
+              mobileKanbanTab === "all" || mobileKanbanTab === "assigned" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1 pt-0.5">
+            <div className="flex items-center justify-between px-1 pt-0.5 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-slate-400" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">
@@ -619,7 +616,7 @@ export function MemberTaskBoardPage() {
               </div>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {assignedTasks.map((task) => (
                 <div
                   key={task.id}
@@ -634,7 +631,7 @@ export function MemberTaskBoardPage() {
                   <div className="flex flex-wrap items-center gap-1 text-[9px] font-bold">
                     <span className="px-1.5 py-0.2 rounded bg-[#7FA0D6]/15 text-[#7FA0D6]">{task.format}</span>
                     {task.tags.map((tag) => (
-                      <span key={tag} className="px-1.5 py-0.2 rounded bg-[#1F2C3F] text-[#F1F5F9]">
+                      <span key={tag} className="px-1.5 py-0.2 rounded bg-[#161F2D] text-[#F1F5F9]">
                         {tag}
                       </span>
                     ))}
@@ -675,10 +672,10 @@ export function MemberTaskBoardPage() {
           {/* COLUMN 2: In Active Production */}
           <div
             className={`${
-              mobileKanbanTab === "all" || mobileKanbanTab === "production" ? "block" : "hidden md:block"
-            } bg-[#1F2C3F]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5`}
+              mobileKanbanTab === "all" || mobileKanbanTab === "production" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1 pt-0.5">
+            <div className="flex items-center justify-between px-1 pt-0.5 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-blue-600 animate-pulse" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">
@@ -690,7 +687,7 @@ export function MemberTaskBoardPage() {
               </span>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {productionTasks.map((task) => (
                 <div
                   key={task.id}
@@ -727,7 +724,7 @@ export function MemberTaskBoardPage() {
                       <span>Progress</span>
                       <span className="text-[#7FA0D6]">{task.progress || 50}%</span>
                     </div>
-                    <div className="w-full h-1 bg-[#1F2C3F] rounded-full overflow-hidden">
+                    <div className="w-full h-1 bg-[#161F2D] rounded-full overflow-hidden">
                       <div
                         className="h-full bg-blue-600 rounded-full transition-all"
                         style={{ width: `${task.progress || 50}%` }}
@@ -739,7 +736,7 @@ export function MemberTaskBoardPage() {
                   <div className="grid grid-cols-2 gap-1.5 pt-0.5">
                     <button
                       onClick={() => setLogTimeModalCard(task)}
-                      className="py-1 px-1.5 rounded-lg bg-[#0B111C] hover:bg-[#1F2C3F] border border-[#2A3446] text-[#F1F5F9] font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
+                      className="py-1 px-1.5 rounded-lg bg-[#0B111C] hover:bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <Clock className="size-2.5 text-[#97A0B3]" />
                       <span>Log Time</span>
@@ -749,7 +746,7 @@ export function MemberTaskBoardPage() {
                         setProgressInput(task.progress || 50);
                         setUpdateProgressModalCard(task);
                       }}
-                      className="py-1 px-1.5 rounded-lg bg-[#0B111C] hover:bg-[#1F2C3F] border border-[#2A3446] text-[#F1F5F9] font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
+                      className="py-1 px-1.5 rounded-lg bg-[#0B111C] hover:bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <Sliders className="size-2.5 text-[#97A0B3]" />
                       <span>Progress</span>
@@ -780,10 +777,10 @@ export function MemberTaskBoardPage() {
           {/* COLUMN 3: Submitted for Lead QA */}
           <div
             className={`${
-              mobileKanbanTab === "all" || mobileKanbanTab === "qa" ? "block" : "hidden md:block"
-            } bg-[#1F2C3F]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5`}
+              mobileKanbanTab === "all" || mobileKanbanTab === "qa" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1 pt-0.5">
+            <div className="flex items-center justify-between px-1 pt-0.5 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-amber-500" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">
@@ -795,7 +792,7 @@ export function MemberTaskBoardPage() {
               </span>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {qaTasks.map((task) => (
                 <div
                   key={task.id}
@@ -878,10 +875,10 @@ export function MemberTaskBoardPage() {
           {/* COLUMN 4: Signed Off & Dispatched */}
           <div
             className={`${
-              mobileKanbanTab === "all" || mobileKanbanTab === "dispatched" ? "block" : "hidden md:block"
-            } bg-[#1F2C3F]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5`}
+              mobileKanbanTab === "all" || mobileKanbanTab === "dispatched" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D]/60 rounded-2xl p-3 border border-[#2A3446]/70 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1 pt-0.5">
+            <div className="flex items-center justify-between px-1 pt-0.5 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-emerald-500" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">
@@ -893,7 +890,7 @@ export function MemberTaskBoardPage() {
               </span>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {dispatchedTasks.map((task) => (
                 <div
                   key={task.id}
@@ -930,114 +927,6 @@ export function MemberTaskBoardPage() {
             </div>
           </div>
         </div>
-
-        {/* 3. Bottom Widget: Personal Daily Time Tracker & Productivity Pulse */}
-        <div className="bg-[#161F2D] rounded-2xl p-4 sm:p-5 border border-[#2A3446]/80 shadow-2xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5">
-              <div className="size-8 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center font-black shrink-0">
-                <Clock className="size-4" />
-              </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <h3 className="text-sm font-black text-white">
-                    Personal Daily Time Tracker & Productivity Pulse
-                  </h3>
-                  <span className="px-2 py-0.2 rounded-full text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Pacing on Track
-                  </span>
-                </div>
-                <p className="text-[11px] text-[#97A0B3]">
-                  Workstation timers & production sprint pacing
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between sm:justify-end gap-2.5">
-              <div className="flex items-baseline gap-1">
-                <span className="text-xl font-black text-white">{loggedHours}</span>
-                <span className="text-xs font-bold text-[#97A0B3]">/ 8.0 hrs</span>
-              </div>
-              <button
-                onClick={handleQuickLog30m}
-                className="px-3 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-2xs cursor-pointer transition-all active:scale-95"
-              >
-                + Log 30m
-              </button>
-            </div>
-          </div>
-
-          {/* Segmented Timeline */}
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2.5 sm:gap-4 text-xs font-bold text-[#F1F5F9]">
-              <span className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-                <span className="size-2 rounded-full bg-blue-600" />
-                3D Rendering (3.5h)
-              </span>
-              <span className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-                <span className="size-2 rounded-full bg-indigo-500" />
-                AE Compositing (2.0h)
-              </span>
-              <span className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-                <span className="size-2 rounded-full bg-sky-400" />
-                Pod Standup (1.0h)
-              </span>
-              <span className="text-[#97A0B3] ml-auto text-[10px] sm:text-[11px]">
-                Remaining: {(8.0 - loggedHours).toFixed(1)}h
-              </span>
-            </div>
-
-            <div className="w-full h-2.5 sm:h-3 bg-[#1F2C3F] rounded-full overflow-hidden flex">
-              <div className="h-full bg-blue-600" style={{ width: "43.75%" }} />
-              <div className="h-full bg-indigo-500" style={{ width: "25%" }} />
-              <div className="h-full bg-sky-400" style={{ width: "12.5%" }} />
-            </div>
-
-            <div className="flex justify-between text-[9px] sm:text-[10px] text-[#97A0B3] font-mono pt-1">
-              <span>09:00 AM</span>
-              <span>11:00 AM</span>
-              <span>01:00 PM</span>
-              <span>03:00 PM</span>
-              <span className="text-[#F1F5F9] font-bold">05:00 PM (Target)</span>
-            </div>
-          </div>
-
-          {/* Bottom 3 Metric Tiles */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-[#2A3446] text-xs">
-            <div className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] flex items-center gap-3">
-              <div className="size-9 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center font-bold">
-                ⚡
-              </div>
-              <div>
-                <div className="font-bold text-white">Sprint Velocity</div>
-                <div className="text-[11px] text-[#97A0B3]">104% of Pod Baseline</div>
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] flex items-center gap-3">
-              <div className="size-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-                ✓
-              </div>
-              <div>
-                <div className="font-bold text-white">QA Pass Rate First Run</div>
-                <div className="text-[11px] text-[#97A0B3]">92.4% (Quarter to Date)</div>
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] flex items-center gap-3">
-              <div className="size-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
-                ❄️
-              </div>
-              <div>
-                <div className="font-bold text-white">Active Pod Sync</div>
-                <div className="text-[11px] text-[#97A0B3]">3 Hand-offs Pending Sync</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-
-
       </motion.main>
 
       {/* ─────────────────────────────────────────────────────────────
@@ -1065,7 +954,7 @@ export function MemberTaskBoardPage() {
               <button
                 type="button"
                 onClick={() => setAddDeliverableModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer transition-colors"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -1207,7 +1096,7 @@ export function MemberTaskBoardPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 cursor-pointer active:scale-95 transition-all flex items-center gap-1.5"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 cursor-pointer active:scale-95 transition-all flex items-center gap-1.5"
                 >
                   <Plus className="size-3.5" />
                   <span>Create Deliverable</span>
@@ -1241,7 +1130,7 @@ export function MemberTaskBoardPage() {
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${reviewModalCard.clientBadgeBg}`}>
                       {reviewModalCard.client}
                     </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#1F2C3F] text-[#F1F5F9]">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#161F2D] text-[#F1F5F9]">
                       {reviewModalCard.format}
                     </span>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#7FA0D6]/20 text-blue-800">
@@ -1256,70 +1145,52 @@ export function MemberTaskBoardPage() {
               <button
                 type="button"
                 onClick={() => setReviewModalCard(null)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
               >
                 <X className="size-4" />
               </button>
             </div>
 
-            {/* Interactive Master Render Preview Screen */}
-            <div className="rounded-2xl bg-slate-950 p-4 border border-slate-800 text-white space-y-3">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="font-mono text-[11px] text-cyan-300 font-bold">MASTER RENDER INSPECTION</span>
-                </div>
-                <span className="text-[10px] font-mono text-[#97A0B3]">ACEScg • 4K 3840x2160 @ 60 FPS</span>
+            {/* Deliverable Creative Requirements & Specs Card */}
+            <div className="p-4 rounded-2xl bg-[#0B111C] border border-[#2A3446] space-y-2.5">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-2">
+                <span className="text-xs font-black text-[#7FA0D6] uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="size-3.5" />
+                  Deliverable Requirements & Creative Specifications
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#161F2D] text-[#BCCCE6] border border-[#2A3446]">
+                  {reviewModalCard.format === "reel" || reviewModalCard.format.toLowerCase().includes("reel")
+                    ? "9:16 Vertical Video (1080x1920)"
+                    : reviewModalCard.format.toLowerCase().includes("story")
+                    ? "9:16 Vertical Story (1080x1920)"
+                    : "4:5 Portrait / 1:1 Static (1080x1350)"}
+                </span>
               </div>
 
-              {/* Video Inspection Simulation Canvas */}
-              <div className="h-32 sm:h-40 rounded-xl bg-slate-900 relative overflow-hidden flex items-center justify-center border border-slate-800/80">
-                <div className="absolute inset-0 bg-gradient-to-tr from-cyan-900/40 via-blue-900/30 to-purple-900/40 animate-pulse" />
-                <div className="z-10 text-center space-y-1.5 p-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsPlayingPreview(!isPlayingPreview)}
-                    className="size-11 rounded-full bg-[#161F2D]/20 hover:bg-[#161F2D]/30 backdrop-blur-md text-white flex items-center justify-center mx-auto transition-all cursor-pointer active:scale-95 shadow-lg"
-                  >
-                    {isPlayingPreview ? <Pause className="size-5" /> : <Play className="size-5 ml-0.5" />}
-                  </button>
-                  <div className="text-[11px] font-mono text-slate-300 font-bold">
-                    {isPlayingPreview ? "Live Playback Active" : "Click to Preview Master Motion Playback"}
-                  </div>
-                  <div className="text-[9px] font-mono text-cyan-400">
-                    Frame {Math.round((previewScrub / 100) * 5120)} / 5120 • 00:0{Math.floor((previewScrub / 100) * 15)}:12
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-[#161F2D] border border-[#2A3446]">
+                  <span className="text-[10px] font-bold text-[#97A0B3] block">Format & Aspect</span>
+                  <span className="font-extrabold text-white">
+                    {reviewModalCard.format.toUpperCase()} • 60 FPS
+                  </span>
                 </div>
-
-                {/* Waveform preview at bottom */}
-                <div className="absolute bottom-2 inset-x-3 flex items-center justify-between gap-1 opacity-60 pointer-events-none">
-                  {[20, 45, 80, 60, 90, 40, 75, 100, 65, 30, 85, 95, 40, 70, 50, 90, 60, 30, 80, 50].map(
-                    (h, i) => (
-                      <div
-                        key={i}
-                        className="flex-1 bg-cyan-400/80 rounded-full"
-                        style={{ height: `${(h * (previewScrub / 100) + 15) % 24}px` }}
-                      />
-                    )
-                  )}
+                <div className="p-2.5 rounded-xl bg-[#161F2D] border border-[#2A3446]">
+                  <span className="text-[10px] font-bold text-[#97A0B3] block">Color & Audio Spec</span>
+                  <span className="font-extrabold text-white">
+                    Rec.709 • -14 LUFS Audio
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-[#161F2D] border border-[#2A3446]">
+                  <span className="text-[10px] font-bold text-[#97A0B3] block">Client Brand Guidelines</span>
+                  <span className="font-extrabold text-white">
+                    {reviewModalCard.client} Kit v2
+                  </span>
                 </div>
               </div>
 
-              {/* Playhead Scrub Slider */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] font-mono text-[#97A0B3]">
-                  <span>00:00:00</span>
-                  <span className="text-cyan-400 font-bold">Timeline Scrub: {previewScrub}%</span>
-                  <span>00:15:00</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={previewScrub}
-                  onChange={(e) => setPreviewScrub(Number(e.target.value))}
-                  className="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer accent-blue-500"
-                />
+              <div className="text-xs text-[#F1F5F9] font-medium leading-relaxed p-3 rounded-xl bg-[#161F2D]/60 border border-[#2A3446]/60">
+                <span className="font-bold text-[#7FA0D6] block mb-0.5">Brief & Concept Notes:</span>
+                {reviewModalCard.description || "High-conversion product showcase highlighting key features, bold kinetic typography, and smooth transitions."}
               </div>
             </div>
 
@@ -1392,24 +1263,52 @@ export function MemberTaskBoardPage() {
               </div>
             </div>
 
-            {/* Master Asset File Link / Dropzone */}
-            <div className="space-y-1.5 text-xs">
-              <label className="block font-bold text-[#F1F5F9]">Master Asset S3 / Vault Package URL</label>
+            {/* Direct Computer File Upload Dropzone for Deliverable (Reel, Post, Story) */}
+            <div className="p-4 rounded-2xl bg-[#0B111C] border border-[#2A3446] space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <label className="font-black text-white flex items-center gap-1.5 uppercase text-[11px] tracking-wider">
+                  <Upload className="size-3.5 text-[#7FA0D6]" />
+                  Upload Deliverable File from Computer (.mp4, .mov, .png, .jpg, .gif)
+                </label>
+                <span className="text-[10px] font-bold text-[#97A0B3]">Max size: 2 GB</span>
+              </div>
+
+              <div className="relative border-2 border-dashed border-[#2A3446] hover:border-[#7FA0D6] bg-[#161F2D]/60 hover:bg-[#161F2D] rounded-2xl p-5 text-center transition-all cursor-pointer group">
+                <input
+                  type="file"
+                  accept="video/*,image/*,.mp4,.mov,.png,.jpg,.jpeg,.gif,.figma"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setMasterUrlInput(`uploaded://${file.name}`);
+                      showToast(`Selected file "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+                    }
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                <div className="space-y-1.5 pointer-events-none">
+                  <div className="size-10 rounded-2xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center mx-auto group-hover:scale-110 transition-transform">
+                    <Upload className="size-5" />
+                  </div>
+                  <div className="font-bold text-white text-xs">
+                    {masterUrlInput.startsWith("uploaded://")
+                      ? `Selected: ${masterUrlInput.replace("uploaded://", "")}`
+                      : "Drag and drop deliverable video / image here, or click to browse files"}
+                  </div>
+                  <p className="text-[10px] text-[#97A0B3]">
+                    Supports 9:16 Reels (MP4/MOV), 4:5 Posts (PNG/JPG), and Stories (GIF/MP4)
+                  </p>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   value={masterUrlInput}
                   onChange={(e) => setMasterUrlInput(e.target.value)}
-                  placeholder="https://creo.studio/vault/renders/master-render.mov"
-                  className="flex-1 px-3.5 py-2 rounded-xl border border-[#2A3446] font-mono text-[11px] text-[#7FA0D6]"
+                  placeholder="Or paste S3 / Figma / Cloud Package URL..."
+                  className="flex-1 px-3.5 py-2 rounded-xl border border-[#2A3446] font-mono text-[11px] text-[#7FA0D6] bg-[#0B111C]"
                 />
-                <button
-                  type="button"
-                  onClick={() => showToast("Validated asset URL hash!")}
-                  className="px-3 py-2 rounded-xl bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] font-bold transition-colors cursor-pointer"
-                >
-                  Verify
-                </button>
               </div>
             </div>
 
@@ -1460,7 +1359,7 @@ export function MemberTaskBoardPage() {
                 <button
                   type="button"
                   onClick={() => handleSubmitToLeadQA(reviewModalCard.id)}
-                  className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                  className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
                 >
                   <Sparkles className="size-3.5" />
                   <span>Submit to Pod Lead QA</span>
@@ -1496,7 +1395,7 @@ export function MemberTaskBoardPage() {
               <button
                 type="button"
                 onClick={() => setLogTimeModalCard(null)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -1525,7 +1424,7 @@ export function MemberTaskBoardPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Confirm & Log Time
                 </button>
@@ -1560,7 +1459,7 @@ export function MemberTaskBoardPage() {
               <button
                 type="button"
                 onClick={() => setUpdateProgressModalCard(null)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -1578,7 +1477,7 @@ export function MemberTaskBoardPage() {
                   max="100"
                   value={progressInput}
                   onChange={(e) => setProgressInput(Number(e.target.value))}
-                  className="w-full h-2 bg-[#1F2C3F] rounded-lg cursor-pointer accent-blue-600"
+                  className="w-full h-2 bg-[#161F2D] rounded-lg cursor-pointer accent-blue-600"
                 />
               </div>
 
@@ -1592,7 +1491,7 @@ export function MemberTaskBoardPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Save Progress
                 </button>
@@ -1627,7 +1526,7 @@ export function MemberTaskBoardPage() {
               <button
                 type="button"
                 onClick={() => setRevisionModalCard(null)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -1655,7 +1554,7 @@ export function MemberTaskBoardPage() {
                   setRevisionModalCard(null);
                   handleOpenReviewModal(card);
                 }}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1"
               >
                 <Eye className="size-3.5" />
                 <span>Open In-Task Review Canvas &rarr;</span>

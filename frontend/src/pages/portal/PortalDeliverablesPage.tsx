@@ -5,6 +5,7 @@ import { fetchPortalDeliverables, approveDeliverable, requestChanges } from "../
 import { Check, Play, Loader2 } from "lucide-react";
 import { useOnboardingGate } from "../../lib/useOnboardingGate";
 import { SubscriptionLockedState } from "../../components/portal/SubscriptionLockedState";
+import { CreoLoadingScreen } from "../../components/ui/CreoLoadingScreen";
 
 export function PortalDeliverablesPage() {
   const { user } = useAuth();
@@ -17,7 +18,7 @@ export function PortalDeliverablesPage() {
     queryKey: ["portal", "deliverables", clientId],
     queryFn: () => fetchPortalDeliverables(clientId),
     enabled: gate.isComplete,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const deliverables = deliverablesData?.items || [];
@@ -34,19 +35,6 @@ export function PortalDeliverablesPage() {
       setSelectedId(firstPending ? firstPending.id : (deliverables[0]?.id || null));
     }
   }, [deliverables, selectedId]);
-
-  if (!gate.isComplete) {
-    return (
-      <div className="flex items-center justify-center py-6 sm:py-10">
-        <SubscriptionLockedState
-          title="Deliverables Queue Locked"
-          description="Your creative deliverables queue and sign-off docks will activate as soon as your workspace setup is complete."
-        />
-      </div>
-    );
-  }
-
-  const selectedItem: any = deliverables.find((d: any) => d.id === selectedId);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -70,10 +58,33 @@ export function PortalDeliverablesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["portal", "deliverables", clientId] });
-      showToast("Revision requested.");
+      showToast("Changes requested. Pod notified.");
+      setSelectedId(null);
       setCommentText("");
     },
+    onError: () => {
+      showToast("Failed to request changes. Try again.");
+    },
   });
+
+  if (!gate.isReady || (gate.isComplete && isLoading)) {
+    return <CreoLoadingScreen label="Verifying session..." sublabel="Loading Deliverables Queue" />;
+  }
+
+  if (!gate.isComplete) {
+    return (
+      <div className="flex items-center justify-center py-6 sm:py-10">
+        <SubscriptionLockedState
+          title="Deliverables Queue Locked"
+          description="Your creative deliverables queue and sign-off docks will activate as soon as your workspace setup is complete."
+        />
+      </div>
+    );
+  }
+
+  const selectedItem: any = deliverables.find((d: any) => d.id === selectedId);
+
+
 
   const handleApprove = () => {
     if (selectedId) approveMutation.mutate(selectedId);
@@ -104,7 +115,7 @@ export function PortalDeliverablesPage() {
   if (isLoading && deliverables.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#7E889C]" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#97A0B3]" />
       </div>
     );
   }
@@ -114,7 +125,7 @@ export function PortalDeliverablesPage() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between mb-8 shrink-0">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#7E889C] mb-2">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#97A0B3] mb-2">
             {deliverables.length > 0 ? `CYCLE DELIVERABLES · ${countAwaiting} WAITING FOR YOU` : "NO DELIVERABLES PENDING"}
           </p>
           <h1 className="text-3xl font-bold text-white">Review</h1>
@@ -131,12 +142,12 @@ export function PortalDeliverablesPage() {
         
         {/* Left Column: Batch List */}
         <div className="col-span-3 bg-[#161F2D] rounded-[24px] border border-[#2A3446] p-4 flex flex-col overflow-hidden">
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#7E889C] mb-4 pl-3 pt-2">
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#97A0B3] mb-4 pl-3 pt-2">
             THIS BATCH
           </h3>
           <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
             {deliverables.length === 0 ? (
-              <div className="p-4 text-center text-sm text-[#7E889C]">
+              <div className="p-4 text-center text-sm text-[#97A0B3]">
                 No deliverables in this batch.
               </div>
             ) : (
@@ -156,7 +167,7 @@ export function PortalDeliverablesPage() {
                     onClick={() => setSelectedId(d.id)}
                     className={`w-full flex items-center gap-4 p-3 rounded-2xl border text-left transition-all ${
                       isSelected 
-                        ? "bg-[#1F2C3F] border-white/[0.1] shadow-lg" 
+                        ? "bg-[#161F2D] border-white/[0.1] shadow-lg" 
                         : "border-transparent hover:bg-white/[0.02]"
                     }`}
                   >
@@ -164,7 +175,7 @@ export function PortalDeliverablesPage() {
                       {thumb ? (
                         <img src={thumb} alt="" className="w-full h-full object-cover" />
                       ) : (
-                        <Play className="w-5 h-5 text-[#7E889C]" />
+                        <Play className="w-5 h-5 text-[#97A0B3]" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -206,7 +217,7 @@ export function PortalDeliverablesPage() {
                     key={i}
                     className={`px-4 py-1.5 rounded-full text-[13px] font-bold transition-colors ${
                       isLatest 
-                        ? "bg-[#1F2C3F] text-white shadow-sm border border-[#2A3446]" 
+                        ? "bg-[#161F2D] text-white shadow-sm border border-[#2A3446]" 
                         : "text-[#97A0B3] hover:text-white"
                     }`}
                   >
@@ -219,7 +230,7 @@ export function PortalDeliverablesPage() {
 
           <div className="flex-1 flex items-center justify-center p-8 bg-[#0B111C]/30 relative">
             {selectedItem ? (
-              <div className="relative w-full max-w-[280px] aspect-[9/16] bg-black rounded-[32px] overflow-hidden shadow-2xl border-4 border-[#1F2C3F] flex items-center justify-center">
+              <div className="relative w-full max-w-[280px] aspect-[9/16] bg-black rounded-[32px] overflow-hidden shadow-2xl border-4 border-[#161F2D] flex items-center justify-center">
                 {selectedItem.file_url && (selectedItem.file_type?.includes("video") || selectedItem.file_url.endsWith(".mp4") || selectedItem.file_url.endsWith(".webm") || selectedItem.file_url.endsWith(".mov")) ? (
                   <video
                     src={selectedItem.file_url}
@@ -235,7 +246,7 @@ export function PortalDeliverablesPage() {
                 ) : (
                   <div className="text-center p-4">
                     <p className="text-white text-xs font-semibold mb-1">Asset in production</p>
-                    <p className="text-xs text-[#7E889C]">Preview will appear once uploaded by your pod</p>
+                    <p className="text-xs text-[#97A0B3]">Preview will appear once uploaded by your pod</p>
                   </div>
                 )}
                 
@@ -246,7 +257,7 @@ export function PortalDeliverablesPage() {
                 </div>
               </div>
             ) : (
-              <div className="text-sm text-[#7E889C]">Select an asset to view</div>
+              <div className="text-sm text-[#97A0B3]">Select an asset to view</div>
             )}
           </div>
           
@@ -255,7 +266,7 @@ export function PortalDeliverablesPage() {
             <span className="text-[13px] text-[#97A0B3]">
               {selectedItem ? `Format: ${(selectedItem.file_type || selectedItem.asset_type || "Media").toUpperCase()}` : "No asset selected"}
             </span>
-            <span className="text-xs font-medium text-[#7E889C] tabular-nums shrink-0">
+            <span className="text-xs font-medium text-[#97A0B3] tabular-nums shrink-0">
               {selectedItem?.created_at ? `Created ${new Date(selectedItem.created_at).toLocaleDateString()}` : ""}
             </span>
           </div>
@@ -267,7 +278,7 @@ export function PortalDeliverablesPage() {
             <div className="flex-1 overflow-y-auto pr-2 scrollbar-hide space-y-6">
               {/* Header Info */}
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#7E889C] mb-2">
+                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#97A0B3] mb-2">
                   {(selectedItem.asset_type || selectedItem.file_type || "REEL").toUpperCase()} · {selectedItem.scheduled_at ? `PUBLISHES ${new Date(selectedItem.scheduled_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase()}` : "SCHEDULED IN CALENDAR"}
                 </p>
                 <h2 className="text-2xl font-normal text-white">{selectedItem.title || selectedItem.file_url?.split("/").pop()?.replace(/[-_.]/g, " ") || "Deliverable"}</h2>
@@ -275,7 +286,7 @@ export function PortalDeliverablesPage() {
 
               {/* What changed */}
               {(selectedItem.revision_round || 1) > 1 && (
-                <div className="bg-[#1F2C3F] rounded-xl p-4 border border-white/[0.03]">
+                <div className="bg-[#161F2D] rounded-xl p-4 border border-white/[0.03]">
                   <h4 className="text-[13px] font-bold text-white mb-1.5">What changed in v{selectedItem.revision_round}</h4>
                   <p className="text-[13px] text-[#97A0B3] leading-relaxed">
                     {selectedItem.rejection_comment || "Updated revision based on client feedback."}
@@ -300,11 +311,11 @@ export function PortalDeliverablesPage() {
                 <h4 className="text-[13px] font-bold text-white mb-4">Comments</h4>
                 <div className="space-y-4">
                   {itemComments.length === 0 ? (
-                    <p className="text-[13px] text-[#7E889C] italic">No revision comments yet for this deliverable.</p>
+                    <p className="text-[13px] text-[#97A0B3] italic">No revision comments yet for this deliverable.</p>
                   ) : (
                     itemComments.map((c) => (
                       <div key={c.id} className="flex gap-3">
-                        <div className="size-6 rounded-full bg-[#E2E8F0] shrink-0 flex items-center justify-center text-[11px] font-bold text-black border border-white/[0.1]">
+                        <div className="size-6 rounded-full bg-[#BCCCE6] shrink-0 flex items-center justify-center text-[11px] font-bold text-black border border-white/[0.1]">
                           1
                         </div>
                         <div className="min-w-0">
@@ -344,14 +355,14 @@ export function PortalDeliverablesPage() {
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
                   placeholder="Tell your creative pod what to change..."
-                  className="w-full bg-[#0B111C]/50 border border-[#2A3446] rounded-xl p-4 text-[13px] text-white placeholder:text-[#7E889C] resize-none focus:outline-none focus:border-white/[0.2] transition-colors h-24 mb-4"
+                  className="w-full bg-[#0B111C]/50 border border-[#2A3446] rounded-xl p-4 text-[13px] text-white placeholder:text-[#97A0B3] resize-none focus:outline-none focus:border-white/[0.2] transition-colors h-24 mb-4"
                 />
                 
                 <div className="flex items-center gap-3">
                   <button
                     onClick={handleRequestChange}
                     disabled={requestChangesMutation.isPending || !commentText}
-                    className="flex-1 px-4 py-3 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-4 py-3 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#161F2D] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {requestChangesMutation.isPending ? "Sending..." : "Request change"}
                   </button>
@@ -368,12 +379,12 @@ export function PortalDeliverablesPage() {
 
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-[#7E889C]">
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-[#97A0B3]">
               <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-[#2A3446] flex items-center justify-center mb-3">
-                <Play className="w-5 h-5 text-[#7E889C]" />
+                <Play className="w-5 h-5 text-[#97A0B3]" />
               </div>
               <h3 className="text-sm font-semibold text-white mb-1">No Deliverable Selected</h3>
-              <p className="text-xs text-[#7E889C] max-w-xs leading-relaxed">
+              <p className="text-xs text-[#97A0B3] max-w-xs leading-relaxed">
                 When your creative pod submits deliverables for review, select an item to inspect versions, leave timestamps or comments, and approve for scheduling.
               </p>
             </div>
@@ -384,7 +395,7 @@ export function PortalDeliverablesPage() {
       {/* Toast */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#161F2D] text-white px-5 py-3 rounded-xl shadow-2xl border border-white/[0.1] text-sm font-medium flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#6EE7B7]" />
+          <span className="w-2 h-2 rounded-full bg-[#BCCCE6]" />
           {toastMessage}
         </div>
       )}

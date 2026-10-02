@@ -44,7 +44,7 @@ export function CustomSelect({
         type="button"
         aria-label={ariaLabel || "Select option"}
         onClick={() => setIsOpen(!isOpen)}
-        className={`px-3.5 py-1.5 rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-bold text-[#F1F5F9] shadow-2xs hover:border-[#7FA0D6]/60 hover:bg-[#1E2D42] transition-all flex items-center justify-between gap-2.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#7FA0D6]/40 ${className}`}
+        className={`px-3.5 py-1.5 rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-bold text-[#F1F5F9] shadow-2xs hover:border-[#7FA0D6]/60 hover:bg-[#161F2D] transition-all flex items-center justify-between gap-2.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#7FA0D6]/40 ${className}`}
       >
         <span className="truncate">{selectedOption?.label || value}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-[#97A0B3] transition-transform duration-200 shrink-0 ${isOpen ? "rotate-180 text-[#7FA0D6]" : ""}`} />
@@ -65,7 +65,7 @@ export function CustomSelect({
                 className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-between transition-all cursor-pointer ${
                   isSelected
                     ? "bg-[#7FA0D6]/20 text-[#7FA0D6] border border-[#7FA0D6]/30 shadow-xs"
-                    : "text-[#F1F5F9] hover:bg-[#1F2C3F] hover:text-[#7FA0D6]"
+                    : "text-[#F1F5F9] hover:bg-[#161F2D] hover:text-[#7FA0D6]"
                 }`}
               >
                 <span className="truncate">{opt.label}</span>

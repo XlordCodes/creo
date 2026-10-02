@@ -158,6 +158,12 @@ async def get_kanban_board(
                 t.updated_at,
                 u.email AS assignee_email,
                 u.full_name AS assignee_name,
+                jsonb_build_object(
+                    'id', u.id,
+                    'full_name', u.full_name,
+                    'email', u.email,
+                    'role', u.role
+                ) AS assignee,
                 c.email AS client_email,
                 cp.company_name AS client_company,
                 cp.brand_summary,

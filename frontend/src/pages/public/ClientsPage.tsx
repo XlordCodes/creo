@@ -458,7 +458,7 @@ export function ClientsPage() {
 
             {/* Action */}
             <div className="flex justify-end mt-2">
-              <button className="bg-[#BCCCE6] text-[#050810] hover:bg-[#D5E1F2] font-bold text-xs px-6 py-3 rounded-full flex items-center gap-2 transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] group">
+              <button className="bg-[#BCCCE6] text-[#050810] hover:bg-[#BCCCE6] font-bold text-xs px-6 py-3 rounded-full flex items-center gap-2 transition-all shadow-sm hover:shadow-[0_0_20px_rgba(188,204,230,0.25)] group">
                 Approve All <svg className="size-4 transition-transform group-hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" className="animate-[dash_0.5s_ease-out_forwards]" strokeDasharray="24" strokeDashoffset="0" /></svg>
               </button>
             </div>

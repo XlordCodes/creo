@@ -18,28 +18,28 @@
   --color-live-green: #7FA0D6;
   --color-cta-primary: #BCCCE6;
 
-  --color-brand: #2B7BC4;
-  --color-brand-dark: #0D2137;
-  --color-brand-light: #E8F4FD;
-  --color-brand-mid: #6BAED6;
-  --color-accent: #0EA5E9;
+  --color-brand: #7FA0D6;
+  --color-brand-dark: #0B111C;
+  --color-brand-light: #BCCCE6;
+  --color-brand-mid: #7FA0D6;
+  --color-accent: #BCCCE6;
 
-  --color-text: #374151;
-  --color-text-muted: #6BAED6;
+  --color-text: #F8FAFC;
+  --color-text-muted: #97A0B3;
 
-  --color-border: #C9DFF0;
-  --color-surface: #FFFFFF;
-  --color-bg: #E8F4FD;
-  --color-bg-internal: #F9FAFB;
+  --color-border: #2A3446;
+  --color-surface: #161F2D;
+  --color-bg: #0B111C;
+  --color-bg-internal: #161F2D;
 
-  --color-success: #065F46;
-  --color-success-light: #D1FAE5;
-  --color-warning: #D97706;
-  --color-warning-light: #FEF3C7;
-  --color-error: #991B1B;
-  --color-error-light: #FEE2E2;
-  --color-neutral: #374151;
-  --color-neutral-light: #F9FAFB;
+  --color-success: #7FA0D6;
+  --color-success-light: #161F2D;
+  --color-warning: #D8BF9B;
+  --color-warning-light: #161F2D;
+  --color-error: #D8BF9B;
+  --color-error-light: #161F2D;
+  --color-neutral: #97A0B3;
+  --color-neutral-light: #161F2D;
 
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -92,94 +92,94 @@
   color-scheme: dark;
   --background: #050810;
   --foreground: #F8FAFC;
-  --card: #ffffff;
-  --card-foreground: #0D2137;
-  --popover: #ffffff;
-  --popover-foreground: #0D2137;
-  --primary: #2B7BC4;
-  --primary-foreground: #ffffff;
-  --secondary: #E8F4FD;
-  --secondary-foreground: #0D2137;
-  --muted: #F9FAFB;
-  --muted-foreground: #6BAED6;
-  --accent: #0EA5E9;
-  --accent-foreground: #ffffff;
-  --destructive: #991B1B;
-  --border: #C9DFF0;
-  --input: #C9DFF0;
-  --ring: #0EA5E9;
-  --chart-1: #2B7BC4;
-  --chart-2: #0EA5E9;
-  --chart-3: #6BAED6;
-  --chart-4: #065F46;
-  --chart-5: #D97706;
+  --card: #161F2D;
+  --card-foreground: #F8FAFC;
+  --popover: #161F2D;
+  --popover-foreground: #F8FAFC;
+  --primary: #7FA0D6;
+  --primary-foreground: #050810;
+  --secondary: #0B111C;
+  --secondary-foreground: #BCCCE6;
+  --muted: #161F2D;
+  --muted-foreground: #97A0B3;
+  --accent: #BCCCE6;
+  --accent-foreground: #050810;
+  --destructive: #D8BF9B;
+  --border: #2A3446;
+  --input: #2A3446;
+  --ring: #7FA0D6;
+  --chart-1: #7FA0D6;
+  --chart-2: #BCCCE6;
+  --chart-3: #97A0B3;
+  --chart-4: #D8BF9B;
+  --chart-5: #2A3446;
   --radius: 0.625rem;
-  --sidebar: #0D2137;
-  --sidebar-foreground: #E8F4FD;
-  --sidebar-primary: #2B7BC4;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1a3a5c;
-  --sidebar-accent-foreground: #E8F4FD;
-  --sidebar-border: #1a3a5c;
-  --sidebar-ring: #0EA5E9;
+  --sidebar: #0B111C;
+  --sidebar-foreground: #BCCCE6;
+  --sidebar-primary: #7FA0D6;
+  --sidebar-primary-foreground: #050810;
+  --sidebar-accent: #161F2D;
+  --sidebar-accent-foreground: #BCCCE6;
+  --sidebar-border: #2A3446;
+  --sidebar-ring: #7FA0D6;
 
   --sidebar-width: 240px;
   --topnav-height: 64px;
   --bottomtab-height: 56px;
 
   /* Functional Review & Deliverable Surface Tokens */
-  --surface-bg: #E8F4FD;
-  --surface-text: #0D2137;
-  --surface-card: #FFFFFF;
-  --surface-border: #C9DFF0;
-  --surface-hover: #F0F7FD;
-  --surface-active: #E1EFFC;
-  --color-raised: #FFFFFF;
-  --color-hairline: #C9DFF0;
-  --color-ink: #FFFFFF;
-  --color-ink-surface: #F8FAFC;
-  --color-ink-text: #0D2137;
-  --color-ink-muted: #64748B;
-  --color-paper: #FFFFFF;
-  --color-paper-text: #0D2137;
-  --color-waiting: #D97706;
-  --color-settled: #065F46;
-  --color-blocked: #991B1B;
-  --color-motion: #2B7BC4;
+  --surface-bg: #0B111C;
+  --surface-text: #F8FAFC;
+  --surface-card: #161F2D;
+  --surface-border: #2A3446;
+  --surface-hover: #161F2D;
+  --surface-active: #2A3446;
+  --color-raised: #161F2D;
+  --color-hairline: #2A3446;
+  --color-ink: #F8FAFC;
+  --color-ink-surface: #161F2D;
+  --color-ink-text: #F8FAFC;
+  --color-ink-muted: #97A0B3;
+  --color-paper: #161F2D;
+  --color-paper-text: #F8FAFC;
+  --color-waiting: #D8BF9B;
+  --color-settled: #7FA0D6;
+  --color-blocked: #D8BF9B;
+  --color-motion: #7FA0D6;
 }
 
 .dark {
-  --background: #0D2137;
-  --foreground: #E8F4FD;
-  --card: #1a3a5c;
-  --card-foreground: #E8F4FD;
-  --popover: #1a3a5c;
-  --popover-foreground: #E8F4FD;
-  --primary: #2B7BC4;
-  --primary-foreground: #ffffff;
-  --secondary: #1a3a5c;
-  --secondary-foreground: #E8F4FD;
-  --muted: #1a3a5c;
-  --muted-foreground: #6BAED6;
-  --accent: #0EA5E9;
-  --accent-foreground: #ffffff;
-  --destructive: #991B1B;
-  --border: #1a3a5c;
-  --input: #1a3a5c;
-  --ring: #0EA5E9;
-  --chart-1: #2B7BC4;
-  --chart-2: #0EA5E9;
-  --chart-3: #6BAED6;
-  --chart-4: #065F46;
-  --chart-5: #D97706;
-  --sidebar: #0D2137;
-  --sidebar-foreground: #E8F4FD;
-  --sidebar-primary: #2B7BC4;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1a3a5c;
-  --sidebar-accent-foreground: #E8F4FD;
-  --sidebar-border: #1a3a5c;
-  --sidebar-ring: #0EA5E9;
+  --background: #050810;
+  --foreground: #F8FAFC;
+  --card: #161F2D;
+  --card-foreground: #F8FAFC;
+  --popover: #161F2D;
+  --popover-foreground: #F8FAFC;
+  --primary: #7FA0D6;
+  --primary-foreground: #050810;
+  --secondary: #0B111C;
+  --secondary-foreground: #BCCCE6;
+  --muted: #161F2D;
+  --muted-foreground: #97A0B3;
+  --accent: #BCCCE6;
+  --accent-foreground: #050810;
+  --destructive: #D8BF9B;
+  --border: #2A3446;
+  --input: #2A3446;
+  --ring: #7FA0D6;
+  --chart-1: #7FA0D6;
+  --chart-2: #BCCCE6;
+  --chart-3: #97A0B3;
+  --chart-4: #D8BF9B;
+  --chart-5: #2A3446;
+  --sidebar: #0B111C;
+  --sidebar-foreground: #BCCCE6;
+  --sidebar-primary: #7FA0D6;
+  --sidebar-primary-foreground: #050810;
+  --sidebar-accent: #161F2D;
+  --sidebar-accent-foreground: #BCCCE6;
+  --sidebar-border: #2A3446;
+  --sidebar-ring: #7FA0D6;
 }
 
 body {
@@ -636,3 +636,477 @@ select option,
 }
 
 
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Marketing motion helpers (see components/motion)
+───────────────────────────────────────────────────────────────────────────── */
+@keyframes creoMarquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+
+.creo-marquee-track {
+  animation: creoMarquee 38s linear infinite;
+  will-change: transform;
+}
+
+/* Lenis smooth scroll */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis:not(.lenis-autoToggle).lenis-stopped {
+  overflow: clip;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+/* Film-grain overlay that keeps flat dark sections from looking synthetic */
+.creo-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Animated conic border for the featured pricing card */
+@property --creo-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes creoSpinAngle {
+  to {
+    --creo-angle: 360deg;
+  }
+}
+.creo-conic-border {
+  background:
+    linear-gradient(#141c2b, #141c2b) padding-box,
+    conic-gradient(from var(--creo-angle), #7fa0d6, #bccce6 25%, #2a3446 45%, #d8bf9b 65%, #7fa0d6) border-box;
+  border: 1.5px solid transparent;
+  animation: creoSpinAngle 7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .creo-marquee-track,
+  .creo-conic-border {
+    animation: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Browser Autofill / Autocomplete Reset
+   Eliminates Chrome/Safari/Edge grayish-blue background shade (#e8f0fe or rgba(70,90,126,0.4))
+───────────────────────────────────────────────────────────────────────────── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+textarea:-webkit-autofill:active,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus,
+select:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #0A0F18 inset !important;
+  box-shadow: 0 0 0 1000px #0A0F18 inset !important;
+  -webkit-text-fill-color: #F8FAFC !important;
+  caret-color: #F8FAFC !important;
+  color: #F8FAFC !important;
+  transition: background-color 5000000s ease-in-out 0s, color 5000000s ease-in-out 0s !important;
+}
+
+input:-moz-autofill,
+input:-moz-autofill:hover,
+input:-moz-autofill:focus,
+textarea:-moz-autofill,
+select:-moz-autofill {
+  box-shadow: 0 0 0 1000px #0A0F18 inset !important;
+  -moz-text-fill-color: #F8FAFC !important;
+  caret-color: #F8FAFC !important;
+  color: #F8FAFC !important;
+  filter: none !important;
+}
+
+/* Surface-specific overrides when inputs sit in other dark surfaces */
+.bg-\[\#0B111C\] input:-webkit-autofill,
+.bg-\[\#0B111C\] input:-webkit-autofill:hover,
+.bg-\[\#0B111C\] input:-webkit-autofill:focus,
+.bg-\[\#0B111C\] input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #0B111C inset !important;
+  box-shadow: 0 0 0 1000px #0B111C inset !important;
+}
+
+.bg-\[\#121926\] input:-webkit-autofill,
+.bg-\[\#121926\] input:-webkit-autofill:hover,
+.bg-\[\#121926\] input:-webkit-autofill:focus,
+.bg-\[\#121926\] input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #121926 inset !important;
+  box-shadow: 0 0 0 1000px #121926 inset !important;
+}
+
+.bg-\[\#161F2D\] input:-webkit-autofill,
+.bg-\[\#161F2D\] input:-webkit-autofill:hover,
+.bg-\[\#161F2D\] input:-webkit-autofill:focus,
+.bg-\[\#161F2D\] input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #161F2D inset !important;
+  box-shadow: 0 0 0 1000px #161F2D inset !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Razorpay Checkout Modal - Floating Dark Backdrop Preservation
+   Prevents Chromium from forcing an opaque white canvas on the checkout iframe
+   when the parent app is in dark mode, keeping the app's usual background.
+───────────────────────────────────────────────────────────────────────────── */
+.razorpay-container {
+  color-scheme: light !important;
+  background: rgba(5, 8, 16, 0.82) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+.razorpay-container iframe,
+iframe.razorpay-checkout-frame,
+iframe[src*="razorpay"],
+iframe[name*="razorpay"],
+iframe[id*="razorpay"] {
+  color-scheme: light !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.razorpay-backdrop {
+  background: rgba(5, 8, 16, 0.82) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CREO BRAND PALETTE LOCK — Tailwind v4 @theme color override
+   ─────────────────────────────────────────────────────────────────────
+   Enforces strict 7-color palette across the ENTIRE site:
+     Void        #050810  — deepest background
+     Night navy  #0B111C  — page background
+     Surface     #161F2D  — cards / panels
+     Steel line  #2A3446  — borders / dividers
+     Mist        #97A0B3  — secondary text
+     Periwinkle  #BCCCE6  — buttons / active nav / highlights
+     Glow blue   #7FA0D6  — status / primary accent
+     Warm sand   #D8BF9B  — rare warm accent / at-risk
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  /* ── Remap: emerald → Glow blue ─────────────────────────── */
+  --color-emerald-50:  #7FA0D610;
+  --color-emerald-100: #7FA0D620;
+  --color-emerald-200: #7FA0D640;
+  --color-emerald-300: #BCCCE6;
+  --color-emerald-400: #7FA0D6;
+  --color-emerald-500: #7FA0D6;
+  --color-emerald-600: #7FA0D6;
+  --color-emerald-700: #7FA0D6;
+  --color-emerald-800: #7FA0D6;
+  --color-emerald-900: #161F2D;
+  --color-emerald-950: #0B111C;
+
+  /* ── Remap: green → Glow blue ───────────────────────────── */
+  --color-green-50:  #7FA0D610;
+  --color-green-100: #7FA0D620;
+  --color-green-200: #7FA0D640;
+  --color-green-300: #BCCCE6;
+  --color-green-400: #7FA0D6;
+  --color-green-500: #7FA0D6;
+  --color-green-600: #7FA0D6;
+  --color-green-700: #7FA0D6;
+  --color-green-800: #7FA0D6;
+  --color-green-900: #161F2D;
+  --color-green-950: #0B111C;
+
+  /* ── Remap: purple → Glow blue ──────────────────────────── */
+  --color-purple-50:  #7FA0D610;
+  --color-purple-100: #7FA0D620;
+  --color-purple-200: #7FA0D640;
+  --color-purple-300: #BCCCE6;
+  --color-purple-400: #7FA0D6;
+  --color-purple-500: #7FA0D6;
+  --color-purple-600: #7FA0D6;
+  --color-purple-700: #7FA0D6;
+  --color-purple-800: #7FA0D6;
+  --color-purple-900: #161F2D;
+  --color-purple-950: #0B111C;
+
+  /* ── Remap: violet → Glow blue ──────────────────────────── */
+  --color-violet-50:  #7FA0D610;
+  --color-violet-100: #7FA0D620;
+  --color-violet-200: #7FA0D640;
+  --color-violet-300: #BCCCE6;
+  --color-violet-400: #7FA0D6;
+  --color-violet-500: #7FA0D6;
+  --color-violet-600: #7FA0D6;
+  --color-violet-700: #7FA0D6;
+  --color-violet-800: #7FA0D6;
+  --color-violet-900: #161F2D;
+  --color-violet-950: #0B111C;
+
+  /* ── Remap: indigo → Glow blue ──────────────────────────── */
+  --color-indigo-50:  #7FA0D610;
+  --color-indigo-100: #7FA0D620;
+  --color-indigo-200: #7FA0D640;
+  --color-indigo-300: #BCCCE6;
+  --color-indigo-400: #7FA0D6;
+  --color-indigo-500: #7FA0D6;
+  --color-indigo-600: #7FA0D6;
+  --color-indigo-700: #7FA0D6;
+  --color-indigo-800: #7FA0D6;
+  --color-indigo-900: #161F2D;
+  --color-indigo-950: #0B111C;
+
+  /* ── Remap: amber → Warm sand ───────────────────────────── */
+  --color-amber-50:  #D8BF9B10;
+  --color-amber-100: #D8BF9B20;
+  --color-amber-200: #D8BF9B40;
+  --color-amber-300: #D8BF9B;
+  --color-amber-400: #D8BF9B;
+  --color-amber-500: #D8BF9B;
+  --color-amber-600: #D8BF9B;
+  --color-amber-700: #D8BF9B;
+  --color-amber-800: #D8BF9B;
+  --color-amber-900: #161F2D;
+  --color-amber-950: #0B111C;
+
+  /* ── Remap: yellow → Warm sand ──────────────────────────── */
+  --color-yellow-50:  #D8BF9B10;
+  --color-yellow-100: #D8BF9B20;
+  --color-yellow-200: #D8BF9B40;
+  --color-yellow-300: #D8BF9B;
+  --color-yellow-400: #D8BF9B;
+  --color-yellow-500: #D8BF9B;
+  --color-yellow-600: #D8BF9B;
+  --color-yellow-700: #D8BF9B;
+  --color-yellow-800: #D8BF9B;
+  --color-yellow-900: #161F2D;
+  --color-yellow-950: #0B111C;
+
+  /* ── Remap: orange → Warm sand ──────────────────────────── */
+  --color-orange-50:  #D8BF9B10;
+  --color-orange-100: #D8BF9B20;
+  --color-orange-200: #D8BF9B40;
+  --color-orange-300: #D8BF9B;
+  --color-orange-400: #D8BF9B;
+  --color-orange-500: #D8BF9B;
+  --color-orange-600: #D8BF9B;
+  --color-orange-700: #D8BF9B;
+  --color-orange-800: #D8BF9B;
+  --color-orange-900: #161F2D;
+  --color-orange-950: #0B111C;
+
+  /* ── Remap: rose → Warm sand ────────────────────────────── */
+  --color-rose-50:  #D8BF9B10;
+  --color-rose-100: #D8BF9B20;
+  --color-rose-200: #D8BF9B40;
+  --color-rose-300: #D8BF9B;
+  --color-rose-400: #D8BF9B;
+  --color-rose-500: #D8BF9B;
+  --color-rose-600: #D8BF9B;
+  --color-rose-700: #D8BF9B;
+  --color-rose-800: #D8BF9B;
+  --color-rose-900: #161F2D;
+  --color-rose-950: #0B111C;
+
+  /* ── Remap: red → Warm sand ─────────────────────────────── */
+  --color-red-50:  #D8BF9B10;
+  --color-red-100: #D8BF9B20;
+  --color-red-200: #D8BF9B40;
+  --color-red-300: #D8BF9B;
+  --color-red-400: #D8BF9B;
+  --color-red-500: #D8BF9B;
+  --color-red-600: #D8BF9B;
+  --color-red-700: #D8BF9B;
+  --color-red-800: #D8BF9B;
+  --color-red-900: #161F2D;
+  --color-red-950: #0B111C;
+
+  /* ── Remap: pink → Periwinkle ───────────────────────────── */
+  --color-pink-50:  #BCCCE610;
+  --color-pink-100: #BCCCE620;
+  --color-pink-200: #BCCCE640;
+  --color-pink-300: #BCCCE6;
+  --color-pink-400: #BCCCE6;
+  --color-pink-500: #BCCCE6;
+  --color-pink-600: #BCCCE6;
+  --color-pink-700: #BCCCE6;
+  --color-pink-800: #BCCCE6;
+  --color-pink-900: #161F2D;
+  --color-pink-950: #0B111C;
+
+  /* ── Remap: fuchsia → Periwinkle ────────────────────────── */
+  --color-fuchsia-50:  #BCCCE610;
+  --color-fuchsia-100: #BCCCE620;
+  --color-fuchsia-200: #BCCCE640;
+  --color-fuchsia-300: #BCCCE6;
+  --color-fuchsia-400: #BCCCE6;
+  --color-fuchsia-500: #BCCCE6;
+  --color-fuchsia-600: #BCCCE6;
+  --color-fuchsia-700: #BCCCE6;
+  --color-fuchsia-800: #BCCCE6;
+  --color-fuchsia-900: #161F2D;
+  --color-fuchsia-950: #0B111C;
+
+  /* ── Remap: teal → Glow blue ────────────────────────────── */
+  --color-teal-50:  #7FA0D610;
+  --color-teal-100: #7FA0D620;
+  --color-teal-200: #7FA0D640;
+  --color-teal-300: #BCCCE6;
+  --color-teal-400: #7FA0D6;
+  --color-teal-500: #7FA0D6;
+  --color-teal-600: #7FA0D6;
+  --color-teal-700: #7FA0D6;
+  --color-teal-800: #7FA0D6;
+  --color-teal-900: #161F2D;
+  --color-teal-950: #0B111C;
+
+  /* ── Remap: cyan → Glow blue ────────────────────────────── */
+  --color-cyan-50:  #7FA0D610;
+  --color-cyan-100: #7FA0D620;
+  --color-cyan-200: #7FA0D640;
+  --color-cyan-300: #BCCCE6;
+  --color-cyan-400: #7FA0D6;
+  --color-cyan-500: #7FA0D6;
+  --color-cyan-600: #7FA0D6;
+  --color-cyan-700: #7FA0D6;
+  --color-cyan-800: #7FA0D6;
+  --color-cyan-900: #161F2D;
+  --color-cyan-950: #0B111C;
+
+  /* ── Remap: sky → Glow blue ─────────────────────────────── */
+  --color-sky-50:  #7FA0D610;
+  --color-sky-100: #7FA0D620;
+  --color-sky-200: #7FA0D640;
+  --color-sky-300: #BCCCE6;
+  --color-sky-400: #7FA0D6;
+  --color-sky-500: #7FA0D6;
+  --color-sky-600: #7FA0D6;
+  --color-sky-700: #7FA0D6;
+  --color-sky-800: #7FA0D6;
+  --color-sky-900: #161F2D;
+  --color-sky-950: #0B111C;
+
+  /* ── Remap: lime → Glow blue ────────────────────────────── */
+  --color-lime-50:  #7FA0D610;
+  --color-lime-100: #7FA0D620;
+  --color-lime-200: #7FA0D640;
+  --color-lime-300: #BCCCE6;
+  --color-lime-400: #7FA0D6;
+  --color-lime-500: #7FA0D6;
+  --color-lime-600: #7FA0D6;
+  --color-lime-700: #7FA0D6;
+  --color-lime-800: #7FA0D6;
+  --color-lime-900: #161F2D;
+  --color-lime-950: #0B111C;
+
+  /* ── Remap: blue → Glow blue (palette-aligned) ──────────── */
+  --color-blue-50:  #7FA0D610;
+  --color-blue-100: #7FA0D615;
+  --color-blue-200: #7FA0D630;
+  --color-blue-300: #BCCCE6;
+  --color-blue-400: #BCCCE6;
+  --color-blue-500: #7FA0D6;
+  --color-blue-600: #7FA0D6;
+  --color-blue-700: #7FA0D6;
+  --color-blue-800: #7FA0D6;
+  --color-blue-900: #161F2D;
+  --color-blue-950: #0B111C;
+
+  /* ── Remap: slate (keep dark palette) ───────────────────── */
+  --color-slate-50:  #F8FAFC;
+  --color-slate-100: #F1F5F9;
+  --color-slate-200: #BCCCE6;
+  --color-slate-300: #97A0B3;
+  --color-slate-400: #97A0B3;
+  --color-slate-500: #97A0B3;
+  --color-slate-600: #97A0B3;
+  --color-slate-700: #2A3446;
+  --color-slate-800: #161F2D;
+  --color-slate-900: #0B111C;
+  --color-slate-950: #050810;
+
+  /* ── Remap: gray → slate-alike ──────────────────────────── */
+  --color-gray-50:  #F8FAFC;
+  --color-gray-100: #F1F5F9;
+  --color-gray-200: #BCCCE6;
+  --color-gray-300: #97A0B3;
+  --color-gray-400: #97A0B3;
+  --color-gray-500: #97A0B3;
+  --color-gray-600: #97A0B3;
+  --color-gray-700: #2A3446;
+  --color-gray-800: #161F2D;
+  --color-gray-900: #0B111C;
+  --color-gray-950: #050810;
+
+  /* ── Remap: zinc → slate-alike ──────────────────────────── */
+  --color-zinc-50:  #F8FAFC;
+  --color-zinc-100: #F1F5F9;
+  --color-zinc-200: #BCCCE6;
+  --color-zinc-300: #97A0B3;
+  --color-zinc-400: #97A0B3;
+  --color-zinc-500: #97A0B3;
+  --color-zinc-600: #97A0B3;
+  --color-zinc-700: #2A3446;
+  --color-zinc-800: #161F2D;
+  --color-zinc-900: #0B111C;
+  --color-zinc-950: #050810;
+
+  /* ── Remap: neutral → slate-alike ───────────────────────── */
+  --color-neutral-50:  #F8FAFC;
+  --color-neutral-100: #F1F5F9;
+  --color-neutral-200: #BCCCE6;
+  --color-neutral-300: #97A0B3;
+  --color-neutral-400: #97A0B3;
+  --color-neutral-500: #97A0B3;
+  --color-neutral-600: #97A0B3;
+  --color-neutral-700: #2A3446;
+  --color-neutral-800: #161F2D;
+  --color-neutral-900: #0B111C;
+  --color-neutral-950: #050810;
+
+  /* ── Remap: stone → slate-alike ─────────────────────────── */
+  --color-stone-50:  #F8FAFC;
+  --color-stone-100: #F1F5F9;
+  --color-stone-200: #BCCCE6;
+  --color-stone-300: #97A0B3;
+  --color-stone-400: #97A0B3;
+  --color-stone-500: #97A0B3;
+  --color-stone-600: #97A0B3;
+  --color-stone-700: #2A3446;
+  --color-stone-800: #161F2D;
+  --color-stone-900: #0B111C;
+  --color-stone-950: #050810;
+}
+
+/* Custom scrollbar utility for equal-height Kanban columns */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(11, 17, 28, 0.4);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(42, 52, 70, 0.8);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(127, 160, 214, 0.6);
+}
