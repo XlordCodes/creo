@@ -138,11 +138,9 @@ export function PortalSupportPage() {
     createTicketMutation.mutate({ title: subject.trim(), description: description.trim(), priority: "medium" });
   };
 
-  if (isSubLoading || isTicketsLoading) {
-    return <CreoLoadingScreen label="Verifying session..." sublabel="Loading Support Desk" />;
-  }
-
-  return (
+  return (isSubLoading || isTicketsLoading) ? (
+    <CreoLoadingScreen label="Verifying session..." sublabel="Loading Support Desk" />
+  ) : (
     <div className="space-y-6">
 
       {/* ── Retainer Notice Banner (Informative & Actionable, Never Blocking Support) ── */}
