@@ -70,16 +70,17 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
           const clientName = st.client || "Client";
           const shortId = String(st.id).length > 8 ? String(st.id).slice(0, 8).toUpperCase() : String(st.id);
 
+          const agentName = st.assignee?.full_name || st.assignee_name || "Unassigned";
           return {
             id: shortId,
             title: st.title || st.subject || "Support Inquiry",
             client: clientName,
             clientInitials: clientName[0].toUpperCase(),
-            avatarBg: "bg-[#0F172A]",
+            avatarBg: "bg-[#0B111C]",
             priority,
-            timeLog: st.time || "Logged recently",
-            agent: st.assignee_name || "Support Lead",
-            pod: "Pod A",
+            timeLog: st.created_at ? new Date(st.created_at).toLocaleDateString() : "Recently",
+            agent: agentName,
+            pod: st.tier || "Active",
             status,
           };
         });
@@ -98,7 +99,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
             title: lt.issueTitle || lt.title || "Support Request",
             client: clientName,
             clientInitials: clientName[0].toUpperCase(),
-            avatarBg: lt.avatarBg || "bg-[#0F172A]",
+            avatarBg: lt.avatarBg || "bg-[#0B111C]",
             priority,
             timeLog: lt.timeLog || "Logged just now",
             agent: lt.agent || "Support Lead",
@@ -126,7 +127,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
     };
 
     loadWidgetTickets();
-    const interval = setInterval(loadWidgetTickets, 5000);
+    const interval = setInterval(() => { if (!document.hidden) void loadWidgetTickets(); }, 30_000);
     const handleStorage = (e: StorageEvent) => {
       if (e.key === "creo_support_tickets") loadWidgetTickets();
     };
@@ -199,14 +200,14 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
   const getPriorityBadge = (priority: TicketRecord["priority"]) => {
     switch (priority) {
       case "Urgent":
-        return "bg-rose-950/300 text-white border-rose-500 shadow-2xs";
+        return "bg-blue-950/80 text-[#BCCCE6] border border-blue-500/60 shadow-2xs";
       case "High":
-        return "bg-amber-100 text-amber-800 border-amber-200";
+        return "bg-blue-900/50 text-[#BCCCE6] border border-blue-600/50";
       case "Medium":
-        return "bg-sky-100 text-sky-700 border-sky-200";
+        return "bg-blue-800/40 text-[#7FA0D6] border border-blue-700/40";
       case "Normal":
       default:
-        return "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]";
+        return "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]";
     }
   };
 
@@ -226,7 +227,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
               {openCount} Open
             </span>
           </div>
-          <span className="px-2 py-0.5 rounded-full text-[9px] font-black text-rose-700 bg-rose-950/30 border border-rose-900/40 shadow-2xs">
+          <span className="px-2 py-0.5 rounded-full text-[9px] font-black text-[#BCCCE6] bg-blue-950/80 border border-blue-500/60 shadow-2xs">
             {urgentCount} Urgent
           </span>
         </div>
@@ -321,7 +322,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
                   <div className="flex items-center gap-1 text-[10px] text-[#97A0B3] font-medium">
                     <span className="text-[#F1F5F9] font-semibold">{t.client}</span>
                     <span className="text-slate-300">•</span>
-                    <span className={t.priority === "Urgent" ? "text-[#F87171] font-bold" : "text-[#97A0B3]"}>
+                    <span className={t.priority === "Urgent" ? "text-[#D8BF9B] font-bold" : "text-[#97A0B3]"}>
                       {t.timeLog}
                     </span>
                     <span className="text-slate-300">•</span>
@@ -339,7 +340,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
                 }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs active:scale-95 transition-all cursor-pointer shrink-0 ${
                   t.status === "resolved"
-                    ? "bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9]"
+                    ? "bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#97A0B3] hover:text-white"
                     : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20"
                 }`}
               >
@@ -367,7 +368,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <span className="flex items-center gap-1 font-semibold text-[#F1F5F9]">
-          Avg response: <strong className="text-[#7FA0D6]">8.4m</strong> (Target &lt;15m)
+          Total Tickets: <strong className="text-[#7FA0D6]">{tickets.length}</strong>
         </span>
         <button
           type="button"
@@ -399,7 +400,7 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
             <button
               type="button"
               onClick={() => setAlertModal(null)}
-              className="absolute top-4 right-4 size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
+              className="absolute top-4 right-4 size-8 rounded-full bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#97A0B3] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               aria-label="Close modal"
             >
               <X className="size-4" />
@@ -408,8 +409,8 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
             <div
               className={`size-16 rounded-3xl flex items-center justify-center mb-4 ring-8 shadow-inner ${
                 alertModal.type === "success"
-                  ? "bg-emerald-950/30 text-[#34D399] ring-emerald-50/60"
-                  : "bg-[#7FA0D6]/15 text-[#7FA0D6] ring-blue-50/60"
+                  ? "bg-blue-950/30 text-[#BCCCE6] ring-blue-500/30"
+                  : "bg-[#7FA0D6]/15 text-[#7FA0D6] ring-blue-500/30"
               }`}
             >
               {alertModal.type === "success" ? (
@@ -440,11 +441,11 @@ export function SupportTicketsWidget({ slas }: SupportTicketsWidgetProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    const id = alertModal.ticketId;
-                    setAlertModal(null);
-                    navigate(`/admin/support/tickets/${id}`);
+                     const id = alertModal.ticketId;
+                     setAlertModal(null);
+                     navigate(`/admin/support/tickets/${id}`);
                   }}
-                  className="px-5 py-3 rounded-2xl bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] font-bold text-xs active:scale-95 transition-all cursor-pointer"
+                  className="px-5 py-3 rounded-2xl bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#F1F5F9] hover:text-white font-bold text-xs active:scale-95 transition-all cursor-pointer"
                 >
                   View Details
                 </button>

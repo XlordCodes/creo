@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { request } from "../../lib/http";
@@ -7,57 +7,72 @@ import {
   FileCheck,
   CalendarDays,
   FolderOpen,
-  Users,
   Dna,
   CreditCard,
   HelpCircle,
   Settings,
   LogOut,
-  MessageCircle,
+  X,
+  MessageSquare,
+  LayoutDashboard,
 } from "lucide-react";
 import { useAuth } from "../../lib/auth-context";
 import { useConfirm } from "../ui/ConfirmDialog";
+import { useAdminSidebar } from "../admin/AdminSidebarContext";
 
-/* ── Navigation Structure ── */
-const MAIN_NAV = [
-  { label: "Home", href: "/portal", icon: Home, id: "home" },
-  { label: "Review", href: "/portal/deliverables", icon: FileCheck, id: "review" },
-  { label: "Calendar", href: "/portal/calendar", icon: CalendarDays, id: "calendar" },
-  { label: "Library", href: "/portal/library", icon: FolderOpen, id: "library" },
-];
-
-const BRAND_NAV = [
-  { label: "Your pod", href: "/portal/creative-pod", icon: Users },
-  { label: "Brand DNA", href: "/portal/account?tab=brand", icon: Dna },
-];
-
-const ACCOUNT_NAV = [
-  { label: "Plan & billing", href: "/portal/payments", icon: CreditCard },
-  { label: "Help", href: "/portal/support", icon: HelpCircle },
-  { label: "Settings", href: "/portal/account", icon: Settings },
-];
-
-function isActive(href: string, pathname: string) {
-  if (href === "/portal") return pathname === "/portal" || pathname === "/portal/";
-  // For query-string links like ?tab=brand, match base path only
-  const basePath = href.split("?")[0] || href;
-  return pathname.startsWith(basePath) && href === basePath
-    ? true
-    : pathname + window.location.search === href;
+interface NavItem {
+  label: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+  id?: string;
 }
 
-/* ── Sidebar Component ── */
+interface NavSection {
+  label: string;
+  items: NavItem[];
+}
+
+function isActive(href: string, pathname: string, search: string) {
+  const [path, query] = href.split("?");
+  if (path === "/portal") return pathname === "/portal" || pathname === "/portal/";
+  if (query) return pathname === path && new URLSearchParams(search).get("tab") === new URLSearchParams(query).get("tab");
+  if (path === "/portal/account") return pathname === path && !new URLSearchParams(search).has("tab");
+  return pathname === path || pathname.startsWith(path + "/");
+}
+
 export function PortalSidebarNew() {
   const location = useLocation();
+  const { mobileOpen, setMobileOpen } = useAdminSidebar();
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname, location.search, setMobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const old = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", escape);
+    return () => {
+      document.body.style.overflow = old;
+      window.removeEventListener("keydown", escape);
+    };
+  }, [mobileOpen, setMobileOpen]);
+
   const { user, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const confirm = useConfirm();
-  
-  const clientId = user?.id || "00000000-0000-0000-0000-000000000001";
+
+  const clientId = user?.id;
   const { data: dashboardData } = useQuery({
-    queryKey: ["portal", "dashboard", clientId],
+    queryKey: ["portal-dashboard", clientId],
     queryFn: () => request<any>(`/api/v1/portal/dashboard?client_id=${clientId}`),
     staleTime: 60000,
+    enabled: !!clientId && (user?.onboarding_stage ?? 0) >= 8,
   });
 
   const companyName = user?.company_name || user?.full_name || "Your Brand";
@@ -87,153 +102,177 @@ export function PortalSidebarNew() {
     }
   }
 
+  const sections: NavSection[] = [
+    {
+      label: "Overview",
+      items: [
+        { label: "Home", href: "/portal", icon: Home, id: "home" },
+        {
+          label: "Review",
+          href: "/portal/deliverables",
+          icon: FileCheck,
+          id: "review",
+          badge:
+            dashboardData?.pending_deliverable_count > 0
+              ? String(dashboardData.pending_deliverable_count)
+              : undefined,
+        },
+        { label: "Calendar", href: "/portal/calendar", icon: CalendarDays, id: "calendar" },
+        { label: "Library", href: "/portal/library", icon: FolderOpen, id: "library" },
+      ],
+    },
+    {
+      label: "Your Brand",
+      items: [
+        { label: "Slack Chat", href: "/portal/slack", icon: MessageSquare, badge: "Chat" },
+        { label: "Brand DNA", href: "/portal/brand", icon: Dna },
+      ],
+    },
+    {
+      label: "Account",
+      items: [
+        { label: "Plan & billing", href: "/portal/payments", icon: CreditCard },
+        { label: "Help", href: "/portal/support", icon: HelpCircle },
+        { label: "Settings", href: "/portal/account", icon: Settings },
+      ],
+    },
+  ];
+
   return (
-    <aside className="hidden xl:fixed xl:inset-y-0 xl:left-0 xl:z-40 xl:flex xl:w-[280px] xl:flex-col border-r border-white/[0.06]">
-      <div className="flex flex-1 flex-col bg-[#0E1420] overflow-y-auto">
-        {/* Logo */}
-        <div className="px-7 pt-7 pb-2">
-          <Link to="/portal" className="inline-flex items-center">
-            <span className="text-[22px] font-extrabold tracking-tight text-white">
-              Creo<span className="text-[#93C5FD]">.</span>
+    <>
+      {mobileOpen && (
+        <button
+          aria-label="Close navigation overlay"
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-[9998] bg-[#050810]/75 backdrop-blur-sm lg:hidden"
+        />
+      )}
+
+      <aside
+        aria-label="Client navigation sidebar"
+        className={`fixed inset-y-0 left-0 z-[9999] lg:z-40 flex w-[280px] max-w-[85vw] flex-col bg-[#161F2D] border-r border-[#2A3446] shadow-2xl transition-transform duration-300 lg:translate-x-0 ${
+          mobileOpen ? "translate-x-0 visible" : "-translate-x-full invisible lg:visible"
+        }`}
+      >
+        {/* Brand Header */}
+        <div className="p-4 sm:p-5 border-b border-[#2A3446] flex items-center justify-between bg-[#0B111C]/60 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Link to="/portal" className="text-xl font-black text-white tracking-tighter">
+              creo<span className="text-[#7FA0D6] text-2xl leading-none">.</span>
+            </Link>
+            <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30">
+              Client Portal
             </span>
-          </Link>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(false)}
+            className="lg:hidden size-8 rounded-xl flex items-center justify-center text-[#97A0B3] hover:text-white hover:bg-[#161F2D] border border-transparent hover:border-[#2A3446] transition-colors cursor-pointer"
+            aria-label="Close navigation sidebar"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Client Switcher Card */}
-        <div className="mx-4 mt-4 mb-2">
-          <div className="flex items-center gap-3 p-3 bg-[#161C2D] rounded-xl">
-            <div className="w-10 h-10 rounded-xl bg-[#7C3AED] flex items-center justify-center text-white text-sm font-bold shrink-0">
-              {initials}
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-white truncate">{companyName}</p>
-              <p className="text-[11px] text-[#9CA3AF] truncate">
-                {dashboardData?.active_plan?.tier ? dashboardData.active_plan.tier.charAt(0).toUpperCase() + dashboardData.active_plan.tier.slice(1) + " plan" : "Free"} · Pod {dashboardData?.assigned_team?.length ? "Assigned" : "Pending"}
-              </p>
-            </div>
-          </div>
-        </div>
+        {/* Scrollable Navigation */}
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-4 space-y-5 text-left [scrollbar-width:thin] [scrollbar-color:#2A3446_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2A3446] [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-[#7FA0D6]/50">
+          {sections.map((section) => (
+            <div key={section.label} className="space-y-1.5">
+              <div className="px-3 pb-1 text-xs font-black uppercase tracking-wider text-[#7FA0D6]">
+                {section.label}
+              </div>
+              <div className="space-y-1">
+                {section.items.map((item) => {
+                  const active = isActive(item.href, location.pathname, location.search);
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      to={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[13.5px] font-bold transition-all ${
+                        active
+                          ? "bg-[#BCCCE6] text-[#0B111C] shadow-sm font-black"
+                          : "text-[#97A0B3] hover:text-white hover:bg-[#0B111C]/50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Icon className={`w-[18px] h-[18px] shrink-0 ${active ? "text-[#0B111C]" : "text-[#7FA0D6]"}`} />
+                        <span className="truncate">{item.label}</span>
+                      </div>
+                      {item.badge && (
+                        <span
+                          className={`text-[11px] px-2 py-0.5 rounded-md font-black shrink-0 ${
+                            active ? "bg-[#0B111C]/20 text-[#0B111C]" : "bg-[#7FA0D6]/20 text-[#7FA0D6]"
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
 
-        {/* Main Navigation */}
-        <nav className="flex-1 flex flex-col px-3 pt-2">
-          {/* Main Links */}
-          <div className="space-y-0.5">
-            {MAIN_NAV.map((item) => {
-              const active = isActive(item.href, location.pathname);
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  to={item.href}
-                  className={`group flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium rounded-full transition-all duration-150 mx-1 ${
-                    active
-                      ? "bg-[#E2E8F0] text-[#0E1420] font-semibold"
-                      : "text-[#9CA3AF] hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Icon className="w-[18px] h-[18px] shrink-0" strokeWidth={active ? 2.2 : 1.8} />
-                  <span className="flex-1">{item.label}</span>
-                  {item.id === "review" && dashboardData?.pending_deliverable_count > 0 && (
-                    <span className="flex items-center justify-center min-w-6 h-6 px-1.5 rounded-full bg-[#3B82F6] text-white text-[11px] font-bold">
-                      {dashboardData.pending_deliverable_count}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-
-          {/* YOUR BRAND Section */}
-          <div className="mt-6">
-            <p className="px-5 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#6B7280]">
-              Your Brand
-            </p>
-            <div className="space-y-0.5">
-              {BRAND_NAV.map((item) => {
-                const active = isActive(item.href, location.pathname);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    to={item.href}
-                    className={`group flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium rounded-full transition-all duration-150 mx-1 ${
-                      active
-                        ? "bg-[#E2E8F0] text-[#0E1420] font-semibold"
-                        : "text-[#9CA3AF] hover:text-white hover:bg-white/[0.04]"
-                    }`}
+                {/* Direct Log out action in Account section */}
+                {section.label === "Account" && (
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                    className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[13.5px] font-bold text-[#97A0B3] hover:text-white hover:bg-[#0B111C]/50 transition-all cursor-pointer"
                   >
-                    <Icon className="w-[18px] h-[18px] shrink-0" strokeWidth={active ? 2.2 : 1.8} />
-                    <span className="flex-1">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* ACCOUNT Section */}
-          <div className="mt-6">
-            <p className="px-5 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#6B7280]">
-              Account
-            </p>
-            <div className="space-y-0.5">
-              {ACCOUNT_NAV.map((item) => {
-                const active = isActive(item.href, location.pathname);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    to={item.href}
-                    className={`group flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium rounded-full transition-all duration-150 mx-1 ${
-                      active
-                        ? "bg-[#E2E8F0] text-[#0E1420] font-semibold"
-                        : "text-[#9CA3AF] hover:text-white hover:bg-white/[0.04]"
-                    }`}
-                  >
-                    <Icon className="w-[18px] h-[18px] shrink-0" strokeWidth={active ? 2.2 : 1.8} />
-                    <span className="flex-1">{item.label}</span>
-                  </Link>
-                );
-              })}
-
-              {/* Logout */}
-              <button
-                onClick={handleLogout}
-                disabled={loggingOut}
-                className="group w-full flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium rounded-full transition-all duration-150 mx-1 text-[#9CA3AF] hover:text-white hover:bg-white/[0.04] cursor-pointer"
-              >
-                <LogOut className="w-[18px] h-[18px] shrink-0" strokeWidth={1.8} />
-                <span className="flex-1 text-left">{loggingOut ? "Signing out..." : "Log out"}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          {/* Footer Card: Your Pod Lead */}
-          {dashboardData?.assigned_team && dashboardData.assigned_team.length > 0 && (
-            <div className="mx-1 mb-4 mt-4">
-              <div className="p-4 bg-[#161C2D] rounded-xl border border-white/[0.05]">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#3B82F6] to-[#8B5CF6] flex items-center justify-center text-white text-xs font-bold shrink-0">
-                    {dashboardData.assigned_team[0].name.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-white truncate">{dashboardData.assigned_team[0].name} <span className="text-[#9CA3AF] font-normal">· {dashboardData.assigned_team[0].role.includes("Lead") ? "your lead" : "your pod"}</span></p>
-                  </div>
-                </div>
-                <Link
-                  to="/portal/creative-pod"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-full border border-white/[0.12] text-[13px] font-medium text-white hover:bg-white/[0.05] transition-colors"
-                >
-                  <MessageCircle className="w-4 h-4" strokeWidth={1.8} />
-                  Message
-                </Link>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <LogOut className="w-[18px] h-[18px] shrink-0 text-[#7FA0D6]" />
+                      <span className="truncate">{loggingOut ? "Signing out..." : "Log out"}</span>
+                    </div>
+                  </button>
+                )}
               </div>
             </div>
+          ))}
+        </div>
+
+        {/* Footer: User Profile Card & Direct Sign Out */}
+        <div className="p-3.5 border-t border-[#2A3446] bg-[#0B111C]/80 shrink-0 space-y-2 text-left">
+          <div className="flex items-center gap-2.5 p-2 rounded-xl bg-[#161F2D] border border-[#2A3446]">
+            <div className="size-8 rounded-full bg-[#BCCCE6] text-[#0B111C] font-black text-xs flex items-center justify-center shrink-0 shadow-sm">
+              {initials}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h4 className="text-xs font-bold text-white truncate">{companyName}</h4>
+              <p className="text-[10px] text-[#97A0B3] font-medium truncate">
+                {dashboardData?.active_plan?.tier
+                  ? dashboardData.active_plan.tier.charAt(0).toUpperCase() +
+                    dashboardData.active_plan.tier.slice(1) +
+                    " plan"
+                  : "Growth plan"}{" "}
+                · Pod {dashboardData?.assigned_team?.length ? "Assigned" : "Pending"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#D8BF9B] hover:bg-[#D8BF9B]/10 transition-colors cursor-pointer"
+              title="Sign Out / Log Out"
+              aria-label="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Admin Escape Hatch for staff / admin roles */}
+          {(user?.role === "admin" || user?.role === "super_admin") && (
+            <Link
+              to="/admin"
+              className="w-full flex items-center justify-between text-xs font-bold text-[#7FA0D6] hover:text-white px-3 py-2 rounded-xl bg-[#0B111C] border border-[#7FA0D6]/30 hover:border-[#7FA0D6]/60 transition-colors shadow-xs"
+            >
+              <span>Admin Dashboard</span>
+              <LayoutDashboard className="w-3.5 h-3.5" />
+            </Link>
           )}
-        </nav>
-      </div>
-    </aside>
+        </div>
+      </aside>
+    </>
   );
 }

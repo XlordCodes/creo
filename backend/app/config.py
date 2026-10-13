@@ -8,7 +8,6 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
@@ -60,7 +59,13 @@ class Settings(BaseSettings):
     @classmethod
     def strip_urls(cls, v: Any) -> Any:
         if isinstance(v, str):
-            return v.strip().strip("'").strip('"')
+            normalized = v.strip().strip("'").strip('"')
+            # Hosting providers supply plain PostgreSQL URLs; both the API and
+            # Alembic use async engines and require the asyncpg dialect.
+            for prefix in ("postgres://", "postgresql://"):
+                if normalized.startswith(prefix):
+                    return "postgresql+asyncpg://" + normalized[len(prefix):]
+            return normalized
         return v
 
     # Redis & Celery
@@ -78,13 +83,15 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = Field(default="")
     GOOGLE_REDIRECT_URI: str = Field(default="https://creo-dsxr.onrender.com")
 
-    # Google Gmail SMTP
-    SMTP_SERVER: str = Field(default="smtp.gmail.com")
-    SMTP_PORT: int = Field(default=587)
-    SMTP_USERNAME: str = Field(default="creotool26@gmail.com")
-    SMTP_PASSWORD: str = Field(default="gcic myxm rrep lorb")
+    # Brevo SMTP relay; an explicit Brevo HTTPS API key takes precedence.
+    SMTP_SERVER: str = Field(default="smtp-relay.brevo.com")
+    SMTP_HOST: str = Field(default="smtp-relay.brevo.com")
+    SMTP_PORT: int = Field(default=2525)
+    SMTP_USERNAME: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
     SMTP_USE_TLS: bool = Field(default=True)
-    SMTP_FROM_EMAIL: str = Field(default="creotool26@gmail.com")
+    SMTP_USE_SSL: bool = Field(default=False)
+    SMTP_FROM_EMAIL: str = Field(default="")
 
     # Payment Gateways — Razorpay
     RAZORPAY_KEY_ID: str = Field(default="rzp_test_TO2r0YMjDZSpuC")
@@ -120,10 +127,15 @@ class Settings(BaseSettings):
     # Storage (S3-compatible: AWS S3, Supabase Storage, Cloudflare R2, MinIO)
     STORAGE_BUCKET: str = Field(default="creo")
     STORAGE_REGION: str = Field(default="auto")
+    # Disable when R2 credentials are unavailable; preserves Supabase fallback.
+    STORAGE_S3_ENABLED: bool = Field(default=True)
     AWS_ACCESS_KEY_ID: str = Field(default="")
     AWS_SECRET_ACCESS_KEY: str = Field(default="")
     STORAGE_ENDPOINT_URL: str | None = Field(default=None)  # For non-AWS S3-compatible stores (e.g. Cloudflare R2)
     PRESIGNED_URL_TTL: int = Field(default=900)  # 15 minutes
+    # Absolute origin used when serving locally stored media to the SPA (optional;
+    # derived from the request's forwarded scheme/host when empty).
+    PUBLIC_API_BASE_URL: str = Field(default="")
 
     # Supabase (Storage, Auth, Direct REST)
     SUPABASE_URL: str = Field(default="")
@@ -131,11 +143,19 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = Field(default="")
 
     # External Integrations (Instagram, Notifications)
-    INSTAGRAM_CLIENT_MODE: str = Field(default="fake")  # "fake" or "real"
+    # fake disables runtime publishing; tests mock provider I/O.
+    INSTAGRAM_CLIENT_MODE: str = Field(default="fake")
     INSTAGRAM_APP_ID: str = Field(default="")
     INSTAGRAM_APP_SECRET: str = Field(default="")
-    INSTAGRAM_REDIRECT_URI: str = Field(default="http://localhost:3000/api/auth/callback/instagram")
-    RESEND_API_KEY: str = Field(default="")
+    META_GRAPH_API_VERSION: str = Field(default="v26.0", pattern=r"^v\d+\.0$")
+    INSTAGRAM_PUBLISHING_ENABLED: bool = Field(default=False)
+    INSTAGRAM_FFPROBE_PATH: str = Field(default="ffprobe")
+    INSTAGRAM_MAX_LATENESS_MINUTES: int = Field(default=30, ge=1, le=1440)
+    INSTAGRAM_REDIRECT_URI: str = Field(default="http://localhost:5173/portal/account/instagram")
+    # HTTPS transactional delivery works without outbound SMTP ports on Render.
+    BREVO_API_KEY: str = Field(default="")
+    BREVO_FROM_EMAIL: str = Field(default="")  # Must be a verified Brevo sender.
+    BREVO_FROM_NAME: str = Field(default="Creo")
     WHATSAPP_API_TOKEN: str = Field(default="")
     WHATSAPP_PHONE_NUMBER_ID: str = Field(default="")
 
@@ -169,10 +189,41 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:
         """Resolve cross-field dependencies like SECRET_KEY fallback and CORS origins."""
+        # A deployment that supplies REDIS_URL must not silently leave background
+        # jobs pointing at localhost. Preserve explicitly configured queue stores.
+        if "CELERY_BROKER_URL" not in self.model_fields_set:
+            self.CELERY_BROKER_URL = self.REDIS_URL
+        if "CELERY_RESULT_BACKEND" not in self.model_fields_set:
+            self.CELERY_RESULT_BACKEND = self.REDIS_URL
         if not self.JWT_SECRET and self.SECRET_KEY:
             self.JWT_SECRET = self.SECRET_KEY
+        if not self.JWT_SECRET and self.ENVIRONMENT not in ("development", "test"):
+            raise ValueError("JWT_SECRET or SECRET_KEY must be configured outside development/test")
         if not self.JWT_SECRET:
             self.JWT_SECRET = "super-secret-jwt-key-creo-development-32chars"
+
+        # Reconcile SMTP configuration
+        if "SMTP_HOST" in self.model_fields_set and "SMTP_SERVER" not in self.model_fields_set:
+            self.SMTP_SERVER = self.SMTP_HOST
+        elif "SMTP_SERVER" in self.model_fields_set and "SMTP_HOST" not in self.model_fields_set:
+            self.SMTP_HOST = self.SMTP_SERVER
+        elif not self.SMTP_HOST and self.SMTP_SERVER:
+            self.SMTP_HOST = self.SMTP_SERVER
+        elif not self.SMTP_SERVER and self.SMTP_HOST:
+            self.SMTP_SERVER = self.SMTP_HOST
+
+        if "SMTP_USE_SSL" in self.model_fields_set:
+            if self.SMTP_USE_SSL and "SMTP_USE_TLS" not in self.model_fields_set:
+                self.SMTP_USE_TLS = False
+            elif not self.SMTP_USE_SSL and "SMTP_USE_TLS" not in self.model_fields_set:
+                self.SMTP_USE_TLS = True
+        elif "SMTP_PORT" in self.model_fields_set:
+            if self.SMTP_PORT == 465:
+                self.SMTP_USE_SSL = True
+                self.SMTP_USE_TLS = False
+            elif self.SMTP_PORT in (587, 2525):
+                self.SMTP_USE_SSL = False
+                self.SMTP_USE_TLS = True
 
         if self.BACKEND_CORS_ORIGINS:
             origins = self.BACKEND_CORS_ORIGINS

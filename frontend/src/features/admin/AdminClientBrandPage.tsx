@@ -1,3 +1,4 @@
+import { PublishingQueue } from "../../components/ops/PublishingPanel";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -21,17 +22,19 @@ import {
   TrendingUp,
   Eye,
   EyeOff,
+  Type,
 } from "lucide-react";
 import { fetchClientBrandProfile } from "../../lib/ops-api";
 import type { ClientBrandProfile } from "../../lib/ops-api";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
+import { CreoLoadingScreen } from "../../components/ui/CreoLoadingScreen";
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    active: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     trialing: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
-    expired: "bg-rose-50 text-rose-700 border-rose-200",
-    canceled: "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]",
+    expired: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+    canceled: "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
   };
   return (
     <span
@@ -68,7 +71,7 @@ function SectionCard({
           {title}
         </h3>
       </div>
-      <div className="p-5">{children}</div>
+      <div className="p-4 sm:p-5">{children}</div>
     </div>
   );
 }
@@ -82,10 +85,10 @@ function TagBadge({
 }) {
   const colors = {
     blue: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
-    red: "bg-rose-50 text-rose-700 border-rose-200",
-    green: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    amber: "bg-amber-50 text-amber-700 border-amber-200",
-    slate: "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]",
+    red: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+    green: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    amber: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    slate: "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
   };
   return (
     <span
@@ -96,205 +99,32 @@ function TagBadge({
   );
 }
 
-function ColorSwatch({ color }: { color: string }) {
-  const isValid = typeof color === "string" && color.startsWith("#");
+function ColorSwatch({ color, index }: { color: string | any; index?: number }) {
+  const labels = [
+    "Primary Brand",
+    "Accent / Secondary",
+    "Surface / Canvas",
+    "Glow / Highlight",
+  ];
+  const hex = typeof color === "string" ? color : (color?.hex || color?.color || "#0F172A");
+  const name = typeof color === "object" && color?.name ? color.name : (index !== undefined && labels[index] ? labels[index] : `Accent Tone ${(index ?? 0) + 1}`);
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-[#2A3446] bg-[#0B111C] px-2.5 py-1.5">
+    <div className="flex items-center gap-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 min-w-[130px] shadow-xs">
       <div
-        className="size-5 rounded-md border border-[#2A3446] shadow-inner"
-        style={{ backgroundColor: isValid ? color : "#2B7BC4" }}
+        className="size-6 rounded-lg border border-white/20 shadow-inner shrink-0"
+        style={{ backgroundColor: hex }}
       />
-      <span className="font-mono text-[11px] font-bold text-[#F1F5F9]">
-        {color}
-      </span>
+      <div className="flex flex-col min-w-0">
+        <span className="text-[10px] font-semibold text-[#97A0B3] truncate">
+          {name}
+        </span>
+        <span className="font-mono text-xs font-bold text-white uppercase truncate">
+          {hex}
+        </span>
+      </div>
     </div>
   );
 }
-
-function buildDefaultClientProfile(id: string): ClientBrandProfile {
-  const cleanName = id ? id.replace(/^client-/, "").replace(/[-_]/g, " ") : "Client";
-  const capitalized = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
-  return {
-    client_id: id || "client-default",
-    full_name: `${capitalized} Team`,
-    company_name: capitalized,
-    email: `contact@${id ? id.toLowerCase().replace(/[^a-z0-9]/g, "") : "client"}.com`,
-    account_status: "active",
-    onboarding_stage: 5,
-    onboarding_completed_at: new Date().toISOString(),
-    instagram_username: id ? id.toLowerCase().replace(/[^a-z0-9]/g, "") : "client",
-    timezone: "UTC",
-    brand_summary: "Brand profile and creative design direction.",
-    brand_dna_source: "portal",
-    brand_dna_version: 1,
-    created_at: new Date().toISOString(),
-    subscription: {
-      plan_name: "Growth Tier",
-      plan_display_name: "Creative Retainer",
-      status: "active",
-      monthly_price: 25000,
-      started_at: new Date().toISOString(),
-    },
-    assigned_team: [
-      { id: "lead-1", name: "Creative Lead", email: "lead@creo.agency", role_key: "lead", role_label: "Pod Lead", is_primary: true },
-    ],
-    task_stats: { total: 0, pending: 0, completed: 0, in_review: 0 },
-    quota_usage: [
-      { kind: "Reels", quota: 4, used: 0 },
-      { kind: "Stories", quota: 8, used: 0 },
-      { kind: "Posts", quota: 8, used: 0 },
-    ],
-    brand_dna: {
-      positioning: "Design-led visual storytelling and digital content system.",
-      tone: {
-        voice_words: ["Modern", "Authentic", "Engaging"],
-        anti_voice_words: ["Generic", "Cluttered"],
-        writing_rules: [
-          "Maintain consistent brand typography and tone across all content.",
-        ],
-      },
-      visual_direction: {
-        primary_colors: ["#0F172A", "#2563EB", "#F8FAFC"],
-        styles: ["Clean Editorial", "High-Resolution Render"],
-      },
-      content_pillars: [],
-      audience_segments: [],
-      production: {
-        feasible_formats: ["Reel", "Story", "Post"],
-        default_reel_style: "Dynamic Shortform",
-      },
-    },
-  };
-}
-
-const MOCK_CLIENT_PROFILES: Record<string, ClientBrandProfile> = {
-  "client-ryze": {
-    client_id: "client-ryze",
-    full_name: "Ryze Brand Team",
-    company_name: "Ryze",
-    email: "sushmitaa1407@gmail.com",
-    account_status: "active",
-    onboarding_stage: 5,
-    onboarding_completed_at: "2024-01-15T10:00:00Z",
-    instagram_username: "ryzesocial",
-    timezone: "IST (UTC+5:30)",
-    brand_summary: "DTC functional wellness, clean organic nutrition, and mushroom superfood coffee rituals crafted for sustained focus and vitality.",
-    brand_dna_source: "onboarding",
-    brand_dna_version: 1,
-    created_at: "2024-01-10T10:00:00Z",
-    subscription: {
-      plan_name: "starter",
-      plan_display_name: "Starter Growth Retainer",
-      status: "active",
-      monthly_price: 25000,
-      started_at: "2024-01-10T10:00:00Z",
-    },
-    assigned_team: [
-      { id: "lo-1", name: "Lena Ortiz", email: "lena.ortiz@creo.agency", role_key: "lead", role_label: "Lead Video Producer (Pod C)", is_primary: true },
-      { id: "ok-1", name: "Omar K.", email: "omar.k@creo.agency", role_key: "motion", role_label: "Motion & Reels Specialist", is_primary: false },
-      { id: "lv-1", name: "Lena V.", email: "lena.v@creo.agency", role_key: "copy", role_label: "Senior Copywriter", is_primary: false },
-      { id: "tp-1", name: "Theo P.", email: "theo.p@creo.agency", role_key: "graphic", role_label: "Graphic Designer", is_primary: false },
-    ],
-    task_stats: { total: 22, pending: 3, completed: 17, in_review: 2 },
-    quota_usage: [
-      { kind: "Reels", quota: 4, used: 4 },
-      { kind: "Stories", quota: 10, used: 8 },
-      { kind: "Posts", quota: 8, used: 6 },
-    ],
-    brand_dna: {
-      positioning: "Clean functional superfood rituals crafted for sustained daily focus, holistic gut health & sustained energy.",
-      tone: {
-        voice_words: ["Vitality", "High Energy", "Clean Aesthetics", "Holistic"],
-        anti_voice_words: ["Clinical", "Gimmicky", "Aggressive", "Sedentary"],
-        writing_rules: [
-          "Lead with immediate sensory morning rituals and all-day sustained energy.",
-          "Highlight clean organic adaptogenic ingredients (Lion's Mane, Reishi, Cordyceps) with zero crash.",
-          "Keep aesthetic warm, grounded, and minimalist with modern typography."
-        ],
-      },
-      visual_direction: {
-        primary_colors: ["#166534", "#FEFCE8", "#0F172A", "#F59E0B"],
-        styles: ["Organic Minimalism", "Warm Natural Sunlight", "Kinetic Hook Video Edits", "Modern Editorial Typography"],
-      },
-      content_pillars: [
-        { name: "Morning Rituals & Habit Stacking", stage: "reach", angle: "Aesthetic POV reels showing the froth, aroma, and mindful start to the day." },
-        { name: "Mushroom Science & Clean Focus", stage: "authority", angle: "Scientific breakdowns of adaptogens vs jittery caffeine spikes with infographic carousels." },
-        { name: "Customer Transformations & Taste Tests", stage: "conversion", angle: "Real community reviews, barista recipe variations, and iced wellness pairings." },
-      ],
-      audience_segments: [
-        { name: "Conscious Achievers & High Performers", description: "Founders, creatives, and athletes looking for sustained mental clarity without afternoon jitters or caffeine crashes." },
-        { name: "Holistic Wellness Enthusiasts", description: "Health-focused consumers prioritizing organic gut wellness, adaptogenic herbs, and mindful daily self-care rituals." },
-      ],
-      production: {
-        feasible_formats: ["Reel", "Story", "Post"],
-        default_reel_style: "Warm Ambient Natural Light & Kinetic Hook Beat Cuts",
-      },
-    },
-  },
-  "ryze": {
-    client_id: "ryze",
-    full_name: "Ryze Brand Team",
-    company_name: "Ryze",
-    email: "sushmitaa1407@gmail.com",
-    account_status: "active",
-    onboarding_stage: 5,
-    onboarding_completed_at: "2024-01-15T10:00:00Z",
-    instagram_username: "ryzesocial",
-    timezone: "IST (UTC+5:30)",
-    brand_summary: "DTC functional wellness, clean organic nutrition, and mushroom superfood coffee rituals crafted for sustained focus and vitality.",
-    brand_dna_source: "onboarding",
-    brand_dna_version: 1,
-    created_at: "2024-01-10T10:00:00Z",
-    subscription: {
-      plan_name: "starter",
-      plan_display_name: "Starter Growth Retainer",
-      status: "active",
-      monthly_price: 25000,
-      started_at: "2024-01-10T10:00:00Z",
-    },
-    assigned_team: [
-      { id: "lo-1", name: "Lena Ortiz", email: "lena.ortiz@creo.agency", role_key: "lead", role_label: "Lead Video Producer (Pod C)", is_primary: true },
-      { id: "ok-1", name: "Omar K.", email: "omar.k@creo.agency", role_key: "motion", role_label: "Motion & Reels Specialist", is_primary: false },
-      { id: "lv-1", name: "Lena V.", email: "lena.v@creo.agency", role_key: "copy", role_label: "Senior Copywriter", is_primary: false },
-      { id: "tp-1", name: "Theo P.", email: "theo.p@creo.agency", role_key: "graphic", role_label: "Graphic Designer", is_primary: false },
-    ],
-    task_stats: { total: 22, pending: 3, completed: 17, in_review: 2 },
-    quota_usage: [
-      { kind: "Reels", quota: 4, used: 4 },
-      { kind: "Stories", quota: 10, used: 8 },
-      { kind: "Posts", quota: 8, used: 6 },
-    ],
-    brand_dna: {
-      positioning: "Clean functional superfood rituals crafted for sustained daily focus, holistic gut health & sustained energy.",
-      tone: {
-        voice_words: ["Vitality", "High Energy", "Clean Aesthetics", "Holistic"],
-        anti_voice_words: ["Clinical", "Gimmicky", "Aggressive", "Sedentary"],
-        writing_rules: [
-          "Lead with immediate sensory morning rituals and all-day sustained energy.",
-          "Highlight clean organic adaptogenic ingredients (Lion's Mane, Reishi, Cordyceps) with zero crash.",
-          "Keep aesthetic warm, grounded, and minimalist with modern typography."
-        ],
-      },
-      visual_direction: {
-        primary_colors: ["#166534", "#FEFCE8", "#0F172A", "#F59E0B"],
-        styles: ["Organic Minimalism", "Warm Natural Sunlight", "Kinetic Hook Video Edits", "Modern Editorial Typography"],
-      },
-      content_pillars: [
-        { name: "Morning Rituals & Habit Stacking", stage: "reach", angle: "Aesthetic POV reels showing the froth, aroma, and mindful start to the day." },
-        { name: "Mushroom Science & Clean Focus", stage: "authority", angle: "Scientific breakdowns of adaptogens vs jittery caffeine spikes with infographic carousels." },
-        { name: "Customer Transformations & Taste Tests", stage: "conversion", angle: "Real community reviews, barista recipe variations, and iced wellness pairings." },
-      ],
-      audience_segments: [
-        { name: "Conscious Achievers & High Performers", description: "Founders, creatives, and athletes looking for sustained mental clarity without afternoon jitters or caffeine crashes." },
-        { name: "Holistic Wellness Enthusiasts", description: "Health-focused consumers prioritizing organic gut wellness, adaptogenic herbs, and mindful daily self-care rituals." },
-      ],
-      production: {
-        feasible_formats: ["Reel", "Story", "Post"],
-        default_reel_style: "Warm Ambient Natural Light & Kinetic Hook Beat Cuts",
-      },
-    },
-  },
-};
 
 export function AdminClientBrandPage() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -308,73 +138,90 @@ export function AdminClientBrandPage() {
     enabled: !!clientId,
   });
 
-  const normalizedId = (clientId || "").toLowerCase().trim();
-  const cleanId = normalizedId.replace(/^client-/, "");
-
-  const fallbackKey = (() => {
-    if (normalizedId.includes("ryze") || cleanId.includes("ryze") || normalizedId.includes("sushmitaa")) {
-      return "client-ryze";
-    }
-    if (MOCK_CLIENT_PROFILES[clientId || ""]) return clientId!;
-    return "default";
-  })();
-
-  const hasValidServerDna =
-    serverClient &&
-    serverClient.brand_dna &&
-    typeof serverClient.brand_dna === "object" &&
-    Object.keys(serverClient.brand_dna).length > 0;
-
-  const client: ClientBrandProfile =
-    hasValidServerDna
-      ? serverClient!
-      : (MOCK_CLIENT_PROFILES[fallbackKey] || buildDefaultClientProfile(clientId || "client"));
-
-  if (isLoading && !serverClient && !client) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex flex-col items-center gap-3">
-          <div className="size-8 animate-spin rounded-full border-3 border-[#2B7BC4] border-t-transparent" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#97A0B3]">
-            Loading Brand Profile...
-          </span>
-        </div>
-      </div>
-    );
+  if (isLoading || !serverClient) {
+    return <CreoLoadingScreen label="Verifying session..." sublabel="Loading Brand DNA" />;
   }
 
-  const dna = client.brand_dna || {};
-  const tone = (dna.tone || {}) as Record<string, any>;
-  const voiceWords: string[] = Array.isArray(tone.voice_words)
-    ? tone.voice_words
-    : [];
+  const client: ClientBrandProfile = serverClient;
+
+  const dna = (client.brand_dna && typeof client.brand_dna === "object") ? client.brand_dna : {};
+  const tone = (typeof dna.tone === "object" && dna.tone !== null) ? (dna.tone as Record<string, any>) : {};
+  const voiceWords: string[] = Array.isArray(tone.voice_words) && tone.voice_words.length > 0
+    ? tone.voice_words.map((w: any) => (typeof w === "string" ? w : (w?.word || w?.name || String(w))))
+    : Array.isArray(dna.tone_keywords) && dna.tone_keywords.length > 0
+      ? dna.tone_keywords.map((w: any) => (typeof w === "string" ? w : (w?.word || w?.name || String(w))))
+      : typeof dna.tone === "string" && dna.tone.trim()
+        ? dna.tone.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : [];
   const antiVoice: string[] = Array.isArray(tone.anti_voice_words)
-    ? tone.anti_voice_words
+    ? tone.anti_voice_words.map((w: any) => (typeof w === "string" ? w : (w?.word || w?.name || String(w))))
     : [];
   const writingRules: string[] = Array.isArray(tone.writing_rules)
-    ? tone.writing_rules
+    ? tone.writing_rules.map((r: any) => (typeof r === "string" ? r : (r?.rule || r?.text || String(r))))
     : [];
-  const audiences: any[] = Array.isArray(dna.audience_segments)
+  const audiences: any[] = Array.isArray(dna.audience_segments) && dna.audience_segments.length > 0
     ? dna.audience_segments
-    : [];
+    : typeof dna.target_audience === "string" && dna.target_audience
+      ? [{ name: "Target Audience", description: dna.target_audience }]
+      : [];
   const pillars: any[] = Array.isArray(dna.content_pillars)
     ? dna.content_pillars
     : [];
-  const visualDir = (dna.visual_direction || {}) as Record<string, any>;
-  const palette: string[] = Array.isArray(visualDir.primary_colors)
-    ? visualDir.primary_colors
-    : Array.isArray(dna.palette)
-      ? dna.palette
-      : [];
+  const visualDir = (typeof dna.visual_direction === "object" && dna.visual_direction !== null)
+    ? (dna.visual_direction as Record<string, any>)
+    : {};
+  const isPaid = !!(
+    (client.subscription && ["active", "trialing", "paid"].includes(client.subscription.status.toLowerCase())) ||
+    ((client.subscription?.monthly_price ?? 0) > 0)
+  );
+  const isOnboarded = !!(
+    client.onboarding_completed_at ||
+    (typeof client.onboarding_stage === "number" && client.onboarding_stage >= 4)
+  );
+  const lifecycleStatus: "not_paid_not_onboarded" | "paid_not_onboarded" | "onboarded" =
+    isOnboarded
+      ? "onboarded"
+      : isPaid
+        ? "paid_not_onboarded"
+        : "not_paid_not_onboarded";
+
+  const CANONICAL_PALETTE = ["#161F2D", "#7FA0D6", "#3E5A74", "#BCCCE6"];
+  const rawPalette: any[] = Array.isArray(dna.palette) && dna.palette.length > 0
+    ? dna.palette
+    : Array.isArray(visualDir.primary_colors) && visualDir.primary_colors.length > 0
+      ? visualDir.primary_colors
+      : CANONICAL_PALETTE;
+
+  const extractedPalette: string[] = [];
+  if (Array.isArray(rawPalette)) {
+    rawPalette.forEach((item: any) => {
+      const hex = typeof item === "string" ? item.trim() : (item?.hex || item?.color || "").trim();
+      if (hex && hex.startsWith("#")) {
+        extractedPalette.push(hex.toUpperCase());
+      }
+    });
+  }
+  const palette: string[] = [0, 1, 2, 3].map((i) => extractedPalette[i] || CANONICAL_PALETTE[i] || "#161F2D");
+  if (extractedPalette.length > 4) {
+    for (let i = 4; i < extractedPalette.length; i++) {
+      if (extractedPalette[i]) {
+        palette.push(extractedPalette[i]!);
+      }
+    }
+  }
   const visualStyles: string[] = Array.isArray(visualDir.styles)
-    ? visualDir.styles
+    ? visualDir.styles.map((s: any) => (typeof s === "string" ? s : (s?.name || String(s))))
     : [];
-  const doNotRules: string[] = Array.isArray(dna.do_not) ? dna.do_not : [];
-  const production = (dna.production || {}) as Record<string, any>;
+  const doNotRules: string[] = Array.isArray(dna.do_not)
+    ? dna.do_not.map((r: any) => (typeof r === "string" ? r : (r?.rule || r?.text || String(r))))
+    : [];
+  const production = (typeof dna.production === "object" && dna.production !== null)
+    ? (dna.production as Record<string, any>)
+    : {};
   const formats: string[] = Array.isArray(production.feasible_formats)
-    ? production.feasible_formats
+    ? production.feasible_formats.map((f: any) => (typeof f === "string" ? f : (f?.name || String(f))))
     : Array.isArray(dna.recommended_formats)
-      ? dna.recommended_formats
+      ? dna.recommended_formats.map((f: any) => (typeof f === "string" ? f : (f?.name || String(f))))
       : [];
   const reelStyle: string =
     production.default_reel_style || "talking_head";
@@ -382,10 +229,10 @@ export function AdminClientBrandPage() {
     dna.positioning || dna.summary_line || client.brand_summary || "";
 
   const stageColors: Record<string, string> = {
-    reach: "bg-sky-100 text-sky-700 border-sky-200",
-    authority: "bg-violet-100 text-violet-700 border-violet-200",
-    conversion: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    nurture: "bg-amber-100 text-amber-700 border-amber-200",
+    reach: "bg-sky-500/15 text-sky-400 border border-sky-500/30",
+    authority: "bg-violet-500/15 text-violet-400 border border-violet-500/30",
+    conversion: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30",
+    nurture: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
   };
 
   return (
@@ -395,7 +242,7 @@ export function AdminClientBrandPage() {
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="flex-1 px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-5 animate-page-in"
+        className="flex-1 px-3.5 sm:px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-5 animate-page-in"
       >
         {/* ── Back Navigation ────────────────────────────────── */}
         <div className="flex items-center gap-2 text-xs">
@@ -418,122 +265,187 @@ export function AdminClientBrandPage() {
         </div>
 
       {/* ── Client Header Hero ─────────────────────────────── */}
-      <div className="rounded-2xl border border-[#2A3446]/80 bg-gradient-to-br from-[#0D2137] to-[#1E609A] p-6 sm:p-8 text-white relative overflow-hidden">
-        {/* Ambient glow */}
-        <div className="pointer-events-none absolute -top-20 -right-20 size-56 rounded-full bg-sky-400/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-16 -left-16 size-44 rounded-full bg-[#7FA0D6]/150/15 blur-2xl" />
+      {(() => {
+        const displayName = client.company_name || client.full_name || "Client";
+        const initials = displayName
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((w) => w[0])
+          .slice(0, 2)
+          .join("")
+          .toUpperCase() || "C";
 
-        <div className="relative z-10 flex flex-col sm:flex-row sm:items-start gap-5">
-          {/* Avatar */}
-          <div className="size-16 sm:size-20 rounded-2xl bg-gradient-to-br from-[#2B7BC4] to-[#0EA5E9] border-2 border-white/30 flex items-center justify-center text-2xl sm:text-3xl font-black shadow-lg shadow-blue-500/30 shrink-0">
-            {(client.full_name?.[0] || "C").toUpperCase()}
-          </div>
+        return (
+          <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-5 sm:p-7 text-white relative overflow-hidden shadow-xl shadow-black/40">
+            {/* Subtle ambient glow */}
+            <div className="pointer-events-none absolute -top-24 -right-24 size-72 rounded-full bg-blue-600/10 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-20 -left-20 size-60 rounded-full bg-indigo-600/10 blur-3xl" />
 
-          <div className="flex-1 min-w-0 space-y-2">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-xl sm:text-2xl font-black tracking-tight">
-                {client.company_name || client.full_name || "Client"}
-              </h1>
-              {client.subscription && (
-                <StatusBadge status={client.subscription.status} />
-              )}
-              {client.onboarding_stage >= 5 && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200 text-[10px] font-bold border border-emerald-400/30">
-                  <Sparkles className="size-3" /> Onboarded
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-blue-100/80">
-              <span className="inline-flex items-center gap-1.5">
-                <Mail className="size-3 text-blue-300" />
-                {client.email}
-              </span>
-              {client.instagram_username && (
-                <span className="inline-flex items-center gap-1.5">
-                  <Instagram className="size-3 text-pink-300" />@
-                  {client.instagram_username}
-                </span>
-              )}
-              {client.subscription?.plan_display_name && (
-                <span className="inline-flex items-center gap-1.5">
-                  <Shield className="size-3 text-cyan-300" />
-                  {client.subscription.plan_display_name}
-                  {client.subscription.monthly_price
-                    ? ` · ₹${client.subscription.monthly_price.toLocaleString()}/mo`
-                    : ""}
-                </span>
-              )}
-              {client.timezone && (
-                <span className="inline-flex items-center gap-1.5">
-                  <Globe className="size-3 text-slate-300" />
-                  {client.timezone}
-                </span>
-              )}
-            </div>
-
-            {positioning && (
-              <p className="text-sm text-blue-100/90 leading-relaxed mt-1 max-w-2xl italic">
-                &ldquo;{positioning}&rdquo;
-              </p>
-            )}
-          </div>
-
-          {/* Quick Stats */}
-          <div className="flex gap-2 shrink-0">
-            {[
-              {
-                label: "Total Tasks",
-                value: client.task_stats.total,
-                icon: CheckSquare,
-              },
-              {
-                label: "Pending",
-                value: client.task_stats.pending,
-                icon: Clock,
-              },
-              {
-                label: "Completed",
-                value: client.task_stats.completed,
-                icon: TrendingUp,
-              },
-            ].map((s) => (
-              <div
-                key={s.label}
-                className="text-center px-3 py-2 rounded-xl bg-[#161F2D]/10 border border-white/15 backdrop-blur-sm"
-              >
-                <s.icon className="size-4 mx-auto mb-1 text-cyan-300" />
-                <p className="text-lg font-black">{s.value}</p>
-                <p className="text-[9px] font-semibold uppercase tracking-wider text-blue-200/70">
-                  {s.label}
-                </p>
+            <div className="relative z-10 flex flex-col sm:flex-row sm:items-start gap-4 sm:gap-6">
+              {/* Avatar with authentic initials */}
+              <div className="size-16 sm:size-20 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 border border-blue-400/30 flex items-center justify-center text-2xl sm:text-3xl font-black text-white shadow-lg shadow-blue-900/40 shrink-0">
+                {initials}
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Quick Action Links */}
-        <div className="relative z-10 flex flex-wrap gap-2 mt-5 pt-4 border-t border-white/15">
-          <Link
-            to="/admin/tasks"
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#161F2D]/15 hover:bg-[#161F2D]/25 text-white text-[11px] font-bold border border-white/20 transition-all"
-          >
-            <CheckSquare className="size-3" /> View Tasks
-          </Link>
-          <Link
-            to="/admin/calendar"
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#161F2D]/15 hover:bg-[#161F2D]/25 text-white text-[11px] font-bold border border-white/20 transition-all"
-          >
-            <CalendarDays className="size-3" /> Content Calendar
-          </Link>
-          <Link
-            to="/admin/deliverables"
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#161F2D]/15 hover:bg-[#161F2D]/25 text-white text-[11px] font-bold border border-white/20 transition-all"
-          >
-            <FileStack className="size-3" /> Deliverables
-          </Link>
-        </div>
-      </div>
+              <div className="flex-1 min-w-0 space-y-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+                    {displayName}
+                  </h1>
+                  {lifecycleStatus === "onboarded" ? (
+                    <>
+                      {client.subscription && (
+                        <StatusBadge status={client.subscription.status} />
+                      )}
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
+                        <Sparkles className="size-3" /> Onboarded
+                      </span>
+                    </>
+                  ) : lifecycleStatus === "paid_not_onboarded" ? (
+                    <>
+                      {client.subscription && (
+                        <StatusBadge status={client.subscription.status} />
+                      )}
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400 text-[10px] font-bold border border-sky-500/30">
+                        user paid but not onboarded
+                      </span>
+                    </>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[10px] font-bold border border-amber-500/30">
+                      user not paid and not onboarded yet
+                    </span>
+                  )}
+                </div>
+
+                {/* Status Alert Banner for Un-onboarded Clients */}
+                {lifecycleStatus === "not_paid_not_onboarded" && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 flex items-start gap-3 my-2">
+                    <AlertTriangle className="size-5 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-amber-300">
+                        user not paid and not onboarded yet
+                      </p>
+                      <p className="text-[11px] text-[#C5CEE0] leading-relaxed">
+                        This client has registered/logged in but has not completed payment or the brand onboarding intake questionnaire. Mock deliverables and assets are disabled.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {lifecycleStatus === "paid_not_onboarded" && (
+                  <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3.5 flex items-start gap-3 my-2">
+                    <AlertTriangle className="size-5 text-sky-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-sky-300">
+                        user paid but not onboarded
+                      </p>
+                      <p className="text-[11px] text-[#C5CEE0] leading-relaxed">
+                        Subscription payment is verified and active. However, the client has not finalized their brand onboarding questionnaire yet. Brand DNA and creative pod assignment are pending.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-[#97A0B3]">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-[#F1F5F9]">
+                    <Mail className="size-3.5 text-[#7FA0D6]" />
+                    {client.email}
+                  </span>
+                  {client.instagram_username && (
+                    <span className="inline-flex items-center gap-1.5 font-medium text-[#F1F5F9]">
+                      <Instagram className="size-3.5 text-pink-400" />@
+                      {client.instagram_username}
+                    </span>
+                  )}
+                  {client.subscription?.plan_display_name && (
+                    <span className="inline-flex items-center gap-1.5 font-medium text-[#F1F5F9]">
+                      <Shield className="size-3.5 text-cyan-400" />
+                      {client.subscription.plan_display_name}
+                      {client.subscription.monthly_price
+                        ? ` · ₹${Number(client.subscription.monthly_price).toLocaleString()}/mo`
+                        : ""}
+                    </span>
+                  )}
+                  {client.timezone && (
+                    <span className="inline-flex items-center gap-1.5 font-medium text-[#F1F5F9]">
+                      <Globe className="size-3.5 text-emerald-400" />
+                      {client.timezone}
+                    </span>
+                  )}
+                </div>
+
+                {positioning && (
+                  <div className="mt-3 p-3.5 rounded-xl border border-[#2A3446] bg-[#0B111C]/80">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] mb-1">
+                      Brand Positioning & Mission
+                    </p>
+                    <p className="text-xs sm:text-sm text-[#F1F5F9] leading-relaxed italic">
+                      &ldquo;{positioning}&rdquo;
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Quick Stats */}
+              <div className="flex flex-wrap gap-2.5 shrink-0 w-full sm:w-auto justify-center sm:justify-end mt-3 sm:mt-0">
+                {[
+                  {
+                    label: "Total Tasks",
+                    value: isOnboarded ? (client.task_stats?.total ?? 0) : 0,
+                    icon: CheckSquare,
+                    color: "text-[#7FA0D6]",
+                  },
+                  {
+                    label: "Pending",
+                    value: isOnboarded ? (client.task_stats?.pending ?? 0) : 0,
+                    icon: Clock,
+                    color: "text-amber-400",
+                  },
+                  {
+                    label: "Completed",
+                    value: isOnboarded ? (client.task_stats?.completed ?? 0) : 0,
+                    icon: TrendingUp,
+                    color: "text-emerald-400",
+                  },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="text-center px-3.5 py-2.5 rounded-xl bg-[#0B111C] border border-[#2A3446] flex-1 min-w-[80px]"
+                  >
+                    <s.icon className={`size-4 mx-auto mb-1 ${s.color}`} />
+                    <p className="text-lg font-black text-white">{s.value}</p>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-[#97A0B3]">
+                      {s.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Action Links */}
+            <div className="relative z-10 flex flex-wrap gap-2 mt-4 sm:mt-5 pt-3 sm:pt-4 border-t border-[#2A3446]">
+              <Link
+                to="/admin/tasks"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#0B111C] hover:bg-[#161F2D] text-[#F1F5F9] text-[11px] font-bold border border-[#2A3446] transition-all"
+              >
+                <CheckSquare className="size-3 text-[#7FA0D6]" /> View Tasks
+              </Link>
+              <Link
+                to="/admin/calendar"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#0B111C] hover:bg-[#161F2D] text-[#F1F5F9] text-[11px] font-bold border border-[#2A3446] transition-all"
+              >
+                <CalendarDays className="size-3 text-cyan-400" /> Content Calendar
+              </Link>
+              <Link
+                to="/admin/deliverables"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#0B111C] hover:bg-[#161F2D] text-[#F1F5F9] text-[11px] font-bold border border-[#2A3446] transition-all"
+              >
+                <FileStack className="size-3 text-emerald-400" /> Deliverables
+              </Link>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Brand DNA Grid ─────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -573,7 +485,7 @@ export function AdminClientBrandPage() {
                   {writingRules.map((r, i) => (
                     <li
                       key={i}
-                      className="text-xs text-[#F1F5F9] pl-3 relative before:content-[''] before:absolute before:left-0 before:top-1.5 before:size-1.5 before:rounded-full before:bg-[#2B7BC4]"
+                      className="text-xs text-[#F1F5F9] pl-3 relative before:content-[''] before:absolute before:left-0 before:top-1.5 before:size-1.5 before:rounded-full before:bg-[#7FA0D6]"
                     >
                       {r}
                     </li>
@@ -600,15 +512,45 @@ export function AdminClientBrandPage() {
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] mb-2">
                   Brand Color Palette
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  {palette.map((c) => (
-                    <ColorSwatch key={c} color={c} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {palette.map((c, idx) => (
+                    <ColorSwatch key={`${c}-${idx}`} color={c} index={idx} />
                   ))}
                 </div>
               </div>
             )}
+            {/* Typography Pairing */}
+            <div className="pt-2 border-t border-[#2A3446]/60">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] mb-2 flex items-center gap-1.5">
+                <Type className="size-3 text-[#7FA0D6]" /> Typography Pairing & System
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="bg-[#0B111C] border border-[#2A3446] rounded-xl p-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] block mb-1">
+                    Headlines / Display
+                  </span>
+                  <p className="text-sm font-bold text-white">
+                    {dna.typography?.headline || visualDir.headings_font || "Inter Display · 700 Bold"}
+                  </p>
+                  <p className="text-[11px] text-[#97A0B3] mt-0.5">
+                    Bold, punchy titles optimized for feed stops.
+                  </p>
+                </div>
+                <div className="bg-[#0B111C] border border-[#2A3446] rounded-xl p-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] block mb-1">
+                    Body Copy / Subtitles
+                  </span>
+                  <p className="text-sm font-normal text-white">
+                    {dna.typography?.body || visualDir.body_font || "Inter Sans · 400 Regular"}
+                  </p>
+                  <p className="text-[11px] text-[#97A0B3] mt-0.5">
+                    High legibility for reel captions and carousel body copy.
+                  </p>
+                </div>
+              </div>
+            </div>
             {visualStyles.length > 0 && (
-              <div>
+              <div className="pt-2 border-t border-[#2A3446]/60">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] mb-2">
                   Visual Styles
                 </p>
@@ -647,7 +589,7 @@ export function AdminClientBrandPage() {
                     </p>
                   )}
                   {typeof a === "object" && a.core_pain_point && (
-                    <p className="text-[11px] text-rose-600 mt-1.5 font-medium">
+                    <p className="text-[11px] text-rose-400 mt-1.5 font-medium">
                       <strong>Pain Point:</strong> {a.core_pain_point}
                     </p>
                   )}
@@ -720,12 +662,12 @@ export function AdminClientBrandPage() {
               {doNotRules.map((r, i) => (
                 <div
                   key={i}
-                  className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50/50 p-3"
+                  className="flex items-start gap-2.5 rounded-xl border border-rose-500/25 bg-rose-500/10 p-3"
                 >
-                  <span className="text-rose-500 font-bold text-xs mt-0.5 shrink-0">
+                  <span className="text-rose-400 font-bold text-xs mt-0.5 shrink-0">
                     ✕
                   </span>
-                  <p className="text-xs text-rose-800 leading-relaxed">{r}</p>
+                  <p className="text-xs text-rose-200 leading-relaxed">{r}</p>
                 </div>
               ))}
             </div>
@@ -762,7 +704,7 @@ export function AdminClientBrandPage() {
             </div>
 
             {/* Quota usage */}
-            {client.quota_usage.length > 0 && (
+            {Array.isArray(client.quota_usage) && client.quota_usage.length > 0 && (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] mb-2">
                   Monthly Quota Usage
@@ -783,9 +725,9 @@ export function AdminClientBrandPage() {
                           / {q.quota}
                         </span>
                       </p>
-                      <div className="w-full h-1.5 bg-slate-200 rounded-full mt-1.5 overflow-hidden">
+                      <div className="w-full h-1.5 bg-[#0B111C] border border-[#2A3446] rounded-full mt-1.5 overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-[#2B7BC4] to-[#0EA5E9] rounded-full transition-all"
+                          className="h-full bg-gradient-to-r from-blue-500 to-[#7FA0D6] rounded-full transition-all"
                           style={{
                             width: `${Math.min(100, q.quota > 0 ? (q.used / q.quota) * 100 : 0)}%`,
                           }}
@@ -801,9 +743,9 @@ export function AdminClientBrandPage() {
       </div>
 
       {/* ── Assigned Pod Team ──────────────────────────────── */}
-      {client.assigned_team.length > 0 && (
+      {Array.isArray(client.assigned_team) && client.assigned_team.length > 0 && (
         <SectionCard title="Assigned Creative Pod" icon={Users}>
-          <div className="overflow-x-auto -mx-1">
+          <div className="overflow-x-auto -mx-1 -mr-2">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] border-b border-[#2A3446]">
@@ -813,7 +755,7 @@ export function AdminClientBrandPage() {
                   <th className="pb-2.5 pr-1 text-center">Primary</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-[#2A3446]">
                 {client.assigned_team.map((m) => (
                   <tr key={m.id} className="hover:bg-[#0B111C]/50 transition-colors">
                     <td className="py-3 pl-1 pr-3">
@@ -832,7 +774,7 @@ export function AdminClientBrandPage() {
                     <td className="py-3 pr-3 text-[#97A0B3]">{m.email}</td>
                     <td className="py-3 pr-1 text-center">
                       {m.is_primary && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
                           Primary
                         </span>
                       )}
@@ -846,7 +788,7 @@ export function AdminClientBrandPage() {
       )}
 
       {/* ── Brand DNA Meta Footer ──────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 py-3 px-4 rounded-xl border border-[#2A3446] bg-[#0B111C]/50 text-[10px] text-[#97A0B3] font-medium">
+      <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center justify-between gap-2 sm:gap-3 py-3 px-3 sm:px-4 rounded-xl border border-[#2A3446] bg-[#0B111C]/50 text-[10px] text-[#97A0B3] font-medium">
         <div className="flex items-center gap-4">
           <span>
             DNA Source:{" "}
@@ -868,9 +810,10 @@ export function AdminClientBrandPage() {
           )}
         </div>
         <span className="text-[9px] uppercase tracking-wider text-[#97A0B3]">
-          Client ID: {client.client_id.slice(0, 8)}
+          Client ID: {(client.client_id || "").slice(0, 8)}
         </span>
       </div>
+        <PublishingQueue clientId={clientId} />
       </motion.main>
     </div>
   );

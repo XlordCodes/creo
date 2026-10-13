@@ -3,13 +3,13 @@ r"""Deliverable state machine — the ONLY place deliverable.status is ever assi
 Architecture rule: No other file in the codebase may assign `deliverable.status`.
 grep: grep -rn 'deliverable\.status\s*=' app/ --include='*.py' | grep -v deliverable_state
 
-State graph (12 statuses, 14 legal edges):
+State graph (12 statuses):
   draft → in_production, archived
   in_production → pending_qa, archived
-  pending_qa → qa_rejected, pending_approval
-  qa_rejected → in_production
+  pending_qa → qa_rejected, pending_approval, archived (superseded by a newer upload)
+  qa_rejected → in_production, archived (superseded by a newer upload)
   pending_approval → revision_requested, approved
-  revision_requested → in_production
+  revision_requested → in_production, pending_qa, archived
   approved → scheduled, published, archived
   scheduled → publishing, approved, archived
   publishing → published, publish_failed
@@ -47,9 +47,11 @@ TRANSITIONS: dict[str, set[str]] = {
     DeliverableStatus.PENDING_QA: {
         DeliverableStatus.QA_REJECTED,
         DeliverableStatus.PENDING_APPROVAL,
+        DeliverableStatus.ARCHIVED,
     },
     DeliverableStatus.QA_REJECTED: {
         DeliverableStatus.IN_PRODUCTION,
+        DeliverableStatus.ARCHIVED,
     },
     DeliverableStatus.PENDING_APPROVAL: {
         DeliverableStatus.REVISION_REQUESTED,
@@ -106,6 +108,9 @@ ALLOWED_ACTORS: dict[tuple[str, str], set[UserRole]] = {
     (DeliverableStatus.PENDING_QA, DeliverableStatus.QA_REJECTED): _LEAD_PLUS,
     # Staff reworks after QA reject
     (DeliverableStatus.QA_REJECTED, DeliverableStatus.IN_PRODUCTION): _STAFF_ROLES,
+    # A newer upload supersedes an internal draft that the client never saw
+    (DeliverableStatus.PENDING_QA, DeliverableStatus.ARCHIVED): _STAFF_ROLES,
+    (DeliverableStatus.QA_REJECTED, DeliverableStatus.ARCHIVED): _STAFF_ROLES,
     # Client decision
     (DeliverableStatus.PENDING_APPROVAL, DeliverableStatus.APPROVED): _CLIENT_OR_ADMIN,
     (DeliverableStatus.PENDING_APPROVAL, DeliverableStatus.REVISION_REQUESTED): _CLIENT_OR_ADMIN,
@@ -143,16 +148,29 @@ async def transition(
     scheduled_at: datetime | None = None,
     qa_notes: str | None = None,
     request_id: str | None = None,
+    commit: bool = True,
+    publishing_fingerprint: str | None = None,
 ) -> Deliverable:
     """Execute a status transition on a deliverable.
 
     This is the ONLY function that may write deliverable.status. No other
     module is permitted to assign deliverable.status directly.
 
+    commit=False flushes instead, so a caller can combine several transitions,
+    notifications and task updates in one transaction.
+
     Raises:
         Conflict: illegal edge or revision limit reached
         Forbidden: actor role not permitted for this edge
     """
+    # Serialize changes to an enrolled version with schedules and provider work.
+    from app.models.publishing import PublishingJob
+    from app.services.publishing_service import lock_profile
+    enrolled = (await db.execute(select(PublishingJob.id).where(
+        PublishingJob.deliverable_id == deliverable.id))).scalar_one_or_none()
+    if enrolled:
+        await lock_profile(db, deliverable.client_id)
+        await db.refresh(deliverable, attribute_names=["status", "approved_at"])
     current = DeliverableStatus(deliverable.status)
     from_str = current.value
     to_str = to_status.value
@@ -243,6 +261,10 @@ async def transition(
         elif reason and to_str == DeliverableStatus.REVISION_REQUESTED:
             deliverable.rejection_comment = reason
 
+    # Approval records eligibility only; publishing has its own lifecycle.
+    from app.services.publishing_service import on_deliverable_transition
+    await on_deliverable_transition(db, deliverable, to_str, actor_id, publishing_fingerprint)
+
     # 6. Automate Task Pipeline Status synchronization
     try:
         await sync_task_with_deliverable(db, deliverable, to_status)
@@ -258,6 +280,7 @@ async def transition(
         audit_extra["scheduled_at"] = scheduled_at.isoformat()
 
     audit = AuditLog(
+        agency_id=deliverable.agency_id,
         actor_id=actor_id,
         actor_role=actor_role,
         entity="deliverable",
@@ -271,8 +294,11 @@ async def transition(
     db.add(audit)
 
     # Commit with audit log in the same transaction
-    await db.commit()
-    await db.refresh(deliverable)
+    if commit:
+        await db.commit()
+        await db.refresh(deliverable)
+    else:
+        await db.flush()
     return deliverable
 
 
@@ -281,21 +307,14 @@ async def sync_task_with_deliverable(
     deliverable: Deliverable,
     to_status: DeliverableStatus,
 ) -> Task | None:
-    """Automate task pipeline progression based on deliverable lifecycle events."""
+    """Automate task pipeline progression based on deliverable lifecycle events.
+
+    A deliverable without a task gets its own task; it is never attached to some
+    other task of the same client, which would move unrelated work.
+    """
     task = None
     if deliverable.task_id:
         task = await db.get(Task, deliverable.task_id)
-
-    if not task:
-        stmt = (
-            select(Task)
-            .where(Task.client_id == deliverable.client_id)
-            .order_by(Task.updated_at.desc())
-            .limit(1)
-        )
-        task = (await db.execute(stmt)).scalar_one_or_none()
-        if task:
-            deliverable.task_id = task.id
 
     if not task:
         deliv_type = (
@@ -304,6 +323,7 @@ async def sync_task_with_deliverable(
             else DeliverableType.STATIC_POST
         )
         task = Task(
+            agency_id=deliverable.agency_id,
             client_id=deliverable.client_id,
             deliverable_type=deliv_type,
             status=TaskStatus.BACKLOG,

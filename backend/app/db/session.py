@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+from app.core.performance import request_timings
 
 # Context variables for RLS
 current_agency_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_agency", default=None)
@@ -91,12 +92,29 @@ def receive_begin(conn: Any) -> None:
     agency_id = current_agency_ctx.get()
     is_admin = is_platform_admin_ctx.get()
     
+    # PostgreSQL SET does not accept bound parameters. set_config safely sets
+    # transaction-local values, combining tenant and administrator context in one
+    # round trip when an agency exists. Preserve the unset tenant for global actors.
+    statement = "SELECT set_config('app.is_platform_admin', :admin, true)"
+    params = {"admin": "true" if is_admin else "false"}
     if agency_id:
-        conn.execute(text("SET LOCAL app.current_agency = :a").bindparams(a=agency_id))
-    if is_admin:
-        conn.execute(text("SET LOCAL app.is_platform_admin = 'true'"))
-    else:
-        conn.execute(text("SET LOCAL app.is_platform_admin = 'false'"))
+        statement += ", set_config('app.current_agency', :agency, true)"
+        params["agency"] = str(agency_id)
+    conn.execute(text(statement), params)
+
+
+
+@event.listens_for(engine.sync_engine, "before_cursor_execute")
+def _start_query_timer(conn: Any, cursor: Any, statement: Any, parameters: Any, context: Any, executemany: bool) -> None:
+    context._creo_started = time.perf_counter()
+
+
+@event.listens_for(engine.sync_engine, "after_cursor_execute")
+def _finish_query_timer(conn: Any, cursor: Any, statement: Any, parameters: Any, context: Any, executemany: bool) -> None:
+    timings = request_timings.get()
+    if timings is not None:
+        timings.db_ms += (time.perf_counter() - context._creo_started) * 1000
+        timings.db_queries += 1
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -109,16 +127,17 @@ async_session_factory = AsyncSessionLocal
 
 @asynccontextmanager
 async def tenant_session(db: AsyncSession, agency_id: str | uuid.UUID | None, is_platform_admin: bool = False) -> AsyncGenerator[AsyncSession, None]:
-    """Context manager to explicitly set RLS for Celery tasks or custom blocks."""
+    """Set RLS context without owning the caller's transaction boundaries.
+
+    Workers commit per assignment and AI generation releases its transaction before
+    network calls. Wrapping those operations in db.begin() would prohibit subsequent
+    queries after their first commit/rollback. The begin event applies this context
+    whenever the caller starts the next transaction.
+    """
     t_agency = current_agency_ctx.set(str(agency_id) if agency_id else None)
     t_admin = is_platform_admin_ctx.set(is_platform_admin)
     try:
-        # Force a transaction if not already in one to apply the begin event
-        if not db.in_transaction():
-            async with db.begin():
-                yield db
-        else:
-            yield db
+        yield db
     finally:
         current_agency_ctx.reset(t_agency)
         is_platform_admin_ctx.reset(t_admin)
@@ -137,8 +156,8 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
         if auth and auth.startswith("Bearer "):
             token = auth[7:]
             try:
-                import jwt
-                payload = jwt.decode(token, options={"verify_signature": False})
+                from app.core.security import decode_token
+                payload = decode_token(token)
                 agency_id = payload.get("agency_id")
                 if payload.get("role") == "super_admin":
                     is_admin = True

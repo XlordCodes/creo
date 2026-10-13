@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { NativeSelect } from "../../ui/NativeSelect";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   PhoneCall,
   X,
@@ -10,11 +12,13 @@ import {
 } from "lucide-react";
 import { request } from "../../lib/http";
 import { useAuth } from "../../lib/auth-context";
+import { useConfirm } from "../ui/ConfirmDialog";
 
 interface PlanBargainCallModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  initialTopic?: string;
 }
 
 const TOPICS = [
@@ -26,34 +30,68 @@ const TOPICS = [
 
 const TIME_SLOTS = [
   "Immediate / ASAP (Next 30 mins)",
-  "Today Afternoon (2:00 PM – 5:00 PM)",
-  "Today Evening (6:00 PM – 9:00 PM)",
-  "Tomorrow Morning (10:00 AM – 1:00 PM)",
+  "Today Afternoon (2:00 PM - 5:00 PM)",
+  "Today Evening (6:00 PM - 9:00 PM)",
+  "Tomorrow Morning (10:00 AM - 1:00 PM)",
 ];
 
-export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargainCallModalProps) {
+export function PlanBargainCallModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  initialTopic,
+}: PlanBargainCallModalProps) {
   const { user } = useAuth();
-  const [targetTopic, setTargetTopic] = useState(TOPICS[0]);
+  const confirm = useConfirm();
+  const [targetTopic, setTargetTopic] = useState(initialTopic || TOPICS[0] || "Plan Consultation");
   const [proposedOffer, setProposedOffer] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [preferredTime, setPreferredTime] = useState(TIME_SLOTS[0]);
+  const [preferredTime, setPreferredTime] = useState(TIME_SLOTS[0] || "Immediate / ASAP");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (initialTopic) {
+      setTargetTopic(initialTopic);
+    }
+  }, [initialTopic]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loading) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, loading, onClose]);
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   const clientName = user?.full_name || user?.email?.split("@")[0] || "Client";
   const clientEmail = user?.email || "";
 
   // WhatsApp Pre-composed Direct Link
   const waText = encodeURIComponent(
-    `Hi Creo Admin, I am ${clientName} (${clientEmail}). I would like to negotiate a custom plan/pricing for my brand.\n` +
-      `• Target Topic: ${targetTopic}\n` +
-      (proposedOffer ? `• Proposed Scope / Budget: ${proposedOffer}\n` : "") +
-      (phoneNumber ? `• Contact Phone: ${phoneNumber}\n` : "") +
-      `• Preferred Time: ${preferredTime}\n` +
+    `Hi Creo Admin, I am ${clientName} (${clientEmail}). I would like to negotiate a custom plan/pricing for my brand.
+` +
+      `• Target Topic: ${targetTopic}
+` +
+      (proposedOffer ? `• Proposed Scope / Budget: ${proposedOffer}
+` : "") +
+      (phoneNumber ? `• Contact Phone: ${phoneNumber}
+` : "") +
+      `• Preferred Time: ${preferredTime}
+` +
       (notes ? `• Notes: ${notes}` : "")
   );
   const waUrl = `https://wa.me/919941999415?text=${waText}`;
@@ -61,9 +99,20 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneNumber.trim()) {
-      setError("Please provide a contact phone number so our Agency Director can reach you.");
+      setError("Please provide a contact phone number so your agency team can reach you.");
       return;
     }
+
+    const shouldSendRequest = await confirm({
+      title: "Send this call request?",
+      description: "Your agency’s responsible team will receive the plan consultation details.",
+      details: [targetTopic, `Contact: ${phoneNumber}`, `Preferred time: ${preferredTime}`],
+      confirmText: "Send call request",
+      cancelText: "Review details",
+      tone: "info",
+      icon: "info",
+    });
+    if (!shouldSendRequest) return;
 
     try {
       setLoading(true);
@@ -93,14 +142,27 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
-      <div className="relative w-full max-w-lg rounded-3xl bg-[#161F2D] p-6 sm:p-7 shadow-2xl border border-[#2A3446] max-h-[92vh] overflow-y-auto text-[#F8FAFC]">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[99999] grid place-items-center p-4 sm:p-6 overflow-y-auto bg-black/80 animate-[fadeIn_0.15s_ease-out]"
+      style={{
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !loading) onClose();
+      }}
+    >
+      <div
+        className="relative w-full max-w-lg rounded-3xl bg-[#161F2D] p-6 sm:p-7 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] border border-[#2A3446] max-h-[90vh] overflow-y-auto text-[#F8FAFC] m-auto animate-[zoomIn_0.2s_cubic-bezier(0.16,1,0.3,1)]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Close button */}
         <button
           type="button"
           onClick={onClose}
           disabled={loading}
+          aria-label="Close modal"
           className="absolute top-5 right-5 size-8 rounded-full bg-[#0B111C] border border-[#2A3446] text-[#97A0B3] hover:bg-[#2A3446] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
         >
           <X className="size-4" />
@@ -111,9 +173,9 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
             <div className="size-14 rounded-full bg-emerald-950/50 border border-emerald-800/60 text-emerald-400 mx-auto flex items-center justify-center shadow-sm">
               <CheckCircle2 className="size-7" />
             </div>
-            <h3 className="text-lg font-bold text-[#F8FAFC]">Call Request Confirmed!</h3>
+            <h3 className="text-lg font-bold text-[#F8FAFC]">Call request sent</h3>
             <p className="text-xs text-[#97A0B3] max-w-xs mx-auto leading-relaxed">
-              Our Agency Director has received your plan negotiation request. We will connect with you at{" "}
+              Your agency team has received the plan consultation request. They will contact you at{" "}
               <strong className="text-white">{phoneNumber}</strong> ({preferredTime}).
             </p>
           </div>
@@ -126,10 +188,10 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
               </div>
               <div>
                 <h3 className="text-lg font-bold text-[#F8FAFC] tracking-tight">
-                  Book a Plan Negotiation Call
+                  Book a Plan Consultation Call
                 </h3>
                 <p className="text-xs text-[#97A0B3] mt-0.5">
-                  Bargain custom rates, adjust deliverable quotas, or create a tailored retainer with our Executive Director.
+                  Discuss custom video deliverables or negotiate a tailored plan with our executive team.
                 </p>
               </div>
             </div>
@@ -145,17 +207,20 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
               <label className="block text-xs font-semibold text-[#F8FAFC]">
                 What would you like to negotiate?
               </label>
-              <select
+              <NativeSelect
                 value={targetTopic}
                 onChange={(e) => setTargetTopic(e.target.value)}
                 className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]"
               >
+                {targetTopic && !TOPICS.includes(targetTopic) && (
+                  <option value={targetTopic}>{targetTopic}</option>
+                )}
                 {TOPICS.map((topic) => (
                   <option key={topic} value={topic} className="bg-[#0B111C] text-[#F8FAFC]">
                     {topic}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
 
             {/* Proposed Budget or Offer */}
@@ -194,7 +259,7 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
               <label className="block text-xs font-semibold text-[#F8FAFC]">
                 Preferred Call Window
               </label>
-              <select
+              <NativeSelect
                 value={preferredTime}
                 onChange={(e) => setPreferredTime(e.target.value)}
                 className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]"
@@ -204,7 +269,7 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
                     {slot}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
 
             {/* Notes */}
@@ -263,6 +328,7 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -75,6 +75,7 @@ export interface QuestionnaireState {
   core_completed: boolean;
   extended_completed: boolean;
   version: number;
+  last_active_section?: string | null;
 }
 
 export function fetchQuestionnaireState(userId: string): Promise<QuestionnaireState> {
@@ -96,6 +97,18 @@ export function saveQuestionnaireSection(
       headers: actorHeaders(userId),
     }
   );
+}
+
+export function saveQuestionnaireSections(
+  userId: string,
+  sections: Partial<Record<"a" | "b" | "c" | "d" | "e" | "f" | "g", Record<string, unknown>>>,
+  activeSection: string,
+): Promise<{ core_completed: boolean; extended_completed: boolean; version: number }> {
+  return request("/api/v1/onboarding/questionnaire/sections", {
+    method: "POST",
+    headers: actorHeaders(userId),
+    body: JSON.stringify({ sections, active_section: activeSection }),
+  });
 }
 
 export function queueBrandDNAGeneration(userId: string): Promise<{ status: string; brand_dna?: any }> {
@@ -148,3 +161,49 @@ export function confirmPayment(
     headers: actorHeaders(userId),
   });
 }
+
+// ── Manual & Offline Payment Bypass ──────────────────────────────────────────
+
+export interface ManualPaymentRequest {
+  id: string;
+  client_id: string;
+  client_name?: string;
+  client_email?: string;
+  plan_id: string;
+  plan_name?: string;
+  plan_display_name?: string;
+  payment_method: string;
+  amount: number;
+  reference_note?: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  reviewed_at?: string;
+  admin_notes?: string;
+  created_at: string;
+  reviewer_name?: string;
+}
+
+export function submitManualPaymentRequest(
+  planId: string,
+  paymentMethod: string,
+  referenceNote?: string,
+): Promise<ManualPaymentRequest> {
+  return request<ManualPaymentRequest>("/api/v1/onboarding/manual-payment-request", {
+    method: "POST",
+    body: JSON.stringify({
+      plan_id: planId,
+      payment_method: paymentMethod,
+      reference_note: referenceNote,
+    }),
+  });
+}
+
+export function fetchManualPaymentRequest(): Promise<ManualPaymentRequest | null> {
+  return request<ManualPaymentRequest | null>("/api/v1/onboarding/manual-payment-request");
+}
+
+export function cancelManualPaymentRequest(): Promise<{ status: string; message: string }> {
+  return request<{ status: string; message: string }>("/api/v1/onboarding/manual-payment-request", {
+    method: "DELETE",
+  });
+}
+

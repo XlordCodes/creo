@@ -84,6 +84,7 @@ class TicketStatus(StrEnum):
     WAITING_ON_CLIENT = "waiting_on_client"
     RESOLVED = "resolved"
     ESCALATED = "escalated"
+    CLOSED = "closed"
 
 
 class TicketPriority(StrEnum):

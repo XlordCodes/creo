@@ -1,3 +1,4 @@
+import { NativeSelect } from "../../ui/NativeSelect";
 import { useState } from "react";
 import { motion } from "motion/react";
 import {
@@ -93,8 +94,8 @@ export function MemberAssetHandoffQAPage() {
           <div
             className={`p-3.5 sm:p-4 rounded-2xl border text-xs font-bold flex items-center justify-between shadow-xl animate-fade-in ${
               toastMessage.type === "info"
-                ? "bg-[#7FA0D6]/15 border-[#7FA0D6]/30 text-blue-800"
-                : "bg-emerald-50 border-emerald-200 text-emerald-800"
+                ? "bg-[#7FA0D6]/15 border-[#7FA0D6]/30 text-[#7FA0D6]"
+                : "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
             }`}
           >
             <div className="flex items-center gap-2">
@@ -130,7 +131,7 @@ export function MemberAssetHandoffQAPage() {
             </button>
             <button
               onClick={() => setPackageModalOpen(true)}
-              className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+              className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
             >
               <Plus className="size-3.5 sm:size-4" />
               <span>+ New Package</span>
@@ -161,7 +162,7 @@ export function MemberAssetHandoffQAPage() {
               </div>
 
               {/* Version Selector Tabs */}
-              <div className="flex items-center gap-2 bg-[#1F2C3F]/80 p-1.5 rounded-2xl text-xs font-bold">
+              <div className="flex items-center gap-2 bg-[#161F2D]/80 p-1.5 rounded-2xl text-xs font-bold">
                 <button
                   onClick={() => setActiveVersionTab("verA")}
                   className={`flex-1 py-2 rounded-xl transition-all ${
@@ -307,7 +308,7 @@ export function MemberAssetHandoffQAPage() {
                       <h4 className="text-xs font-black text-white leading-snug">Fintech Hero Animation (Full 60s Cut)</h4>
                       <div className="text-[10px] text-[#97A0B3] font-mono">PK2-NL-004D · 4K ProRes Master</div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
                       ✓ Signed Off
                     </span>
                   </div>
@@ -322,7 +323,7 @@ export function MemberAssetHandoffQAPage() {
                           dispatch: "AWS S302",
                         })
                       }
-                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#1F2C3F] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
+                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#161F2D] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
                     >
                       <Eye className="size-3" /> View Asset
                     </button>
@@ -338,7 +339,7 @@ export function MemberAssetHandoffQAPage() {
                         Lead Note: "Adjust opening hook pacing by 0.5s"
                       </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
                       ⚠ Revision
                     </span>
                   </div>
@@ -346,7 +347,7 @@ export function MemberAssetHandoffQAPage() {
                     <span className="text-[11px] text-[#97A0B3] font-mono">Held for v2</span>
                     <button
                       onClick={() => setResubmitModalOpen(true)}
-                      className="px-3 py-1 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs cursor-pointer"
+                      className="px-3 py-1 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs cursor-pointer"
                     >
                       Resubmit v2
                     </button>
@@ -360,7 +361,7 @@ export function MemberAssetHandoffQAPage() {
                       <h4 className="text-xs font-black text-white leading-snug">Brand Audio Identity Stems</h4>
                       <div className="text-[10px] text-[#97A0B3] font-mono">48k 24bit / 16 stem lossless ZIP</div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
                       ✓ Approved
                     </span>
                   </div>
@@ -368,7 +369,7 @@ export function MemberAssetHandoffQAPage() {
                     <span className="text-[11px] text-[#97A0B3] font-mono">AWS S411</span>
                     <button
                       onClick={() => showToast("Downloading lossless stems ZIP...")}
-                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#1F2C3F] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
+                      className="px-2.5 py-1 rounded-lg border border-[#2A3446] bg-[#161F2D] hover:bg-[#161F2D] text-[#F1F5F9] font-bold text-[10px] cursor-pointer flex items-center gap-1"
                     >
                       <Download className="size-3" /> Download ZIP
                     </button>
@@ -389,7 +390,7 @@ export function MemberAssetHandoffQAPage() {
                       <th className="py-2.5 px-3 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium text-[#F1F5F9]">
+                  <tbody className="divide-y divide-[#2A3446] font-medium text-[#F1F5F9]">
                     <tr className="hover:bg-[#0B111C]/60 transition-colors">
                       <td className="py-3 px-3">
                         <div className="font-bold text-white">Fintech Hero Animation (Full 60s Cut)</div>
@@ -405,7 +406,7 @@ export function MemberAssetHandoffQAPage() {
                         </div>
                       </td>
                       <td className="py-3 px-3">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                           ✓ Signed Off by Pod Lead
                         </span>
                       </td>
@@ -420,7 +421,7 @@ export function MemberAssetHandoffQAPage() {
                               dispatch: "AWS S302",
                             })
                           }
-                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#1F2C3F] cursor-pointer"
+                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer"
                         >
                           <Eye className="size-4" />
                         </button>
@@ -444,7 +445,7 @@ export function MemberAssetHandoffQAPage() {
                         </div>
                       </td>
                       <td className="py-3 px-3">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
                           ⚠ Revision Requested
                         </span>
                       </td>
@@ -452,7 +453,7 @@ export function MemberAssetHandoffQAPage() {
                       <td className="py-3 px-3 text-right">
                         <button
                           onClick={() => setResubmitModalOpen(true)}
-                          className="px-3 py-1 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer"
+                          className="px-3 py-1 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer"
                         >
                           Resubmit Revision v2
                         </button>
@@ -474,7 +475,7 @@ export function MemberAssetHandoffQAPage() {
                         </div>
                       </td>
                       <td className="py-3 px-3">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                           ✓ Approved & Archived
                         </span>
                       </td>
@@ -482,7 +483,7 @@ export function MemberAssetHandoffQAPage() {
                       <td className="py-3 px-3 text-right">
                         <button
                           onClick={() => showToast("Downloading lossless stems ZIP...")}
-                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#1F2C3F] cursor-pointer"
+                          className="p-1.5 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer"
                         >
                           <Download className="size-4" />
                         </button>
@@ -503,7 +504,7 @@ export function MemberAssetHandoffQAPage() {
                   <Sparkles className="size-4 text-[#7FA0D6]" />
                   <h3 className="text-sm font-black text-white">Self-QA Verification</h3>
                 </div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                   {Object.values(checklist).filter(Boolean).length}/4 Verified
                 </span>
               </div>
@@ -516,7 +517,7 @@ export function MemberAssetHandoffQAPage() {
               <div className="space-y-3">
                 <div
                   onClick={() => handleToggleChecklist("safezone")}
-                  className="p-3.5 rounded-2xl bg-[#7FA0D6]/15/50 border border-[#7FA0D6]/30/80 hover-card-innovative flex items-start gap-3 cursor-pointer hover:bg-[#7FA0D6]/15 transition-colors"
+                  className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] hover-card-innovative flex items-start gap-3 cursor-pointer hover:border-[#7FA0D6]/40 transition-colors"
                 >
                   <input
                     type="checkbox"
@@ -534,7 +535,7 @@ export function MemberAssetHandoffQAPage() {
 
                 <div
                   onClick={() => handleToggleChecklist("audioLufs")}
-                  className="p-3.5 rounded-2xl bg-[#7FA0D6]/15/50 border border-[#7FA0D6]/30/80 hover-card-innovative flex items-start gap-3 cursor-pointer hover:bg-[#7FA0D6]/15 transition-colors"
+                  className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] hover-card-innovative flex items-start gap-3 cursor-pointer hover:border-[#7FA0D6]/40 transition-colors"
                 >
                   <input
                     type="checkbox"
@@ -552,7 +553,7 @@ export function MemberAssetHandoffQAPage() {
 
                 <div
                   onClick={() => handleToggleChecklist("brandVectors")}
-                  className="p-3.5 rounded-2xl bg-[#7FA0D6]/15/50 border border-[#7FA0D6]/30/80 hover-card-innovative flex items-start gap-3 cursor-pointer hover:bg-[#7FA0D6]/15 transition-colors"
+                  className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] hover-card-innovative flex items-start gap-3 cursor-pointer hover:border-[#7FA0D6]/40 transition-colors"
                 >
                   <input
                     type="checkbox"
@@ -570,7 +571,7 @@ export function MemberAssetHandoffQAPage() {
 
                 <div
                   onClick={() => handleToggleChecklist("subtitles")}
-                  className="p-3.5 rounded-2xl bg-[#7FA0D6]/15/50 border border-[#7FA0D6]/30/80 hover-card-innovative flex items-start gap-3 cursor-pointer hover:bg-[#7FA0D6]/15 transition-colors"
+                  className="p-3.5 rounded-2xl bg-[#0B111C] border border-[#2A3446] hover-card-innovative flex items-start gap-3 cursor-pointer hover:border-[#7FA0D6]/40 transition-colors"
                 >
                   <input
                     type="checkbox"
@@ -637,7 +638,7 @@ export function MemberAssetHandoffQAPage() {
                 <button
                   type="button"
                   onClick={() => setHandoffConfirmModalOpen(true)}
-                  className="flex-1 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer text-center flex items-center justify-center gap-1.5"
+                  className="flex-1 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer text-center flex items-center justify-center gap-1.5"
                 >
                   <Send className="size-3.5" />
                   Send to Pod Lead for Sign-Off
@@ -686,7 +687,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={handleSendToLeadForSignOff}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 cursor-pointer"
               >
                 Confirm & Dispatch
               </button>
@@ -713,7 +714,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setResubmitModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -746,7 +747,7 @@ export function MemberAssetHandoffQAPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Submit Revision v2
                 </button>
@@ -771,7 +772,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setAuditLogModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -798,7 +799,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setAuditLogModalOpen(false)}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold cursor-pointer"
               >
                 Close Audit Logs
               </button>
@@ -822,7 +823,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setPackageModalOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -848,11 +849,11 @@ export function MemberAssetHandoffQAPage() {
 
               <div>
                 <label className="block font-bold text-[#F1F5F9] mb-1">Client Pod</label>
-                <select className="w-full px-3 py-2 rounded-xl border border-[#2A3446] font-semibold bg-[#161F2D]">
+                <NativeSelect className="w-full px-3 py-2 rounded-xl border border-[#2A3446] font-semibold bg-[#161F2D]">
                   <option value="Client Workspace">Client Workspace</option>
                   <option value="Client Retainer">Client Retainer</option>
                   <option value="Active Client">Active Client</option>
-                </select>
+                </NativeSelect>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#2A3446]">
@@ -865,7 +866,7 @@ export function MemberAssetHandoffQAPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
                 >
                   Initialize Package
                 </button>
@@ -890,7 +891,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setSelectedAssetToView(null)}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="size-4" />
               </button>
@@ -915,7 +916,7 @@ export function MemberAssetHandoffQAPage() {
               <button
                 type="button"
                 onClick={() => setSelectedAssetToView(null)}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white font-bold cursor-pointer"
               >
                 Done
               </button>

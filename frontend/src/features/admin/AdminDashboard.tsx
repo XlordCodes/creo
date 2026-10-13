@@ -3,7 +3,7 @@
  * Displays a masonry grid of widgets matching the Stripe/Razorpay aesthetic.
  */
 
-import React, { useState, useEffect } from "react";
+import { useState, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   fetchAdminKPIs,
@@ -12,11 +12,12 @@ import {
   fetchSLABreaches,
   refreshKPIs,
 } from "../../lib/ops-api";
-import type { AdminKPIs, AdminQueueData, ClientRosterItem, SLABreachItem } from "../../types/ops";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "../../lib/auth-context";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 
 // Widgets
-import { RevenueEngineWidget } from "../../components/admin/RevenueEngineWidget";
+const RevenueEngineWidget = lazy(() => import("../../components/admin/RevenueEngineWidget").then((module) => ({ default: module.RevenueEngineWidget })));
 import { TeamDetailsWidget } from "../../components/admin/TeamDetailsWidget";
 import { ContentEngineWidget } from "../../components/admin/ContentEngineWidget";
 import { ClientDetailsWidget } from "../../components/admin/ClientDetailsWidget";
@@ -24,44 +25,33 @@ import { SupportTicketsWidget } from "../../components/admin/SupportTicketsWidge
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
 import { SlaPerformanceWidget } from "../../components/admin/SlaPerformanceWidget";
 
+
+function LoadingPanel({ label }: { label: string }) {
+  return <div role="status" className="min-h-48 rounded-3xl bg-[#161F2D] border border-[#2A3446] p-5 text-sm text-slate-400">{label}</div>;
+}
+
 export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) {
-  const [kpis, setKpis] = useState<AdminKPIs | null>(null);
-  const [clients, setClients] = useState<ClientRosterItem[]>([]);
-  const [queue, setQueue] = useState<AdminQueueData | null>(null);
-  const [slas, setSlas] = useState<SLABreachItem[]>([]);
+  const { user } = useAuth();
+  const options = { staleTime: 30_000, enabled: !!user?.id };
+  const kpiQuery = useQuery({ ...options, queryKey: ["admin_dashboard", user?.id, actorRole], queryFn: () => fetchAdminKPIs(undefined, actorRole) });
+  const clientQuery = useQuery({ ...options, queryKey: ["admin_clients", user?.id, actorRole], queryFn: () => fetchClientRoster(undefined, actorRole) });
+  const queueQuery = useQuery({ ...options, queryKey: ["admin_queue", user?.id, actorRole], queryFn: () => fetchAdminQueue(undefined, actorRole) });
+  const slaQuery = useQuery({ ...options, queryKey: ["admin_sla_breaches", user?.id, actorRole], queryFn: () => fetchSLABreaches(undefined, actorRole) });
+  const kpis = kpiQuery.data ?? null;
+  const clients = clientQuery.data ?? [];
+  const queue = queueQuery.data ?? null;
+  const slas = slaQuery.data ?? [];
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
-
-  const loadAllData = React.useCallback(async () => {
-    try {
-      const [kpiRes, clientRes, queueRes, slaRes] = await Promise.all([
-        fetchAdminKPIs(undefined, actorRole),
-        fetchClientRoster(undefined, actorRole),
-        fetchAdminQueue(undefined, actorRole),
-        fetchSLABreaches(undefined, actorRole),
-      ]);
-      setKpis(kpiRes);
-      setClients(clientRes);
-      setQueue(queueRes);
-      setSlas(slaRes);
-      setMessage(null);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load admin data";
-      setMessage({ type: "error", text: msg });
-    }
-  }, [actorRole]);
-
-  useEffect(() => {
-    loadAllData();
-  }, [loadAllData]);
+  const queries = [kpiQuery, clientQuery, queueQuery, slaQuery];
+  const error = queries.find((query) => query.error)?.error;
 
   const handleRefreshKpis = async () => {
     try {
       setRefreshing(true);
       await refreshKPIs(undefined, actorRole);
-      const updated = await fetchAdminKPIs(undefined, actorRole);
-      setKpis(updated);
+      await kpiQuery.refetch();
       setMessage({
         type: "success",
         text: "KPIs refreshed.",
@@ -90,6 +80,8 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
 
       {/* Main Container */}
       <main className="flex-1 px-3 sm:px-5 lg:px-6 pt-3 pb-6 max-w-[1440px] w-full mx-auto">
+        {queries.some((query) => query.isPending) && <p role="status" className="mb-4 text-sm text-slate-400">Loading dashboard data?</p>}
+        {error && <p role="alert" className="mb-4 text-sm text-amber-300">{error instanceof Error ? error.message : "Some dashboard data could not be loaded."} <button onClick={() => { queries.forEach((query) => { if (query.isError) void query.refetch(); }); }} className="underline">Retry</button></p>}
         {/* Status banner */}
         <AnimatePresence>
           {message && (
@@ -99,9 +91,9 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
               exit={{ opacity: 0, y: -10 }}
               className="mb-3.5 p-2.5 rounded-xl text-xs font-medium flex items-center gap-2"
               style={{
-                background: message.type === "error" ? "#FEE2E2" : "#E6F4EA",
-                border: `1px solid ${message.type === "error" ? "#FCA5A5" : "#A8DAB5"}`,
-                color: message.type === "error" ? "#E5484D" : "#137333",
+                background: message.type === "error" ? "#161F2D" : "#161F2D",
+                border: `1px solid ${message.type === "error" ? "#D8BF9B" : "#BCCCE6"}`,
+                color: message.type === "error" ? "#D8BF9B" : "#7FA0D6",
               }}
             >
               {message.type === "error" ? (
@@ -127,7 +119,7 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
               transition={{ duration: 0.35, delay: 0.05, ease: "easeOut" }}
               className="flex flex-col h-full min-h-0 hover-card-innovative rounded-3xl"
             >
-              <RevenueEngineWidget kpis={kpis} clients={clients} />
+              <Suspense fallback={<div role="status" className="min-h-64 rounded-3xl bg-[#161F2D] border border-[#2A3446] p-5 text-sm text-slate-400">Loading revenue chart?</div>}>{kpiQuery.data ? <RevenueEngineWidget kpis={kpis} clients={clients} /> : <LoadingPanel label={kpiQuery.isError ? "Revenue unavailable" : "Loading revenue?"} />}</Suspense>
             </motion.div>
           )}
 
@@ -139,7 +131,7 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
               transition={{ duration: 0.35, delay: 0.1, ease: "easeOut" }}
               className="flex flex-col h-full min-h-0 hover-card-innovative rounded-3xl"
             >
-              <TeamDetailsWidget queue={queue} />
+              {queueQuery.data ? <TeamDetailsWidget queue={queue} /> : <LoadingPanel label={queueQuery.isError ? "Team data unavailable" : "Loading team?"} />}
             </motion.div>
           )}
 
@@ -151,7 +143,7 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
               transition={{ duration: 0.35, delay: 0.15, ease: "easeOut" }}
               className="flex flex-col h-full min-h-0 hover-card-innovative rounded-3xl"
             >
-              <ContentEngineWidget queue={queue} />
+              {queueQuery.data ? <ContentEngineWidget queue={queue} /> : <LoadingPanel label={queueQuery.isError ? "Production data unavailable" : "Loading production?"} />}
             </motion.div>
           )}
         </div>
@@ -165,7 +157,7 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
             transition={{ duration: 0.35, delay: 0.2, ease: "easeOut" }}
             className="mt-3.5 sm:mt-4 hover-card-innovative rounded-2xl"
           >
-            <ClientDetailsWidget clients={clients} />
+            {clientQuery.data ? <ClientDetailsWidget clients={clients} /> : <LoadingPanel label={clientQuery.isError ? "Client data unavailable" : "Loading clients?"} />}
           </motion.div>
         )}
 
@@ -178,7 +170,7 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
               transition={{ duration: 0.35, delay: 0.25, ease: "easeOut" }}
               className="hover-card-innovative rounded-2xl h-full"
             >
-              <SupportTicketsWidget slas={slas} />
+              {slaQuery.data ? <SupportTicketsWidget slas={slas} /> : <LoadingPanel label={slaQuery.isError ? "Support data unavailable" : "Loading support?"} />}
             </motion.div>
             <motion.div
               initial={{ opacity: 0, y: 12 }}
@@ -186,7 +178,7 @@ export function AdminDashboard({ actorRole = "admin" }: { actorRole?: string }) 
               transition={{ duration: 0.35, delay: 0.3, ease: "easeOut" }}
               className="hover-card-innovative rounded-2xl h-full"
             >
-              <SlaPerformanceWidget slas={slas} />
+              {slaQuery.data ? <SlaPerformanceWidget slas={slas} /> : <LoadingPanel label={slaQuery.isError ? "SLA data unavailable" : "Loading SLA?"} />}
             </motion.div>
           </div>
         )}

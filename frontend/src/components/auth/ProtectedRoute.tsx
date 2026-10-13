@@ -4,6 +4,7 @@ import { useAuth } from "../../lib/auth-context";
 
 export const ROLE_HOMES: Record<string, string> = {
   client: "/portal",
+  client_owner: "/portal",
   team_member: "/workstation",
   team_lead: "/admin/pod-dashboard",
   editor: "/workstation",
@@ -16,7 +17,10 @@ export const ROLE_HOMES: Record<string, string> = {
 
 export function getRoleHome(role?: string | null): string {
   if (!role) return "/portal";
-  return ROLE_HOMES[role] || "/portal";
+  const r = role.toLowerCase();
+  if (r === "admin" || r === "super_admin" || r.includes("admin")) return "/admin";
+  if (r === "client" || r === "client_owner" || r.includes("client")) return "/portal";
+  return ROLE_HOMES[r] || ROLE_HOMES[role] || "/portal";
 }
 
 interface ProtectedRouteProps {
@@ -39,6 +43,8 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     const returnUrl = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?redirectedFrom=${returnUrl}`} replace />;
   }
+
+  if (user.must_reset_password) return null;
 
   // Role check: Admin and super_admin have universal access
   if (allowedRoles && allowedRoles.length > 0) {
@@ -81,7 +87,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
                   const returnUrl = encodeURIComponent(location.pathname + location.search);
                   window.location.href = `/login?redirectedFrom=${returnUrl}`;
                 }}
-                className="w-full py-2.5 px-4 rounded-xl border border-[#2A3446] text-[#97A0B3] hover:text-white text-xs font-bold hover:bg-[#1F2C3F] transition-colors cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-xl border border-[#2A3446] text-[#97A0B3] hover:text-white text-xs font-bold hover:bg-[#161F2D] transition-colors cursor-pointer"
               >
                 Sign In with Admin Account
               </button>

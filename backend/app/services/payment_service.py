@@ -79,16 +79,18 @@ async def create_order(
     )
     active_sub = (await db.execute(active_sub_stmt)).scalar_one_or_none()
     if active_sub:
-        raise Conflict(
-            "You already have an active subscription retainer. You can select or change plans after your current billing cycle expires.",
-            code="ACTIVE_SUBSCRIPTION_EXISTS",
-            details={
-                "current_subscription_id": str(active_sub.id),
-                "current_period_end": active_sub.current_period_end.isoformat(),
-            },
-        )
+        # If client already has the exact same plan active and we are in production, prevent duplicate purchase
+        is_prod = getattr(settings, "ENVIRONMENT", "development") in ("production", "prod")
+        if active_sub.plan_id == plan.id and is_prod:
+            raise Conflict(
+                "You already have this active subscription retainer. You can upgrade or change plans after your current billing cycle expires.",
+                code="ACTIVE_SUBSCRIPTION_EXISTS",
+                details={
+                    "current_subscription_id": str(active_sub.id),
+                    "current_period_end": active_sub.current_period_end.isoformat(),
+                },
+            )
 
-    order_id = f"order_{gateway.value[:3]}_{uuid.uuid4().hex[:12]}"
     sub_id = uuid.uuid4()
 
     key_id = (
@@ -98,26 +100,13 @@ async def create_order(
     )
     key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "")
 
-    # Attempt live Razorpay order generation if credentials are configured
-    if gateway == PaymentProvider.RAZORPAY and key_id and key_secret:
-        try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                res = await client.post(
-                    "https://api.razorpay.com/v1/orders",
-                    auth=(key_id, key_secret),
-                    json={
-                        "amount": plan.price_minor,
-                        "currency": plan.currency,
-                        "receipt": f"rcpt_{uuid.uuid4().hex[:10]}",
-                    },
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    order_id = data.get("id", order_id)
-        except Exception as e:
-            logger.warning("razorpay_live_order_creation_fallback", error=str(e))
+    if gateway == PaymentProvider.RAZORPAY:
+        from app.services.razorpay_orders import create_razorpay_order
+        order_id = await create_razorpay_order(key_id, key_secret, plan.price_minor, plan.currency)
+    else:
+        from app.core.errors import AppError
+        raise AppError("This payment gateway is unavailable.",
+                       code="PAYMENT_GATEWAY_UNAVAILABLE", status_code=503)
 
     subscription = Subscription(
         id=sub_id,
@@ -155,6 +144,16 @@ async def _activate_subscription(db: AsyncSession, subscription: Subscription) -
     if user:
         user.account_status = AccountStatus.ACTIVE
 
+    # Supersede any previous active subscriptions for this client when switching/upgrading plans
+    prev_subs_stmt = select(Subscription).where(
+        Subscription.client_id == subscription.client_id,
+        Subscription.id != subscription.id,
+        Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]),
+    )
+    prev_subs = (await db.execute(prev_subs_stmt)).scalars().all()
+    for prev in prev_subs:
+        prev.status = SubscriptionStatus.CANCELED
+
     plan_stmt = select(Plan).where(Plan.id == subscription.plan_id)
     plan = (await db.execute(plan_stmt)).scalar_one_or_none()
     if plan:
@@ -180,7 +179,10 @@ async def _activate_subscription(db: AsyncSession, subscription: Subscription) -
                     quota=quota,
                     used=0,
                 )
-                .on_conflict_do_nothing(index_elements=["client_id", "period_start", "kind"])
+                .on_conflict_do_update(
+                    index_elements=["client_id", "period_start", "kind"],
+                    set_={"quota": quota, "period_end": period_end},
+                )
             )
             await db.execute(counter_stmt)
     await db.commit()

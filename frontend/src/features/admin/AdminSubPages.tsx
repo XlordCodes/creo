@@ -1,6 +1,37 @@
-import React, { useState, useEffect } from "react";
+import { NativeSelect } from "../../ui/NativeSelect";
+import { useAuth } from "../../lib/auth-context";
+import * as Dialog from "@radix-ui/react-dialog";
+import { DeliverableMedia } from "../../components/ops/DeliverableMedia";
+import { PublishingControl } from "../../components/ops/PublishingPanel";
+import { resolveAssetUrl } from "../../lib/media";
+import React, { useState, useEffect, useMemo } from "react";
 import { Link, useParams, useSearchParams, Navigate } from "react-router";
-import { fetchClientRoster } from "../../lib/ops-api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { request } from "../../lib/http";
+import {
+  fetchClientRoster,
+  fetchPlanNegotiations,
+  updatePlanNegotiation,
+  createPlanNegotiation,
+  fetchLeaveRequests,
+  approveLeaveRequest,
+  rejectLeaveRequest,
+  fetchAdminQueue,
+  fetchKanbanTasks,
+  fetchAdminDeliverables,
+  fetchPlansSummary,
+  fetchAdminKPIs,
+  fetchRevenueTrend,
+  fetchAdminTransactions,
+  fetchClientBrandProfile,
+  fetchAdminManualPayments,
+  approveManualPayment,
+  rejectManualPayment,
+  directBypassClientPayment,
+} from "../../lib/ops-api";
+import type { PlanNegotiationApiItem, PlanSummaryItem, ManualPaymentRequest } from "../../lib/ops-api";
+import { fetchPlans } from "../../lib/onboarding-api";
+import { useConfirm } from "../../components/ui/ConfirmDialog";
 import type { ClientRosterItem } from "../../types/ops";
 import {
   BarChart,
@@ -19,6 +50,7 @@ import {
   Search,
   Plus,
   CheckCircle2,
+  Banknote,
   MessageSquare,
   AlertTriangle,
   Briefcase,
@@ -28,8 +60,6 @@ import {
   X,
   Filter,
   Tag,
-  ChevronLeft,
-  ChevronRight,
   Calendar,
   Clock,
   Plane,
@@ -44,7 +74,6 @@ import {
   Video,
   Scissors,
   Palette,
-  RefreshCw,
   Layers,
   Mail,
   Phone,
@@ -52,13 +81,18 @@ import {
   ExternalLink,
   FileText,
   Edit3,
+  Trash2,
   Folder,
   Lock,
   ShieldCheck,
+  Columns2,
+  Maximize2,
+  Sparkles,
+  Copy,
+  Type,
 } from "lucide-react";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
 import { CustomSelect } from "../../components/ui/CustomSelect";
-import { useAuth } from "../../lib/auth-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. ADMIN CLIENTS PAGE (CLIENT DETAILS & BRAND BRIEF)
@@ -73,7 +107,12 @@ export interface ClientDetailData {
   tier: string;
   tierBadge: string;
   status: string;
+  isPaid?: boolean;
+  isOnboarded?: boolean;
+  lifecycleStatus?: "not_paid_not_onboarded" | "paid_not_onboarded" | "onboarded";
+  lifecycleLabel?: string;
   monthlyFee: number;
+  onboardingStage?: number;
   addon?: string;
   nextBilling: string;
   billingMethod: string;
@@ -139,6 +178,27 @@ export interface ClientDetailData {
 }
 
 export function AdminClientsPage() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const rosterQuery = useQuery({
+    queryKey: ["admin-client-roster", user?.id],
+    queryFn: () => fetchClientRoster(),
+    enabled: !!user,
+  });
+  const negotiationsQuery = useQuery({
+    queryKey: ["admin-plan-negotiations-roster"],
+    queryFn: () => fetchPlanNegotiations(),
+    refetchInterval: 30000,
+  });
+  const confirm = useConfirm();
+  const manualPaymentsQuery = useQuery({
+    queryKey: ["admin-manual-payments"],
+    queryFn: () => fetchAdminManualPayments(),
+  });
+  const plansQuery = useQuery({
+    queryKey: ["plans"],
+    queryFn: () => fetchPlans(),
+  });
   const { clientId } = useParams<{ clientId?: string }>();
   const [searchParams] = useSearchParams();
   const urlClientId = clientId || searchParams.get("clientId") || searchParams.get("client");
@@ -151,531 +211,54 @@ export function AdminClientsPage() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchClientRoster()
-      .then((data) => {
-        if (Array.isArray(data)) setServerClients(data);
-      })
-      .catch(console.error);
-  }, []);
+    if (Array.isArray(rosterQuery.data)) {
+      setServerClients(rosterQuery.data.filter(client => !["suspended", "cancelled"].includes(client.account_status)));
+    }
+  }, [rosterQuery.data]);
 
   // Active Modals
-  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-  const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
+  const [isCancelClientModalOpen, setIsCancelClientModalOpen] = useState(false);
+  const [isOnboardClientModalOpen, setIsOnboardClientModalOpen] = useState(false);
+  const [isRemoveClientModalOpen, setIsRemoveClientModalOpen] = useState(false);
+  const [isManualPaymentsModalOpen, setIsManualPaymentsModalOpen] = useState(false);
+  const [isDirectBypassModalOpen, setIsDirectBypassModalOpen] = useState(false);
+  const [directBypassTargetClient, setDirectBypassTargetClient] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [directBypassPlanId, setDirectBypassPlanId] = useState<string>("");
+  const [directBypassPaymentMethod, setDirectBypassPaymentMethod] = useState<string>("cash");
+  const [directBypassNotes, setDirectBypassNotes] = useState<string>("");
+  const [processingPaymentId, setProcessingPaymentId] = useState<string | null>(null);
+  const [directBypassBusy, setDirectBypassBusy] = useState(false);
+
+  const manualPayments = manualPaymentsQuery.data || [];
+  const pendingManualPayments = manualPayments.filter((p) => p.status === "PENDING");
+  const [newClientNameInput, setNewClientNameInput] = useState("");
+  const [newClientIndustryInput, setNewClientIndustryInput] = useState("");
+  const [newClientPodInput, setNewClientPodInput] = useState("Pod A (Creative & Brand Strategy)");
+  const [clientToRemoveInput, setClientToRemoveInput] = useState("Ryze");
+  const [customClients, setCustomClients] = useState<Record<string, ClientDetailData>>({});
+  const [removingClient, setRemovingClient] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removedClientIds, setRemovedClientIds] = useState<Set<string>>(new Set());
   const [previewDeliverable, setPreviewDeliverable] = useState<any | null>(null);
 
-  const [newRequestForm, setNewRequestForm] = useState({
-    title: "",
-    type: "Reel",
-    priority: "Standard",
-    notes: "",
-  });
-
-  const clientsData: Record<string, ClientDetailData> = {
-    ryze: {
-      id: "ryze",
-      name: "Ryze",
-      initials: "R",
-      industry: "DTC Wellness & Functional Health",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Jan 2024",
-      tier: "Starter Growth Retainer",
-      tierBadge: "STARTER GROWTH",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 25000,
-      addon: "Add-on: Creative Pod C",
-      nextBilling: "Oct 1, 2026",
-      billingMethod: "Direct ACH / Razorpay",
-      totalAssetsDelivered: 0,
-      totalAssetsQuota: 22,
-      postsDelivered: 0,
-      postsQuota: 8,
-      reelsDelivered: 0,
-      reelsQuota: 4,
-      storiesDelivered: 0,
-      storiesQuota: 10,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "Ryze Brand Team",
-        title: "Brand Strategy Director",
-        email: "sushmitaa1407@gmail.com",
-        phone: "+91 98401 22910",
-        renewedDate: "Sep 1, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v2.4",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "JetBrains Mono",
-        toneSummary:
-          "Energetic, holistic wellness with clean organic minimalism and modern typography. Punchy video hooks and high-contrast benefit callouts.",
-        toneTags: ["Vitality", "High Energy", "Clean Aesthetics"],
-        colors: [
-          { name: "Matcha Slate", hex: "#166534" },
-          { name: "Cream Ivory", hex: "#FEFCE8", isLight: true },
-          { name: "Core Charcoal", hex: "#0F172A" },
-          { name: "Glow Amber", hex: "#F59E0B" },
-        ],
-        social: {
-          handle: "@ryzesocial",
-          followers: "42,500 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Ryze Master Assets Drive",
-        figmaLink: "Ryze Brand Design System",
-        lastAuditDate: "Sep 20, 2026",
-      },
-      pod: {
-        name: "Pod B",
-        tagline: "Performance & Video Ops",
-        leadName: "Sarah Connor",
-        leadTitle: "Lead Video Producer",
-        leadAvatar: "SC",
-        squad: [
-          { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
-          { name: "Elena Rostova", role: "Graphic Designer", hoursPerWeek: 16, avatar: "ER" },
-        ],
-        capacityAllocatedHrs: 32,
-        bandwidthPercent: 75,
-        dailySyncTime: "11:00 AM IST",
-      },
-      deliverables: [],
-    },
-    aravindan: {
-      id: "aravindan",
-      name: "Aravindan",
-      initials: "A",
-      industry: "B2B Enterprise SaaS & Cloud Architecture",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Mar 2024",
-      tier: "Custom Retainer",
-      tierBadge: "CUSTOM RETAINER",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 45000,
-      addon: "Add-on: Technical Motion Lead",
-      nextBilling: "Oct 5, 2026",
-      billingMethod: "Direct Corporate Wire",
-      totalAssetsDelivered: 0,
-      totalAssetsQuota: 15,
-      postsDelivered: 0,
-      postsQuota: 6,
-      reelsDelivered: 0,
-      reelsQuota: 4,
-      storiesDelivered: 0,
-      storiesQuota: 5,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "Aravindan",
-        title: "Founder & Chief Technology Officer",
-        email: "aravindan20062006@gmail.com",
-        phone: "+91 98402 33411",
-        renewedDate: "Sep 5, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v2.1",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "JetBrains Mono",
-        toneSummary:
-          "Authoritative, technically rigorous cloud software communication. Architectural clarity, latency reduction metrics, and developer-first storytelling.",
-        toneTags: ["High Trust", "Developer First", "Algorithmic Speed"],
-        colors: [
-          { name: "Deep Obsidian", hex: "#0F172A" },
-          { name: "Electric Azure", hex: "#2563EB" },
-          { name: "Terminal Cyan", hex: "#06B6D4" },
-          { name: "Clean Slate", hex: "#F8FAFC", isLight: true },
-        ],
-        social: {
-          handle: "@aravindan_dev",
-          followers: "18,900 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Aravindan Drive Cloud Vault",
-        figmaLink: "Aravindan System Components",
-        lastAuditDate: "Sep 18, 2026",
-      },
-      pod: {
-        name: "Pod A",
-        tagline: "Creative & Brand Strategy",
-        leadName: "Vikram Malhotra",
-        leadTitle: "Pod A Lead Producer",
-        leadAvatar: "VM",
-        squad: [
-          { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
-          { name: "Ananya Deshmukh", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AD" },
-        ],
-        capacityAllocatedHrs: 32,
-        bandwidthPercent: 85,
-        dailySyncTime: "10:30 AM IST",
-      },
-      deliverables: [],
-    },
-    shanmugaraj: {
-      id: "shanmugaraj",
-      name: "Shanmugaraj",
-      initials: "S",
-      industry: "Omnichannel E-Commerce & Retail Tech",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Feb 2024",
-      tier: "Brand Accelerator Retainer",
-      tierBadge: "BRAND ACCELERATOR",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 50000,
-      addon: "Add-on: TikTok Growth Pod",
-      nextBilling: "Oct 8, 2026",
-      billingMethod: "Stripe Corporate ACH",
-      totalAssetsDelivered: 0,
-      totalAssetsQuota: 43,
-      postsDelivered: 0,
-      postsQuota: 15,
-      reelsDelivered: 0,
-      reelsQuota: 8,
-      storiesDelivered: 0,
-      storiesQuota: 20,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "Shanmugaraj",
-        title: "Head of Growth & Creative",
-        email: "shanmugaraj2204@gmail.com",
-        phone: "+91 98403 44522",
-        renewedDate: "Sep 8, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v2.2",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "Space Mono",
-        toneSummary:
-          "High-conversion retail creative with dynamic pacing, kinetic typography, and bold product highlights designed for immediate customer engagement.",
-        toneTags: ["Conversion First", "Punchy Edits", "High CTR"],
-        colors: [
-          { name: "Vibrant Crimson", hex: "#E11D48" },
-          { name: "Neon Rose", hex: "#F43F5E" },
-          { name: "Pure White", hex: "#FFFFFF", isLight: true },
-          { name: "Jet Slate", hex: "#0F172A" },
-        ],
-        social: {
-          handle: "@shanmuga_growth",
-          followers: "64,200 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Shanmugaraj Growth Assets Drive",
-        figmaLink: "Shanmugaraj Master System",
-        lastAuditDate: "Sep 22, 2026",
-      },
-      pod: {
-        name: "Pod A",
-        tagline: "Creative & Brand Strategy",
-        leadName: "Vikram Malhotra",
-        leadTitle: "Pod A Lead Producer",
-        leadAvatar: "VM",
-        squad: [
-          { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
-          { name: "Ananya Deshmukh", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AD" },
-        ],
-        capacityAllocatedHrs: 30,
-        bandwidthPercent: 78,
-        dailySyncTime: "10:30 AM IST",
-      },
-      deliverables: [],
-    },
-    luma: {
-      id: "luma",
-      name: "Luma",
-      initials: "L",
-      industry: "Enterprise AI & Scaled Consumer Tech",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Nov 2023",
-      tier: "Enterprise Domination Retainer",
-      tierBadge: "ENTERPRISE DOMINATION",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 95000,
-      addon: "Add-on: 3D VFX Lead",
-      nextBilling: "Oct 12, 2026",
-      billingMethod: "Direct ACH Wire",
-      totalAssetsDelivered: 0,
-      totalAssetsQuota: 86,
-      postsDelivered: 0,
-      postsQuota: 30,
-      reelsDelivered: 0,
-      reelsQuota: 16,
-      storiesDelivered: 0,
-      storiesQuota: 40,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "Luma Executive Director",
-        title: "VP of Global Brand Marketing",
-        email: "antigravity9840@gmail.com",
-        phone: "+91 98404 55633",
-        renewedDate: "Sep 12, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v2.5",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "JetBrains Mono",
-        toneSummary:
-          "Institutional prestige meets kinetic AI interfaces. Sophisticated 3D physics rendering with uncompromising geometric precision.",
-        toneTags: ["Institutional", "3D Kinetic", "Global Scale"],
-        colors: [
-          { name: "Galaxy Blue", hex: "#1E40AF" },
-          { name: "Cyan Flare", hex: "#06B6D4" },
-          { name: "Obsidian Core", hex: "#0B111C" },
-          { name: "Pure Cloud", hex: "#F8FAFC", isLight: true },
-        ],
-        social: {
-          handle: "@luma_global",
-          followers: "128,400 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Luma Enterprise Asset Drive",
-        figmaLink: "Luma Global Design Tokens",
-        lastAuditDate: "Sep 25, 2026",
-      },
-      pod: {
-        name: "Pod A",
-        tagline: "Motion & High-Velocity Video Ops",
-        leadName: "Vikram Malhotra",
-        leadTitle: "Creative Lead & VFX Director",
-        leadAvatar: "VM",
-        squad: [
-          { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
-          { name: "Ananya Deshmukh", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AD" },
-        ],
-        capacityAllocatedHrs: 32,
-        bandwidthPercent: 80,
-        dailySyncTime: "11:30 AM IST",
-      },
-      deliverables: [],
-    },
-    apex: {
-      id: "apex",
-      name: "Apex Innovations",
-      initials: "AI",
-      industry: "Fintech & Algorithmic Infrastructure",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Jan 2024",
-      tier: "Brand Accelerator Retainer",
-      tierBadge: "BRAND ACCELERATOR",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 50000,
-      addon: "Add-on: Motion Specialist",
-      nextBilling: "Oct 15, 2026",
-      billingMethod: "Stripe Corporate ACH",
-      totalAssetsDelivered: 12,
-      totalAssetsQuota: 30,
-      postsDelivered: 8,
-      postsQuota: 15,
-      reelsDelivered: 2,
-      reelsQuota: 5,
-      storiesDelivered: 2,
-      storiesQuota: 10,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "David K.",
-        title: "VP of Product Marketing",
-        email: "ops@apexinnovations.co",
-        phone: "+91 98405 66744",
-        renewedDate: "Sep 15, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v2.4",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "JetBrains Mono",
-        toneSummary: "Institutional, enterprise fintech with sharp geometric clarity.",
-        toneTags: ["Algorithmic", "High Trust", "Global Scope"],
-        colors: [
-          { name: "Core Navy", hex: "#0F172A" },
-          { name: "Accent Azure", hex: "#2563EB" },
-          { name: "Cyan Highlight", hex: "#06B6D4" },
-          { name: "Clean Neutral", hex: "#F8FAFC", isLight: true },
-        ],
-        social: {
-          handle: "@apexinnovations",
-          followers: "94,000 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Apex Brand Vault",
-        figmaLink: "Apex Design System",
-        lastAuditDate: "Sep 15, 2026",
-      },
-      pod: {
-        name: "Pod A",
-        tagline: "Creative & Brand Strategy",
-        leadName: "Vikram Malhotra",
-        leadTitle: "Pod A Lead Producer",
-        leadAvatar: "VM",
-        squad: [
-          { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
-          { name: "Ananya Deshmukh", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AD" },
-        ],
-        capacityAllocatedHrs: 28,
-        bandwidthPercent: 75,
-        dailySyncTime: "10:30 AM IST",
-      },
-      deliverables: [],
-    },
-    nova: {
-      id: "nova",
-      name: "Nova Dynamics",
-      initials: "ND",
-      industry: "MedTech & Digital Health Platform",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Mar 2024",
-      tier: "Starter Growth Retainer",
-      tierBadge: "STARTER GROWTH",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 25000,
-      addon: "Add-on: Medical Illustrator",
-      nextBilling: "Oct 18, 2026",
-      billingMethod: "Stripe ACH Transfer",
-      totalAssetsDelivered: 6,
-      totalAssetsQuota: 20,
-      postsDelivered: 4,
-      postsQuota: 10,
-      reelsDelivered: 1,
-      reelsQuota: 4,
-      storiesDelivered: 1,
-      storiesQuota: 6,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "Priya Sharma",
-        title: "Director of Brand Communications",
-        email: "comms@novadynamics.org",
-        phone: "+91 98406 77855",
-        renewedDate: "Sep 18, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v2.1",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "JetBrains Mono",
-        toneSummary: "Empathetic, scientifically rigorous clinical communication with modern human-centric interfaces.",
-        toneTags: ["Clinical Trust", "Modern Care", "Accessible"],
-        colors: [
-          { name: "Care Emerald", hex: "#059669" },
-          { name: "Teal Glow", hex: "#0D9488" },
-          { name: "Soft Cyan", hex: "#ECFEFF", isLight: true },
-          { name: "Deep Slate", hex: "#0F172A" },
-        ],
-        social: {
-          handle: "@nova_dynamics",
-          followers: "48,000 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Nova Clinical Assets Drive",
-        figmaLink: "Nova Medical UI Kit",
-        lastAuditDate: "Sep 18, 2026",
-      },
-      pod: {
-        name: "Pod C",
-        tagline: "Creative Brand Engine",
-        leadName: "Rohan Mehta",
-        leadTitle: "Creative Communications Lead",
-        leadAvatar: "RM",
-        squad: [
-          { name: "Tanvi Sen", role: "Video Editor", hoursPerWeek: 16, avatar: "TS" },
-          { name: "Arjun Nair", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AN" },
-        ],
-        capacityAllocatedHrs: 32,
-        bandwidthPercent: 70,
-        dailySyncTime: "10:00 AM IST",
-      },
-      deliverables: [],
-    },
-    solaris: {
-      id: "solaris",
-      name: "Solaris Retail",
-      initials: "SR",
-      industry: "Clean Cosmetics & Luxury DTC",
-      timezone: "Client Time: IST (UTC+5:30)",
-      activeSince: "Active since Feb 2024",
-      tier: "Enterprise Domination Retainer",
-      tierBadge: "ENTERPRISE DOMINATION",
-      status: "ACTIVE RETAINER",
-      monthlyFee: 95000,
-      addon: "Add-on: Senior Colorist",
-      nextBilling: "Oct 22, 2026",
-      billingMethod: "Direct Corporate ACH",
-      totalAssetsDelivered: 14,
-      totalAssetsQuota: 60,
-      postsDelivered: 8,
-      postsQuota: 25,
-      reelsDelivered: 4,
-      reelsQuota: 15,
-      storiesDelivered: 2,
-      storiesQuota: 20,
-      sprintNumber: 44,
-      daysRemainingInSprint: 14,
-      contact: {
-        name: "Anya Taylor",
-        title: "Head of Brand & Visual Production",
-        email: "creative@solarisretail.com",
-        phone: "+91 98407 88966",
-        renewedDate: "Sep 22, 2026",
-        termMonths: 12,
-      },
-      brand: {
-        kitVersion: "Design Kit v1.9",
-        headingsFont: "Plus Jakarta Sans",
-        bodyFont: "Inter Sans",
-        monoFont: "Space Mono",
-        toneSummary: "Sensory, serene high-end beauty with warm editorial elegance and mindful self-care narratives.",
-        toneTags: ["Mindful Luxe", "Botanical", "Warm Editorial"],
-        colors: [
-          { name: "Blush Rose", hex: "#F43F5E" },
-          { name: "Petal Mist", hex: "#FFE4E6", isLight: true },
-          { name: "Sage Earth", hex: "#10B981" },
-          { name: "Soft Ivory", hex: "#FFFBEB", isLight: true },
-        ],
-        social: {
-          handle: "@solaris_beauty",
-          followers: "88,400 Followers",
-          status: "API CONNECTED",
-          syncInterval: "15m refresh",
-        },
-        brandVaultLink: "Solaris Brand Assets Drive",
-        figmaLink: "Solaris Design System",
-        lastAuditDate: "Sep 22, 2026",
-      },
-      pod: {
-        name: "Pod B",
-        tagline: "Visual & Lifestyle Retouching",
-        leadName: "Sarah Connor",
-        leadTitle: "Pod B Lead Producer",
-        leadAvatar: "SC",
-        squad: [
-          { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
-          { name: "Elena Rostova", role: "Graphic Designer", hoursPerWeek: 16, avatar: "ER" },
-        ],
-        capacityAllocatedHrs: 28,
-        bandwidthPercent: 78,
-        dailySyncTime: "11:00 AM IST",
-      },
-      deliverables: [],
-    },
+  const offboardClient = async (id: string, name: string) => {
+    if (removingClient) return;
+    setRemovingClient(true); setRemoveError(null);
+    try {
+      await request(`/api/v1/admin/clients/${id}/offboard`, { method: "POST" });
+      setRemovedClientIds(previous => new Set([...previous, id.toLowerCase()]));
+      setServerClients(previous => previous.filter(client => client.client_id !== id));
+      queryClient.setQueryData<ClientRosterItem[]>(["admin-client-roster", user?.id], previous => previous?.filter(client => client.client_id !== id));
+      void queryClient.invalidateQueries({ queryKey: ["admin-client-roster", user?.id] });
+      setSelectedClientId(null);
+      setIsCancelClientModalOpen(false); setIsRemoveClientModalOpen(false);
+      showToast(`Offboarded ${name}. Plan cancelled and account access revoked.`);
+    } catch (error) { setRemoveError(error instanceof Error ? error.message : "Unable to remove this client."); }
+    finally { setRemovingClient(false); }
   };
 
-  const mergedClientsData: Record<string, ClientDetailData> = { ...clientsData };
+  const mergedClientsData: Record<string, ClientDetailData> = { ...customClients };
 
   serverClients.forEach((sc) => {
     const emailParts = sc.email.split("@");
@@ -685,12 +268,40 @@ export function AdminClientsPage() {
       : rawEmailPart;
     const formattedName = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : "Client Account";
     const initials = formattedName.charAt(0).toUpperCase();
-    const tierName = sc.plan_display_name || sc.plan_name || "Enterprise Retainer";
+
+    // Determine lifecycle status:
+    const isPaid = Boolean(
+      (sc.subscription_status && ["active", "trialing", "paid"].includes(sc.subscription_status.toLowerCase())) ||
+      (sc.plan_name && sc.monthly_price && sc.monthly_price > 0)
+    );
+
+    const isOnboarded = Boolean(
+      sc.onboarding_completed_at ||
+      (typeof sc.onboarding_stage === "number" && sc.onboarding_stage >= 4)
+    );
+
+    const lifecycleStatus: "not_paid_not_onboarded" | "paid_not_onboarded" | "onboarded" = 
+      !isOnboarded
+        ? (!isPaid ? "not_paid_not_onboarded" : "paid_not_onboarded")
+        : "onboarded";
+
+    const lifecycleLabel =
+      lifecycleStatus === "not_paid_not_onboarded"
+        ? "user not paid and not onboarded yet"
+        : lifecycleStatus === "paid_not_onboarded"
+          ? "user paid but not onboarded"
+          : "Active Retainer";
+
+    const tierName = isPaid
+      ? (sc.plan_display_name || sc.plan_name || "Enterprise Retainer")
+      : "No Active Plan";
     const tier = tierName.toLowerCase();
+    const tierBadge = isPaid
+      ? (sc.plan_display_name || sc.plan_name || "ACTIVE").toUpperCase()
+      : "UNPAID";
     
     const podConfigs = [
       {
-        letter: "A",
         name: "Pod A",
         tagline: "Enterprise Brand Strategy & Video",
         leadName: "Vikram Malhotra",
@@ -700,9 +311,11 @@ export function AdminClientsPage() {
           { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
           { name: "Ananya Deshmukh", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AD" },
         ],
+        capacityAllocatedHrs: 32,
+        bandwidthPercent: 80,
+        dailySyncTime: "11:00 AM IST",
       },
       {
-        letter: "B",
         name: "Pod B",
         tagline: "Performance Creative & Motion Ops",
         leadName: "Sarah Connor",
@@ -712,9 +325,11 @@ export function AdminClientsPage() {
           { name: "Karthik Raja", role: "Video Editor", hoursPerWeek: 16, avatar: "KR" },
           { name: "Elena Rostova", role: "Graphic Designer", hoursPerWeek: 16, avatar: "ER" },
         ],
+        capacityAllocatedHrs: 32,
+        bandwidthPercent: 80,
+        dailySyncTime: "11:30 AM IST",
       },
       {
-        letter: "C",
         name: "Pod C",
         tagline: "3D Motion & Visual Design",
         leadName: "Rohan Mehta",
@@ -724,19 +339,38 @@ export function AdminClientsPage() {
           { name: "Tanvi Sen", role: "Video Editor", hoursPerWeek: 16, avatar: "TS" },
           { name: "Arjun Nair", role: "Graphic Designer", hoursPerWeek: 16, avatar: "AN" },
         ],
+        capacityAllocatedHrs: 32,
+        bandwidthPercent: 80,
+        dailySyncTime: "12:00 PM IST",
       },
     ];
     const podIdx = Math.abs(formattedName.charCodeAt(0) || 0) % podConfigs.length;
-    const pod = (podConfigs[podIdx] || podConfigs[0])!;
+    const basePod = (podConfigs[podIdx] || podConfigs[0])!;
 
-    const monthlyFee = tier.includes("starter") ? 25000 : tier.includes("growth") || tier.includes("brand") ? 50000 : 95000;
+    const assignedPod = !isOnboarded
+      ? {
+          name: isPaid ? "Awaiting Onboarding" : "Not Assigned",
+          tagline: isPaid ? "Intake questionnaire in progress" : "Pending payment & onboarding",
+          leadName: isPaid ? "To be assigned" : "Not Assigned",
+          leadTitle: isPaid ? "Pod Lead Pending" : "Creative Lead Pending",
+          leadAvatar: "—",
+          squad: [],
+          capacityAllocatedHrs: 0,
+          bandwidthPercent: 0,
+          dailySyncTime: "—",
+        }
+      : basePod;
+
+    const monthlyFee = isPaid
+      ? (sc.monthly_price || (tier.includes("starter") ? 25000 : tier.includes("growth") || tier.includes("brand") ? 50000 : 95000))
+      : 0;
     
-    const postsQuota = sc.quota_usage.find((q) => q.kind.toLowerCase() === "posts")?.quota || (tier.includes("starter") ? 8 : tier.includes("growth") ? 15 : 30);
-    const postsDelivered = sc.quota_usage.find((q) => q.kind.toLowerCase() === "posts")?.used || 0;
-    const reelsQuota = sc.quota_usage.find((q) => q.kind.toLowerCase() === "reels")?.quota || (tier.includes("starter") ? 4 : tier.includes("growth") ? 8 : 16);
-    const reelsDelivered = sc.quota_usage.find((q) => q.kind.toLowerCase() === "reels")?.used || 0;
-    const storiesQuota = sc.quota_usage.find((q) => q.kind.toLowerCase() === "stories")?.quota || (tier.includes("starter") ? 10 : tier.includes("growth") ? 20 : 40);
-    const storiesDelivered = sc.quota_usage.find((q) => q.kind.toLowerCase() === "stories")?.used || 0;
+    const postsQuota = (sc.quota_usage || []).find((q) => q?.kind?.toLowerCase() === "posts")?.quota || 0;
+    const postsDelivered = (sc.quota_usage || []).find((q) => q?.kind?.toLowerCase() === "posts")?.used || 0;
+    const reelsQuota = (sc.quota_usage || []).find((q) => q?.kind?.toLowerCase() === "reels")?.quota || 0;
+    const reelsDelivered = (sc.quota_usage || []).find((q) => q?.kind?.toLowerCase() === "reels")?.used || 0;
+    const storiesQuota = (sc.quota_usage || []).find((q) => q?.kind?.toLowerCase() === "stories")?.quota || 0;
+    const storiesDelivered = (sc.quota_usage || []).find((q) => q?.kind?.toLowerCase() === "stories")?.used || 0;
 
     // Check for match with existing baseline client
     const existingKey = Object.keys(mergedClientsData).find(
@@ -748,24 +382,87 @@ export function AdminClientsPage() {
 
     const existing = existingKey ? mergedClientsData[existingKey] : undefined;
 
+    const CANONICAL_PALETTE = ["#161F2D", "#7FA0D6", "#3E5A74", "#BCCCE6"];
+    const CANONICAL_ROLES = [
+      "Primary Brand",
+      "Accent / Secondary",
+      "Surface / Canvas",
+      "Glow / Highlight",
+    ];
+
+    const rawScPalette = Array.isArray((sc as any).brand_dna?.palette) && (sc as any).brand_dna.palette.length > 0
+      ? (sc as any).brand_dna.palette
+      : Array.isArray((sc as any).brand_dna?.visual_direction?.primary_colors) && (sc as any).brand_dna.visual_direction.primary_colors.length > 0
+        ? (sc as any).brand_dna.visual_direction.primary_colors
+        : [];
+
+    const extractedScList: string[] = [];
+    if (Array.isArray(rawScPalette)) {
+      rawScPalette.forEach((item: any) => {
+        const hex = typeof item === "string" ? item.trim() : (item?.hex || item?.color || "").trim();
+        if (hex && hex.startsWith("#")) {
+          extractedScList.push(hex.toUpperCase());
+        }
+      });
+    }
+
+    const finalScHexes: string[] = [0, 1, 2, 3].map((i) => extractedScList[i] || CANONICAL_PALETTE[i] || "#161F2D");
+    if (extractedScList.length > 4) {
+      for (let i = 4; i < extractedScList.length; i++) {
+        if (extractedScList[i]) {
+          finalScHexes.push(extractedScList[i]!);
+        }
+      }
+    }
+
+    const resolvedColors = finalScHexes.map((hex, idx) => ({
+      name: CANONICAL_ROLES[idx] || `Accent Tone ${idx + 1}`,
+      hex: hex || "#161F2D",
+    }));
+
+    const clientStatus =
+      lifecycleStatus === "not_paid_not_onboarded"
+        ? "user not paid and not onboarded yet"
+        : lifecycleStatus === "paid_not_onboarded"
+          ? "user paid but not onboarded"
+          : (sc.subscription_status || sc.account_status || "ACTIVE RETAINER").toUpperCase();
+
     if (existing) {
       const updated: ClientDetailData = {
         ...existing,
         id: sc.client_id || existing.id,
         initials: existing.initials || initials,
         name: existing.name || formattedName,
-        status: (sc.subscription_status || sc.account_status || existing.status).toUpperCase(),
-        totalAssetsDelivered: postsDelivered + reelsDelivered + storiesDelivered,
-        totalAssetsQuota: postsQuota + reelsQuota + storiesQuota,
-        postsDelivered,
-        postsQuota,
-        reelsDelivered,
-        reelsQuota,
-        storiesDelivered,
-        storiesQuota,
+        industry: (sc as any).industry || (sc as any).brand_dna?.industry || existing.industry || "Digital Growth & Direct-to-Consumer",
+        timezone: (sc as any).timezone || existing.timezone || "Client Time: IST (UTC+5:30)",
+        status: clientStatus,
+        isPaid,
+        isOnboarded,
+        lifecycleStatus,
+        lifecycleLabel,
+        onboardingStage: sc.onboarding_stage,
+        tier: tierName,
+        tierBadge,
+        monthlyFee,
+        pod: assignedPod,
+        totalAssetsDelivered: isOnboarded ? (postsDelivered + reelsDelivered + storiesDelivered) : 0,
+        totalAssetsQuota: isOnboarded ? (postsQuota + reelsQuota + storiesQuota) : 0,
+        postsDelivered: isOnboarded ? postsDelivered : 0,
+        postsQuota: isOnboarded ? postsQuota : 0,
+        reelsDelivered: isOnboarded ? reelsDelivered : 0,
+        reelsQuota: isOnboarded ? reelsQuota : 0,
+        storiesDelivered: isOnboarded ? storiesDelivered : 0,
+        storiesQuota: isOnboarded ? storiesQuota : 0,
         contact: {
           ...existing.contact,
+          name: sc.full_name || existing.contact.name || formattedName,
           email: sc.email || existing.contact.email,
+          phone: (sc as any).phone || (sc as any).brand_dna?.phone || (isOnboarded && existing.contact.phone && existing.contact.phone !== "+91 98401 23890" && existing.contact.phone !== "Not provided yet" ? existing.contact.phone : "Not provided yet"),
+        },
+        brand: {
+          ...existing.brand,
+          colors: resolvedColors.length > 0 ? resolvedColors : existing.brand.colors,
+          toneSummary: (sc as any).brand_summary || (sc as any).brand_dna?.summary_line || existing.brand.toneSummary,
         },
       };
       if (existingKey) {
@@ -777,68 +474,79 @@ export function AdminClientsPage() {
         id: sc.client_id,
         name: formattedName,
         initials,
-        industry: "Digital Growth & Direct-to-Consumer",
-        timezone: "Client Time: IST (UTC+5:30)",
-        activeSince: "Active Client",
+        industry: (sc as any).industry || (sc as any).brand_dna?.industry || "Digital Growth & Direct-to-Consumer",
+        timezone: (sc as any).timezone || "Client Time: IST (UTC+5:30)",
+        activeSince: isOnboarded ? "Active Client" : isPaid ? "Payment Confirmed" : "Registered Client",
         tier: tierName,
-        tierBadge: tierName.toUpperCase(),
-        status: (sc.subscription_status || sc.account_status || "ACTIVE RETAINER").toUpperCase(),
+        tierBadge,
+        status: clientStatus,
+        isPaid,
+        isOnboarded,
+        lifecycleStatus,
+        lifecycleLabel,
         monthlyFee,
-        addon: "Add-on: Creative Pod",
-        nextBilling: "Next Month Cycle",
-        billingMethod: "Direct ACH / Razorpay",
-        totalAssetsDelivered: postsDelivered + reelsDelivered + storiesDelivered,
-        totalAssetsQuota: postsQuota + reelsQuota + storiesQuota,
-        postsDelivered,
-        postsQuota,
-        reelsDelivered,
-        reelsQuota,
-        storiesDelivered,
-        storiesQuota,
-        sprintNumber: 44,
-        daysRemainingInSprint: 14,
+        onboardingStage: sc.onboarding_stage,
+        addon: isPaid && isOnboarded ? "Add-on: Creative Pod" : undefined,
+        nextBilling: isPaid ? "Next Month Cycle" : "—",
+        billingMethod: isPaid ? "Direct ACH / Razorpay" : "Unpaid",
+        totalAssetsDelivered: isOnboarded ? (postsDelivered + reelsDelivered + storiesDelivered) : 0,
+        totalAssetsQuota: isOnboarded ? (postsQuota + reelsQuota + storiesQuota) : 0,
+        postsDelivered: isOnboarded ? postsDelivered : 0,
+        postsQuota: isOnboarded ? postsQuota : 0,
+        reelsDelivered: isOnboarded ? reelsDelivered : 0,
+        reelsQuota: isOnboarded ? reelsQuota : 0,
+        storiesDelivered: isOnboarded ? storiesDelivered : 0,
+        storiesQuota: isOnboarded ? storiesQuota : 0,
+        sprintNumber: isOnboarded ? 44 : 0,
+        daysRemainingInSprint: isOnboarded ? 14 : 0,
         contact: {
-          name: formattedName,
+          name: sc.full_name || formattedName,
           title: "Account Owner & Authorized Contact",
           email: sc.email,
-          phone: "+91 98401 23890",
-          renewedDate: "Current Sprint",
-          termMonths: 12,
+          phone: (sc as any).phone || (sc as any).brand_dna?.phone || "Not provided yet",
+          renewedDate: !isPaid ? "Pending Subscription" : isOnboarded ? "Current Sprint" : "Payment Confirmed",
+          termMonths: isPaid ? 12 : 0,
         },
-        brand: {
-          kitVersion: "Design Kit v2.4",
-          headingsFont: "Plus Jakarta Sans",
-          bodyFont: "Inter Sans",
-          monoFont: "JetBrains Mono",
-          toneSummary: `Dynamic, high-impact social media creatives engineered for ${formattedName}. High-clarity typography with conversion-optimized video hooks.`,
-          toneTags: ["High Conversion", "Brand Authority", "Visual Polish"],
-          colors: [
-            { name: "Primary Deep Navy", hex: "#0F172A" },
-            { name: "Accent Royal Blue", hex: "#2563EB" },
-            { name: "Cyan Highlight", hex: "#06B6D4" },
-            { name: "Clean Neutral", hex: "#F8FAFC", isLight: true },
-          ],
-          social: {
-            handle: sc.instagram_username ? `@${sc.instagram_username}` : `@${emailParts[0] || "client"}`,
-            followers: "API Connected",
-            status: "API CONNECTED",
-            syncInterval: "15m refresh",
-          },
-          brandVaultLink: "Client Brand Vault Drive",
-          figmaLink: "Figma Master Design Kit",
-          lastAuditDate: "This Sprint",
-        },
-        pod: {
-          name: pod.name,
-          tagline: pod.tagline,
-          leadName: pod.leadName,
-          leadTitle: pod.leadTitle,
-          leadAvatar: pod.leadAvatar,
-          squad: pod.squad,
-          capacityAllocatedHrs: 32,
-          bandwidthPercent: 80,
-          dailySyncTime: "11:00 AM IST",
-        },
+        brand: !isOnboarded
+          ? {
+              kitVersion: isPaid ? "Pending Intake Form" : "Pending Onboarding",
+              headingsFont: "Pending Onboarding",
+              bodyFont: "Pending Onboarding",
+              monoFont: "Pending Onboarding",
+              toneSummary: isPaid
+                ? `user paid but not onboarded. Intake questionnaire is in progress for ${formattedName}. Brand guidelines and assets will be generated upon completion.`
+                : `user not paid and not onboarded yet. Brand guidelines and assets will be generated once ${formattedName} subscribes and completes onboarding.`,
+              toneTags: isPaid ? ["Payment Confirmed", "Awaiting Intake"] : ["Unpaid", "Not Onboarded"],
+              colors: isPaid && resolvedColors.length > 0 ? resolvedColors : [],
+              social: {
+                handle: sc.instagram_username ? `@${sc.instagram_username}` : "Not connected",
+                followers: isPaid ? "Awaiting Sync" : "Not Connected",
+                status: isPaid ? "AWAITING SYNC" : "NOT CONNECTED",
+                syncInterval: "—",
+              },
+              brandVaultLink: "Pending Onboarding",
+              figmaLink: "Pending Onboarding",
+              lastAuditDate: "—",
+            }
+          : {
+              kitVersion: "Design Kit v2.4",
+              headingsFont: "Plus Jakarta Sans",
+              bodyFont: "Inter Sans",
+              monoFont: "JetBrains Mono",
+              toneSummary: (sc as any).brand_summary || (sc as any).brand_dna?.summary_line || `Dynamic, high-impact social media creatives engineered for ${formattedName}. High-clarity typography with conversion-optimized video hooks.`,
+              toneTags: ["High Conversion", "Brand Authority", "Visual Polish"],
+              colors: resolvedColors,
+              social: {
+                handle: sc.instagram_username ? `@${sc.instagram_username}` : `@${emailParts[0] || "client"}`,
+                followers: "API Connected",
+                status: "API CONNECTED",
+                syncInterval: "15m refresh",
+              },
+              brandVaultLink: "Client Brand Vault Drive",
+              figmaLink: "Figma Master Design Kit",
+              lastAuditDate: "This Sprint",
+            },
+        pod: assignedPod,
         deliverables: [],
       };
     }
@@ -852,7 +560,12 @@ export function AdminClientsPage() {
       clientMap.set(key, c);
     }
   });
-  const clientList = Array.from(clientMap.values());
+  const clientList = Array.from(clientMap.values()).filter(
+    (c) =>
+      !removedClientIds.has(c.id.toLowerCase()) &&
+      !removedClientIds.has(c.name.toLowerCase()) &&
+      !removedClientIds.has((c.contact?.email || "").toLowerCase())
+  );
 
   useEffect(() => {
     if (urlClientId) {
@@ -860,8 +573,8 @@ export function AdminClientsPage() {
         (key) =>
           key.toLowerCase() === urlClientId.toLowerCase() ||
           mergedClientsData[key]?.id?.toLowerCase() === urlClientId.toLowerCase() ||
-          mergedClientsData[key]?.name.toLowerCase() === urlClientId.toLowerCase() ||
-          mergedClientsData[key]?.contact.email.toLowerCase() === urlClientId.toLowerCase() ||
+          mergedClientsData[key]?.name?.toLowerCase() === urlClientId.toLowerCase() ||
+          mergedClientsData[key]?.contact?.email?.toLowerCase() === urlClientId.toLowerCase() ||
           key.includes(urlClientId) ||
           urlClientId.includes(key)
       );
@@ -875,14 +588,141 @@ export function AdminClientsPage() {
     ? mergedClientsData[selectedClientId] ||
       clientList.find(
         (c) =>
-          c.id.toLowerCase() === selectedClientId.toLowerCase() ||
-          c.name.toLowerCase() === selectedClientId.toLowerCase() ||
-          c.contact.email.toLowerCase() === selectedClientId.toLowerCase()
+          c.id?.toLowerCase() === selectedClientId.toLowerCase() ||
+          c.name?.toLowerCase() === selectedClientId.toLowerCase() ||
+          c.contact?.email?.toLowerCase() === selectedClientId.toLowerCase()
       ) ||
-      mergedClientsData.ryze ||
       clientList[0] ||
       null
     : null;
+
+  const activeClientPendingNeg = useMemo(() => {
+    if (!negotiationsQuery.data || !activeClient) return null;
+    return negotiationsQuery.data.find(
+      (n) =>
+        n.status === "Pending Review" &&
+        ((n.clientId && n.clientId.toLowerCase() === activeClient.id.toLowerCase()) ||
+         (n.clientEmail && activeClient.contact?.email && n.clientEmail.toLowerCase() === activeClient.contact.email.toLowerCase()) ||
+         (n.clientName && activeClient.name && n.clientName.toLowerCase() === activeClient.name.toLowerCase()))
+    );
+  }, [negotiationsQuery.data, activeClient]);
+
+  
+  const [liveDeliverables, setLiveDeliverables] = useState<any[]>([]);
+  useEffect(() => {
+    if (activeClient?.id && !activeClient.id.includes('ryze')) {
+      fetchAdminDeliverables(activeClient.id)
+        .then((data) => {
+          setLiveDeliverables(data || []);
+        })
+        .catch(console.error);
+    } else {
+      setLiveDeliverables([]);
+    }
+  }, [activeClient?.id]);
+
+  const activeClientId = activeClient?.id;
+  const clientBrandQuery = useQuery({
+    queryKey: ["admin-client-brand-profile", activeClientId],
+    queryFn: () => fetchClientBrandProfile(activeClientId!),
+    enabled: !!activeClientId,
+  });
+  const liveBrandProfile = clientBrandQuery.data;
+
+  const [copiedHexIndex, setCopiedHexIndex] = useState<number | null>(null);
+
+  const handleCopyHex = (hex: string, index: number) => {
+    navigator.clipboard.writeText(hex);
+    setCopiedHexIndex(index);
+    setTimeout(() => setCopiedHexIndex(null), 2000);
+  };
+
+  const realColors = useMemo(() => {
+    const CANONICAL_PALETTE = ["#161F2D", "#7FA0D6", "#3E5A74", "#BCCCE6"];
+    const CANONICAL_ROLES = [
+      "Primary Brand",
+      "Accent / Secondary",
+      "Surface / Canvas",
+      "Glow / Highlight",
+    ];
+
+    const raw =
+      liveBrandProfile?.brand_dna?.palette ||
+      liveBrandProfile?.brand_dna?.visual_direction?.primary_colors ||
+      (activeClient?.brand?.colors && activeClient.brand.colors.length > 0
+        ? activeClient.brand.colors.map((c: any) => (typeof c === "string" ? c : c.hex))
+        : []);
+
+    const extractedList: string[] = [];
+    if (Array.isArray(raw)) {
+      raw.forEach((item: any) => {
+        const hex = typeof item === "string" ? item.trim() : (item?.hex || item?.color || "").trim();
+        if (hex && hex.startsWith("#")) {
+          extractedList.push(hex.toUpperCase());
+        }
+      });
+    }
+
+    // Always pad to 4 tokens minimum to match Client Portal tokens
+    const finalHexes: string[] = [0, 1, 2, 3].map((i) => extractedList[i] || CANONICAL_PALETTE[i] || "#161F2D");
+    if (extractedList.length > 4) {
+      for (let i = 4; i < extractedList.length; i++) {
+        if (extractedList[i]) {
+          finalHexes.push(extractedList[i]!);
+        }
+      }
+    }
+
+    return finalHexes.map((hex, idx) => ({
+      name: CANONICAL_ROLES[idx] || `Accent Tone ${idx + 1}`,
+      hex: hex || "#161F2D",
+    }));
+  }, [liveBrandProfile, activeClient]);
+
+  const realTypography = useMemo(() => {
+    const vis = liveBrandProfile?.brand_dna?.visual_direction;
+    const typo = liveBrandProfile?.brand_dna?.typography;
+    const headings = typo?.headline || vis?.headings_font || activeClient?.brand?.headingsFont || "Inter Display · 700 Bold";
+    const body = typo?.body || vis?.body_font || activeClient?.brand?.bodyFont || "Inter Sans · 400 Regular";
+    return {
+      headingsFont: typeof headings === "string" ? headings : "Inter Display · 700 Bold",
+      bodyFont: typeof body === "string" ? body : "Inter Sans · 400 Regular",
+      monoFont: "JetBrains Mono",
+    };
+  }, [liveBrandProfile, activeClient]);
+
+  const realTone = useMemo(() => {
+    const dna = liveBrandProfile?.brand_dna || {};
+    const toneObj = typeof dna.tone === "object" && dna.tone !== null ? dna.tone : {};
+    const rawTags =
+      Array.isArray(toneObj.voice_words) && toneObj.voice_words.length > 0
+        ? toneObj.voice_words
+        : Array.isArray(dna.tone_keywords) && dna.tone_keywords.length > 0
+          ? dna.tone_keywords
+          : typeof dna.tone === "string" && dna.tone.trim()
+            ? dna.tone.split(",").map((s: string) => s.trim()).filter(Boolean)
+            : (activeClient?.brand?.toneTags || ["Warm", "Premium", "Friendly"]);
+
+    const tags = Array.isArray(rawTags)
+      ? rawTags.map((t: any) => {
+          const str = typeof t === "string" ? t : (t?.name || t?.word || String(t));
+          return str.charAt(0).toUpperCase() + str.slice(1);
+        })
+      : ["Warm", "Premium", "Friendly"];
+
+    const rawSummary =
+      dna.summary_line ||
+      liveBrandProfile?.brand_summary ||
+      dna.positioning ||
+      activeClient?.brand?.toneSummary ||
+      `Engineered brand identity for ${activeClient?.name || "Client"}.`;
+
+    const summary = typeof rawSummary === "string" ? rawSummary : String(rawSummary || "");
+    const audience = dna.audience_segments?.[0]?.description || dna.target_audience || "";
+    const painPoints = dna.audience_segments?.[0]?.core_pain_point || dna.value_propositions || "";
+
+    return { summary, tags, audience, painPoints };
+  }, [liveBrandProfile, activeClient]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -897,31 +737,142 @@ export function AdminClientsPage() {
     showToast(`Revision requested for "${title}". Assigned specialist notified.`);
   };
 
-  const handleCreateRequest = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newRequestForm.title.trim()) return;
-    showToast(`New request "${newRequestForm.title}" submitted to ${activeClient?.pod.name}.`);
-    setIsNewRequestOpen(false);
-    setNewRequestForm({ title: "", type: "Reel", priority: "Standard", notes: "" });
+
+
+
+  const handleApprovePayment = async (req: ManualPaymentRequest) => {
+    const ok = await confirm({
+      title: "Approve Offline Payment Bypass",
+      description: `Confirm verification and approve offline payment claim for ${req.client_email}?`,
+      details: [
+        `Plan: ${req.plan_name} (₹${req.amount.toLocaleString()})`,
+        `Payment Method: ${req.payment_method.toUpperCase()}`,
+        `Client Reference / Note: ${req.reference_note || "None provided"}`,
+        "This will activate a manual subscription and bypass client onboarding up to Step 3, unlocking Step 4 (Brand Questionnaire) immediately.",
+      ],
+      confirmText: "Approve & Bypass Step 3",
+      cancelText: "Cancel",
+      tone: "success",
+      icon: "check",
+    });
+    if (!ok) return;
+
+    try {
+      setProcessingPaymentId(req.id);
+      await approveManualPayment(req.id, "Payment verified and approved by agency admin.");
+      await queryClient.invalidateQueries({ queryKey: ["admin-manual-payments"] });
+      await queryClient.invalidateQueries({ queryKey: ["admin-client-roster"] });
+      showToast(`Offline payment approved for ${req.client_email}! Step 3 bypassed to Step 4.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to approve payment request.");
+    } finally {
+      setProcessingPaymentId(null);
+    }
   };
+
+  const handleRejectPayment = async (req: ManualPaymentRequest) => {
+    const ok = await confirm({
+      title: "Decline Offline Payment Claim",
+      description: `Decline offline payment claim for ${req.client_email}?`,
+      details: [
+        `Plan: ${req.plan_name} (₹${req.amount.toLocaleString()})`,
+        `Payment Method: ${req.payment_method.toUpperCase()}`,
+        "The client will stay at Step 3 (Payment) and will receive notification of the decline.",
+      ],
+      confirmText: "Decline Request",
+      cancelText: "Keep Pending",
+      tone: "danger",
+      icon: "danger",
+    });
+    if (!ok) return;
+
+    try {
+      setProcessingPaymentId(req.id);
+      await rejectManualPayment(req.id, "Payment verification could not be validated.");
+      await queryClient.invalidateQueries({ queryKey: ["admin-manual-payments"] });
+      showToast(`Payment request for ${req.client_email} has been declined.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to decline payment request.");
+    } finally {
+      setProcessingPaymentId(null);
+    }
+  };
+
+  const handleDirectBypassSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directBypassTargetClient || !directBypassPlanId) return;
+
+    const chosenPlan = plansQuery.data?.find((p) => p.id === directBypassPlanId);
+    const planName = chosenPlan?.display_name || chosenPlan?.name || "Selected Plan";
+    const planPrice = chosenPlan ? `₹${(chosenPlan.price_minor / 100).toLocaleString()}/mo` : "";
+
+    const ok = await confirm({
+      title: "Confirm Direct Payment Bypass",
+      description: `Directly bypass Step 3 payment for ${directBypassTargetClient.name} (${directBypassTargetClient.email})?`,
+      details: [
+        `Target Client: ${directBypassTargetClient.name}`,
+        `Assigned Retainer: ${planName} ${planPrice}`,
+        `Payment Method: ${directBypassPaymentMethod.toUpperCase()}`,
+        `Admin Reference Note: ${directBypassNotes || "Direct offline payment bypass by Admin"}`,
+        "This will activate an active retainer subscription and advance the client's onboarding to Step 4 (Questionnaire).",
+      ],
+      confirmText: "Bypass Payment & Advance to Step 4",
+      cancelText: "Cancel",
+      tone: "success",
+      icon: "check",
+    });
+    if (!ok) return;
+
+    try {
+      setDirectBypassBusy(true);
+      await directBypassClientPayment(directBypassTargetClient.id, {
+        plan_id: directBypassPlanId,
+        payment_method: directBypassPaymentMethod,
+        notes: directBypassNotes || undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["admin-client-roster"] });
+      await queryClient.invalidateQueries({ queryKey: ["admin-manual-payments"] });
+      setIsDirectBypassModalOpen(false);
+      setDirectBypassTargetClient(null);
+      setDirectBypassNotes("");
+      showToast(`Payment successfully bypassed for ${directBypassTargetClient.name}! Advanced to Step 4.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to bypass client payment.");
+    } finally {
+      setDirectBypassBusy(false);
+    }
+  };
+
 
   const filteredClientList = clientList.filter((c) => {
     const matchesSearch =
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.industry.toLowerCase().includes(search.toLowerCase()) ||
       c.contact.email.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || c.status.toLowerCase().includes(statusFilter.toLowerCase());
+    
+    let matchesStatus = true;
+    if (statusFilter === "all") {
+      matchesStatus = true;
+    } else if (statusFilter === "active") {
+      matchesStatus = c.lifecycleStatus === "onboarded";
+    } else if (statusFilter === "paid_not_onboarded") {
+      matchesStatus = c.lifecycleStatus === "paid_not_onboarded";
+    } else if (statusFilter === "not_paid_not_onboarded") {
+      matchesStatus = c.lifecycleStatus === "not_paid_not_onboarded";
+    } else {
+      matchesStatus = c.status.toLowerCase().includes(statusFilter.toLowerCase());
+    }
     return matchesSearch && matchesStatus;
   });
 
-  const filteredDeliverables = activeClient?.deliverables.filter((d) => {
+  const filteredDeliverables = (liveDeliverables || []).filter((d) => {
     if (!deliverableSearch.trim()) return true;
-    return (
-      d.title.toLowerCase().includes(deliverableSearch.toLowerCase()) ||
-      d.description.toLowerCase().includes(deliverableSearch.toLowerCase()) ||
-      d.assignedTo.toLowerCase().includes(deliverableSearch.toLowerCase())
-    );
-  }) || [];
+    const searchLower = deliverableSearch.toLowerCase();
+    const title = (d.title || "").toLowerCase();
+    const desc = (d.description || "").toLowerCase();
+    const assigned = (d.assignedTo || d.assigned_name || "").toLowerCase();
+    return title.includes(searchLower) || desc.includes(searchLower) || assigned.includes(searchLower);
+  });
 
   return (
     <div data-surface="ops" className="w-full min-h-screen font-sans bg-[#0B111C] flex flex-col">
@@ -930,7 +881,7 @@ export function AdminClientsPage() {
         activeTab="Client Details"
       />
 
-      <main className="flex-1 px-6 lg:px-10 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6">
+      <main className="flex-1 px-6 lg:px-10 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-4 sm:space-y-6">
         {toast && (
           <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-2xl flex items-center justify-between shadow-sm animate-fade-in">
             <div className="flex items-center gap-2">
@@ -947,7 +898,7 @@ export function AdminClientsPage() {
             VIEW 1: CLIENT ROSTER / DIRECTORY (WHEN NO CLIENT IS SELECTED)
         ═════════════════════════════════════════════════════════════════════ */}
         {!selectedClientId ? (
-          <div className="space-y-6 animate-fade-in">
+          <div className="space-y-4 sm:space-y-6 animate-fade-in">
             {/* Controls */}
             <div className="flex flex-col sm:flex-row items-center gap-3">
               <div className="relative flex-1 w-full">
@@ -961,9 +912,9 @@ export function AdminClientsPage() {
                 />
               </div>
               <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-                <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200 shrink-0">
+                <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 text-xs font-bold border border-emerald-500/20 shrink-0">
                   <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                  {clientList.length} Active Retainers
+                  {clientList.filter(c => c.lifecycleStatus === "onboarded").length} Active · {clientList.length} Total Clients
                 </span>
                 <div className="flex items-center gap-1.5">
                   <Filter className="size-4 text-[#97A0B3]" />
@@ -974,79 +925,223 @@ export function AdminClientsPage() {
                     options={[
                       { value: "all", label: "All Statuses" },
                       { value: "active", label: "Active Retainers" },
-                      { value: "enterprise", label: "Enterprise Retainers" },
-                      { value: "growth", label: "Growth Retainers" },
+                      { value: "paid_not_onboarded", label: "User Paid • Not Onboarded" },
+                      { value: "not_paid_not_onboarded", label: "User Not Paid • Not Onboarded" },
                     ]}
                   />
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIsManualPaymentsModalOpen(true)}
+                  className="px-3.5 py-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shrink-0"
+                >
+                  <Banknote className="w-4 h-4 text-amber-400" />
+                  <span>Offline Payments</span>
+                  {pendingManualPayments.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-black leading-none">
+                      {pendingManualPayments.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsOnboardClientModalOpen(true)}
+                  className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:brightness-110 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-600/20 cursor-pointer transition-all shrink-0"
+                >
+                  <Plus className="w-4 h-4" /> Onboard Client
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setRemoveError(null); setClientToRemoveInput(clientList[0]?.id || ""); setIsRemoveClientModalOpen(true); }}
+                  className="px-3 py-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Remove Client
+                </button>
               </div>
             </div>
 
             {/* Client Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredClientList.map((client) => (
-                <div
-                  key={client.id}
-                  onClick={() => setSelectedClientId(client.id)}
-                  className="bg-[#161F2D]/80 backdrop-blur-xl rounded-3xl p-6 border border-[#2A3446]/80 shadow-xl space-y-5 hover:shadow-2xl hover:border-[#7FA0D6]/40 transition-all cursor-pointer group flex flex-col justify-between"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-2xl bg-[#0F172A] text-white font-black text-lg flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
-                          {client.initials}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <h3 className="font-bold text-base text-white group-hover:text-[#7FA0D6] transition-colors">
-                              {client.name}
-                            </h3>
-                            <CheckCircle2 className="w-4 h-4 text-[#7FA0D6] fill-blue-600 text-white" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-6">
+              {filteredClientList.map((client) => {
+                const isNotPaidNotOnboarded = client.lifecycleStatus === "not_paid_not_onboarded";
+                const isPaidNotOnboarded = client.lifecycleStatus === "paid_not_onboarded";
+                const isOnboarded = client.lifecycleStatus === "onboarded";
+
+                return (
+                  <div
+                    key={client.id}
+                    onClick={() => setSelectedClientId(client.id)}
+                    className="bg-[#161F2D]/80 backdrop-blur-xl rounded-3xl p-4 sm:p-6 border border-[#2A3446]/80 shadow-xl space-y-5 hover:shadow-2xl hover:border-[#7FA0D6]/40 transition-all cursor-pointer group flex flex-col justify-between"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-12 h-12 rounded-2xl bg-[#0B111C] text-white font-black text-lg flex items-center justify-center shadow-md group-hover:scale-105 transition-transform shrink-0">
+                            {client.initials}
                           </div>
-                          <span className="text-[11px] text-[#97A0B3] font-medium block truncate max-w-[200px]">
-                            {client.industry}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <h3 className="font-bold text-base text-white group-hover:text-[#7FA0D6] transition-colors truncate">
+                                {client.name}
+                              </h3>
+                              {isOnboarded && (
+                                <CheckCircle2 className="w-4 h-4 text-[#7FA0D6] fill-blue-600 text-white shrink-0" />
+                              )}
+                            </div>
+                            <span className="text-[11px] text-[#97A0B3] font-medium block truncate max-w-[200px]">
+                              {client.industry}
+                            </span>
+                          </div>
+                        </div>
+
+                        {isNotPaidNotOnboarded ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0 whitespace-nowrap">
+                            user not paid and not onboarded yet
+                          </span>
+                        ) : isPaidNotOnboarded ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500/15 text-sky-400 border border-sky-500/30 shrink-0 whitespace-nowrap">
+                            user paid but not onboarded
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
+                            {client.status.replace(" RETAINER", "") || "ACTIVE"}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="p-3 bg-[#0B111C]/80 rounded-2xl space-y-1.5 text-xs text-[#F1F5F9] border border-[#2A3446]">
+                        <div className="flex justify-between">
+                          <span className="font-medium text-[#97A0B3]">Retainer:</span>
+                          <span className="font-bold text-white">
+                            {isNotPaidNotOnboarded ? "₹0 (Unpaid)" : `₹${(client.monthlyFee ?? 0).toLocaleString()}/mo`}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-medium text-[#97A0B3]">Assigned Pod:</span>
+                          <span className={`font-bold ${isOnboarded ? "text-[#7FA0D6]" : "text-[#97A0B3]"}`}>
+                            {client.pod?.name || (isPaidNotOnboarded ? "Awaiting Onboarding" : "Not Assigned")}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-medium text-[#97A0B3]">Primary Contact:</span>
+                          <span className="font-semibold text-white truncate max-w-[170px]">
+                            {client.contact?.name || client.name}
                           </span>
                         </div>
                       </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                        {client.status.replace(" RETAINER", "")}
+
+                      {(() => {
+                        const cardNeg = (negotiationsQuery.data || []).find(
+                          (n) =>
+                            n.status === "Pending Review" &&
+                            ((n.clientId && n.clientId.toLowerCase() === client.id.toLowerCase()) ||
+                             (n.clientEmail && client.contact?.email && n.clientEmail.toLowerCase() === client.contact.email.toLowerCase()) ||
+                             (n.clientName && client.name && n.clientName.toLowerCase() === client.name.toLowerCase()))
+                        );
+                        if (!cardNeg) return null;
+                        return (
+                          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[11px] font-bold">
+                            <span className="flex items-center gap-1.5 truncate">
+                              <Zap className="size-3 text-purple-400 animate-pulse shrink-0" />
+                              <span className="truncate">Negotiation: {cardNeg.proposedOffer || "Pending"}</span>
+                            </span>
+                            <Link
+                              to={`/admin/plans?negId=${cardNeg.id}&clientId=${client.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-purple-300 hover:text-white underline text-[10px] font-black shrink-0 ml-1"
+                            >
+                              Review &rarr;
+                            </Link>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="pt-3 border-t border-[#2A3446] flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[#97A0B3] font-medium">
+                          {isOnboarded
+                            ? `${(client.deliverables || []).length} Deliverables Active`
+                            : isPaidNotOnboarded
+                            ? "Awaiting Onboarding Form"
+                            : "Account Not Onboarded"}
+                        </span>
+                        {isNotPaidNotOnboarded && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDirectBypassTargetClient({
+                                id: client.id,
+                                name: client.name,
+                                email: client.contact?.email || "",
+                              });
+                              setDirectBypassPlanId(plansQuery.data?.[0]?.id || "");
+                              setIsDirectBypassModalOpen(true);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                            title="Bypass payment for client who paid offline"
+                          >
+                            <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Bypass Payment</span>
+                          </button>
+                        )}
+                      </div>
+                      <span className="text-[#7FA0D6] font-bold group-hover:underline flex items-center gap-1">
+                        View Client Detail View &rarr;
                       </span>
                     </div>
-
-                    <div className="p-3 bg-[#0B111C]/80 rounded-2xl space-y-1.5 text-xs text-[#F1F5F9] border border-[#2A3446]">
-                      <div className="flex justify-between">
-                        <span className="font-medium text-[#97A0B3]">Retainer:</span>
-                        <span className="font-bold text-white">₹{client.monthlyFee.toLocaleString()}/mo</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium text-[#97A0B3]">Assigned Pod:</span>
-                        <span className="font-bold text-[#7FA0D6]">{client.pod.name} ({client.pod.tagline})</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium text-[#97A0B3]">Primary Contact:</span>
-                        <span className="font-semibold text-white">{client.contact.name}</span>
-                      </div>
-                    </div>
                   </div>
-
-                  <div className="pt-3 border-t border-[#2A3446] flex items-center justify-between text-xs">
-                    <span className="text-[#97A0B3] font-medium">{client.deliverables.length} Deliverables Active</span>
-                    <span className="text-[#7FA0D6] font-bold group-hover:underline flex items-center gap-1">
-                      View Client Detail View &rarr;
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
-        ) : (
-          /* ═════════════════════════════════════════════════════════════════════
-              VIEW 2: DEDICATED CLIENT DETAIL VIEW (MATCHING USER SCREENSHOT)
-          ═════════════════════════════════════════════════════════════════════ */
-          <div className="space-y-6 animate-fade-in">
+        ) : !activeClient ? (
+          <div className="py-20 text-center space-y-4">
+            <div className="inline-block p-4 rounded-2xl bg-[#161F2D] border border-[#2A3446]">
+              <Clock className="w-8 h-8 text-[#7FA0D6] mx-auto animate-pulse" />
+            </div>
+            <h3 className="text-base font-bold text-white">Loading Client Details...</h3>
+            <p className="text-xs text-[#97A0B3]">Synchronizing live roster and brand profile.</p>
+            <button
+              type="button"
+              onClick={() => setSelectedClientId(null)}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all cursor-pointer"
+            >
+              Back to Client Roster
+            </button>
+          </div>
+        ) : (() => {
+            const displayName = liveBrandProfile?.company_name || activeClient?.name || "Client";
+            const displayIndustry = liveBrandProfile?.industry || activeClient?.industry || "Digital Growth & Direct-to-Consumer";
+            const displayTimezone = liveBrandProfile?.timezone || activeClient?.timezone || "Client Time: IST (UTC+5:30)";
+            const displaySignerName = liveBrandProfile?.full_name || activeClient?.contact?.name || activeClient?.name || "Authorized Contact";
+            const displaySignerEmail = liveBrandProfile?.email || activeClient?.contact?.email || "";
+            const displayInitials = (displayName || "C").trim().split(/\s+/).filter(Boolean).map((w: string) => w[0]).slice(0, 2).join("").toUpperCase() || "C";
+
+            const isClientPaid = Boolean(
+              (liveBrandProfile?.subscription?.status && ["active", "trialing", "paid"].includes(liveBrandProfile.subscription.status.toLowerCase())) ||
+              activeClient?.isPaid ||
+              (activeClient?.monthlyFee && activeClient.monthlyFee > 0)
+            );
+            const isClientOnboarded = Boolean(
+              liveBrandProfile?.onboarding_completed_at ||
+              (typeof liveBrandProfile?.onboarding_stage === "number" && liveBrandProfile.onboarding_stage >= 4) ||
+              activeClient?.isOnboarded
+            );
+            const detailLifecycleStatus: "not_paid_not_onboarded" | "paid_not_onboarded" | "onboarded" = 
+              !isClientOnboarded
+                ? (!isClientPaid ? "not_paid_not_onboarded" : "paid_not_onboarded")
+                : "onboarded";
+
+            const isNotPaidNotOnboarded = detailLifecycleStatus === "not_paid_not_onboarded";
+            const isPaidNotOnboarded = detailLifecycleStatus === "paid_not_onboarded";
+
+            return (
+          <div className="space-y-4 sm:space-y-6 animate-fade-in">
             {/* Top Breadcrumb & Live Status */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#97A0B3]">
+              <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-bold text-[#97A0B3] flex-wrap">
                 <button
                   type="button"
                   onClick={() => setSelectedClientId(null)}
@@ -1057,73 +1152,184 @@ export function AdminClientsPage() {
                 <span>/</span>
                 <span className="text-[#97A0B3]">Client Details</span>
                 <span>/</span>
-                <span className="text-white font-black">{activeClient?.name}</span>
+                <span className="text-white font-black">{displayName}</span>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#161F2D] text-white border border-[#2A3446] flex items-center gap-1.5 shadow-2xs">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Live Client • v2.4
-                </span>
+                {isNotPaidNotOnboarded && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!activeClient) return;
+                      setDirectBypassTargetClient({
+                        id: activeClient.id,
+                        name: activeClient.name,
+                        email: activeClient.contact?.email || "",
+                      });
+                      setDirectBypassPlanId(plansQuery.data?.[0]?.id || "");
+                      setIsDirectBypassModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Bypass Step 3 Payment</span>
+                  </button>
+                )}
+                {isNotPaidNotOnboarded ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1.5 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    user not paid and not onboarded yet
+                  </span>
+                ) : isPaidNotOnboarded ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-sky-500/15 text-sky-400 border border-sky-500/30 flex items-center gap-1.5 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                    user paid but not onboarded
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#161F2D] text-white border border-[#2A3446] flex items-center gap-1.5 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Live Client • Onboarded
+                  </span>
+                )}
               </div>
             </div>
 
+            {/* Lifecycle Notification Banner */}
+            {activeClientPendingNeg && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-purple-950/40 via-[#161F2D] to-blue-950/40 border-2 border-purple-500/50 text-purple-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg animate-fade-in">
+                <div className="flex items-start gap-3.5">
+                  <div className="size-9 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center shrink-0 mt-0.5">
+                    <Zap className="size-5 text-purple-400 animate-pulse" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-black uppercase tracking-wider text-purple-300">
+                        Client Plan Negotiation Action Required
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-black">
+                        Offer: {activeClientPendingNeg.proposedOffer || "Custom Offer"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#F1F5F9]">
+                      This client requested custom pricing terms for: <strong>{activeClientPendingNeg.targetTopic}</strong>.
+                      {activeClientPendingNeg.notes && (
+                        <span className="text-[#97A0B3] italic block mt-0.5">
+                          "{activeClientPendingNeg.notes}"
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  to={`/admin/plans?negId=${activeClientPendingNeg.id}&clientId=${activeClient?.id}`}
+                  className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-md transition-all hover:scale-105 active:scale-95"
+                >
+                  Review & Accept Retainer <ArrowUpRight className="w-4 h-4" />
+                </Link>
+              </div>
+            )}
+
+            {isNotPaidNotOnboarded && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-start gap-3.5 shadow-sm">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-amber-400">
+                    user not paid and not onboarded yet
+                  </h3>
+                  <p className="text-xs text-[#F1F5F9] leading-relaxed">
+                    This client account has logged in but has not subscribed or paid for any retainer plan and has not completed the onboarding intake. Mock data has been disabled: retainer fee is ₹0, and no creative pod or design assets are assigned.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {isPaidNotOnboarded && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-300 flex items-start gap-3.5 shadow-sm">
+                <Sparkles className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-sky-400">
+                    user paid but not onboarded
+                  </h3>
+                  <p className="text-xs text-[#F1F5F9] leading-relaxed">
+                    Subscription payment is verified and active ({activeClient?.tier || "Paid Plan"}). However, the client has not finalized their brand onboarding questionnaire yet (Stage {liveBrandProfile?.onboarding_stage || 1} of 4). Creative Pod and Brand DNA will be generated once intake is completed.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Client Header Card matching Screenshot */}
             <div className="bg-[#161F2D] rounded-3xl p-6 lg:p-7 border border-[#2A3446] shadow-[0_4px_30px_rgba(0,0,0,0.03)] space-y-4">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-                <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-2xl bg-[#0F172A] text-white font-black text-2xl flex items-center justify-center shadow-lg shrink-0">
-                    {activeClient?.initials}
+              <div className="flex flex-col gap-6">
+                <div className="flex items-start gap-4 min-w-0">
+                  <div className="w-16 h-16 rounded-2xl bg-[#0B111C] text-white font-black text-2xl flex items-center justify-center shadow-lg shrink-0">
+                    {displayInitials}
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2.5">
-                      <h1 className="text-2xl font-black text-white tracking-tight">
-                        {activeClient?.name}
+                      <h1 className="text-2xl font-black text-white tracking-tight break-words">
+                        {displayName}
                       </h1>
-                      <CheckCircle2 className="w-5 h-5 text-[#7FA0D6] fill-blue-600 text-white" />
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30 text-[10px] font-black uppercase tracking-wider">
-                        {activeClient?.tierBadge}
-                      </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {activeClient?.status}
-                      </span>
+                      {isNotPaidNotOnboarded ? (
+                        <>
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[10px] font-black uppercase tracking-wider">
+                            UNPAID
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[10px] font-black tracking-wider flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            user not paid and not onboarded yet
+                          </span>
+                        </>
+                      ) : isPaidNotOnboarded ? (
+                        <>
+                          <span className="px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30 text-[10px] font-black uppercase tracking-wider">
+                            {activeClient?.tierBadge || "PAID PLAN"}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30 text-[10px] font-black tracking-wider flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+                            user paid but not onboarded
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-5 h-5 text-[#7FA0D6] fill-blue-600 text-white" />
+                          <span className="px-2.5 py-0.5 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30 text-[10px] font-black uppercase tracking-wider">
+                            {activeClient?.tierBadge || "ACTIVE"}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            {activeClient?.status || "ACTIVE"}
+                          </span>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#97A0B3] font-medium">
                       <span className="flex items-center gap-1">
                         <Folder className="w-3.5 h-3.5 text-[#97A0B3]" />
-                        {activeClient?.industry}
+                        {displayIndustry}
                       </span>
                       <span>•</span>
                       <span className="flex items-center gap-1">
                         <Clock className="w-3.5 h-3.5 text-[#97A0B3]" />
-                        {activeClient?.timezone}
+                        {displayTimezone}
                       </span>
                       <span>•</span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3.5 h-3.5 text-[#97A0B3]" />
-                        {activeClient?.activeSince}
+                        {activeClient?.activeSince || "Active Retainer"}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 {/* Header Action Buttons */}
-                <div className="flex items-center gap-2.5 shrink-0">
+                <div className="flex flex-wrap items-center gap-2.5 w-full border-t border-[#2A3446] pt-4">
                   <Link
-                    to={`/admin/clients/${activeClient?.id || "ryze"}/brand`}
+                    to={`/admin/clients/${liveBrandProfile?.client_id || activeClient?.id || ""}/brand`}
                     className="px-4 py-2.5 rounded-xl border border-[#7FA0D6]/40 bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/25 text-xs font-bold text-[#7FA0D6] flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-[#7FA0D6]" /> Brand Brief & Profile
                   </Link>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditProfileOpen(true)}
-                    className="px-4 py-2.5 rounded-xl border border-[#2A3446] bg-[#161F2D] hover:bg-[#0B111C] text-xs font-bold text-[#F1F5F9] flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-[#97A0B3]" /> Edit Profile
-                  </button>
                   <button
                     type="button"
                     onClick={() => setIsInvoiceModalOpen(true)}
@@ -1133,17 +1339,17 @@ export function AdminClientsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIsNewRequestOpen(true)}
-                    className="px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                    onClick={() => { setRemoveError(null); setIsCancelClientModalOpen(true); }}
+                    className="px-4 py-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-xs font-bold text-rose-400 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all"
                   >
-                    <Plus className="w-4 h-4 stroke-[3]" /> New Request
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Remove Client & Cancel Plan
                   </button>
                 </div>
               </div>
             </div>
 
             {/* 4 Main Grid Cards matching Screenshot (2x2) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 sm:gap-6">
               {/* CARD 1: PRIMARY CONTACT */}
               <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5 flex flex-col justify-between">
                 <div className="space-y-4">
@@ -1151,18 +1357,18 @@ export function AdminClientsPage() {
                     <span className="text-[11px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
                       PRIMARY CONTACT
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold">
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold">
                       Authorized Signer
                     </span>
                   </div>
 
                   <div className="flex items-center gap-3.5">
                     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-black text-base flex items-center justify-center shadow-md">
-                      {activeClient?.contact.name[0]}
+                      {displayInitials[0] || "C"}
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-white">{activeClient?.contact.name}</h3>
-                      <p className="text-xs text-[#97A0B3] font-medium">{activeClient?.contact.title}</p>
+                      <h3 className="text-base font-bold text-white">{displaySignerName}</h3>
+                      <p className="text-xs text-[#97A0B3] font-medium">{activeClient?.contact?.title || "Account Owner & Authorized Contact"}</p>
                     </div>
                   </div>
 
@@ -1172,8 +1378,8 @@ export function AdminClientsPage() {
                         <Mail className="w-4 h-4 text-[#97A0B3]" />
                         <span>Email</span>
                       </div>
-                      <a href={`mailto:${activeClient?.contact.email}`} className="text-[#7FA0D6] font-bold hover:underline">
-                        {activeClient?.contact.email}
+                      <a href={`mailto:${displaySignerEmail}`} className="text-[#7FA0D6] font-bold hover:underline">
+                        {displaySignerEmail || "N/A"}
                       </a>
                     </div>
 
@@ -1182,17 +1388,23 @@ export function AdminClientsPage() {
                         <Phone className="w-4 h-4 text-[#97A0B3]" />
                         <span>Direct Phone</span>
                       </div>
-                      <span className="font-bold text-white font-mono">{activeClient?.contact.phone}</span>
+                      <span className="font-bold text-white font-mono">
+                        {liveBrandProfile?.phone ||
+                          (liveBrandProfile?.brand_dna as any)?.phone ||
+                          (activeClient?.contact?.phone && activeClient.contact.phone !== "+91 98401 23890" && activeClient.contact.phone !== "Not provided yet"
+                            ? activeClient.contact.phone
+                            : "Not provided yet")}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between text-xs text-[#97A0B3] pt-3 border-t border-[#2A3446] font-medium">
-                  <span className="flex items-center gap-1 text-emerald-700 font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    Contract renewed: {activeClient?.contact.renewedDate}
+                  <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Contract: {isNotPaidNotOnboarded ? "Pending Subscription" : isPaidNotOnboarded ? "Payment Confirmed" : (activeClient?.contact?.renewedDate || "Current Sprint")}
                   </span>
-                  <span>Term: {activeClient?.contact.termMonths} Mo</span>
+                  <span>Term: {isNotPaidNotOnboarded ? "—" : `${activeClient?.contact?.termMonths ?? 12} Mo`}</span>
                 </div>
               </div>
 
@@ -1203,17 +1415,21 @@ export function AdminClientsPage() {
                     <span className="text-[11px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
                       TIER TERMS & SCOPE
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] text-[10px] font-bold border border-[#7FA0D6]/30">
-                      Active Cycle
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${isNotPaidNotOnboarded ? "bg-amber-500/15 text-amber-400 border-amber-500/30" : isPaidNotOnboarded ? "bg-sky-500/15 text-sky-400 border-sky-500/30" : "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30"}`}>
+                      {isNotPaidNotOnboarded ? "Unpaid" : isPaidNotOnboarded ? "Payment Verified" : "Active Cycle"}
                     </span>
                   </div>
 
                   <div className="flex items-baseline justify-between">
                     <div>
-                      <span className="text-3xl font-black text-white">₹{activeClient?.monthlyFee.toLocaleString()}</span>
-                      <span className="text-xs font-bold text-[#97A0B3]"> /mo</span>
+                      <span className="text-3xl font-black text-white">
+                        {isNotPaidNotOnboarded ? "₹0" : `₹${(activeClient?.monthlyFee ?? 0).toLocaleString()}`}
+                      </span>
+                      <span className="text-xs font-bold text-[#97A0B3]">
+                        {isNotPaidNotOnboarded ? " /mo (Unpaid Account)" : " /mo"}
+                      </span>
                     </div>
-                    {activeClient?.addon && (
+                    {activeClient?.addon && isClientOnboarded && (
                       <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200 flex items-center gap-1">
                         <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
                         {activeClient.addon}
@@ -1222,48 +1438,61 @@ export function AdminClientsPage() {
                   </div>
 
                   <p className="text-xs text-[#97A0B3]">
-                    Next billing scheduled for {activeClient?.nextBilling} via {activeClient?.billingMethod}.
+                    {isNotPaidNotOnboarded
+                      ? "No active subscription billing scheduled. Client has not subscribed to any plan."
+                      : isPaidNotOnboarded
+                      ? "Subscription payment confirmed. Creative production starts once onboarding is submitted."
+                      : `Next billing scheduled for ${activeClient?.nextBilling || "Next Month"} via ${activeClient?.billingMethod || "Direct ACH"}.`}
                   </p>
 
                   {/* Monthly Output Burn bar */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="text-[#F1F5F9]">Monthly Output Burn</span>
-                      <span className="text-[#7FA0D6]">
-                        {activeClient?.totalAssetsDelivered} / {activeClient?.totalAssetsQuota} Assets Delivered (
-                        {Math.round(((activeClient?.totalAssetsDelivered || 0) / (activeClient?.totalAssetsQuota || 1)) * 100)}%)
-                      </span>
+                  {!isClientOnboarded ? (
+                    <div className="p-3 bg-[#0B111C]/60 rounded-2xl border border-[#2A3446] text-xs text-[#97A0B3]">
+                      <span className="font-bold text-white block mb-0.5">Production Queue Inactive</span>
+                      {isPaidNotOnboarded
+                        ? "Asset deliveries and quota burn will activate as soon as onboarding intake is complete."
+                        : "Asset production and quota burn are inactive because user is not paid and not onboarded yet."}
                     </div>
-                    <div className="w-full bg-[#1F2C3F] rounded-full h-2.5 overflow-hidden">
-                      <div
-                        className="bg-[#2563EB] h-full rounded-full transition-all"
-                        style={{
-                          width: `${Math.min(
-                            (((activeClient?.totalAssetsDelivered || 0) / (activeClient?.totalAssetsQuota || 1)) * 100),
-                            100
-                          )}%`,
-                        }}
-                      />
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="text-[#F1F5F9]">Monthly Output Burn</span>
+                        <span className="text-[#7FA0D6]">
+                          {activeClient?.totalAssetsDelivered ?? 0} / {activeClient?.totalAssetsQuota ?? 0} Assets Delivered (
+                          {Math.round((((activeClient?.totalAssetsDelivered || 0) / (activeClient?.totalAssetsQuota || 1)) * 100))}%)
+                        </span>
+                      </div>
+                      <div className="w-full bg-[#161F2D] rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="bg-[#7FA0D6] h-full rounded-full transition-all"
+                          style={{
+                            width: `${Math.min(
+                              (((activeClient?.totalAssetsDelivered || 0) / (activeClient?.totalAssetsQuota || 1)) * 100),
+                              100
+                            )}%`,
+                          }}
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  {/* 3 Metric Counters matching Screenshot */}
-                  <div className="grid grid-cols-3 gap-3 pt-1">
+                  {/* 3 Metric Counters */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 pt-1">
                     <div className="p-3 bg-[#0B111C] rounded-2xl text-center space-y-0.5 border border-[#2A3446]">
                       <span className="text-sm font-black text-white">
-                        {activeClient?.postsDelivered}/{activeClient?.postsQuota}
+                        {isClientOnboarded ? `${activeClient?.postsDelivered ?? 0}/${activeClient?.postsQuota ?? 0}` : "0/0"}
                       </span>
                       <span className="text-[10px] font-bold text-[#97A0B3] block uppercase">POSTS</span>
                     </div>
                     <div className="p-3 bg-[#0B111C] rounded-2xl text-center space-y-0.5 border border-[#2A3446]">
                       <span className="text-sm font-black text-white">
-                        {activeClient?.reelsDelivered}/{activeClient?.reelsQuota}
+                        {isClientOnboarded ? `${activeClient?.reelsDelivered ?? 0}/${activeClient?.reelsQuota ?? 0}` : "0/0"}
                       </span>
                       <span className="text-[10px] font-bold text-[#97A0B3] block uppercase">REELS</span>
                     </div>
                     <div className="p-3 bg-[#0B111C] rounded-2xl text-center space-y-0.5 border border-[#2A3446]">
                       <span className="text-sm font-black text-white">
-                        {activeClient?.storiesDelivered}/{activeClient?.storiesQuota}
+                        {isClientOnboarded ? `${activeClient?.storiesDelivered ?? 0}/${activeClient?.storiesQuota ?? 0}` : "0/0"}
                       </span>
                       <span className="text-[10px] font-bold text-[#97A0B3] block uppercase">STORIES</span>
                     </div>
@@ -1271,10 +1500,14 @@ export function AdminClientsPage() {
                 </div>
 
                 <div className="flex items-center justify-between text-xs text-[#97A0B3] pt-3 border-t border-[#2A3446] font-medium">
-                  <span>Sprint {activeClient?.sprintNumber}: {activeClient?.daysRemainingInSprint} days remaining</span>
+                  <span>
+                    {isClientOnboarded
+                      ? `Sprint ${activeClient?.sprintNumber ?? 1}: ${activeClient?.daysRemainingInSprint ?? 14} days remaining`
+                      : "Sprint: Awaiting Onboarding"}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => showToast("Opening Client Quota Ledger...")}
+                    onClick={() => showToast(isClientOnboarded ? "Opening Client Quota Ledger..." : "Quota ledger unavailable for un-onboarded client.")}
                     className="text-[#7FA0D6] font-bold hover:underline cursor-pointer"
                   >
                     View Quota Log
@@ -1283,222 +1516,366 @@ export function AdminClientsPage() {
               </div>
 
               {/* CARD 3: CLIENT BRAND ECOSYSTEM & GUIDELINES */}
-              <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5">
-                <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-                  <div className="flex items-center gap-2">
-                    <Palette className="w-4 h-4 text-[#7FA0D6]" />
-                    <h2 className="text-xs font-extrabold text-white uppercase tracking-wider">
-                      Client Brand Ecosystem & Guidelines
-                    </h2>
-                  </div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold">
-                    {activeClient?.brand.kitVersion}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Typography */}
-                  <div className="p-3.5 bg-[#0B111C]/70 rounded-2xl space-y-2 border border-[#2A3446] text-xs">
-                    <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
-                      TYPOGRAPHY HIERARCHY
-                    </span>
-                    <div className="space-y-1 text-[#F1F5F9]">
-                      <div className="flex justify-between">
-                        <span className="text-[#97A0B3]">Headings:</span>
-                        <span className="font-bold">{activeClient?.brand.headingsFont}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#97A0B3]">Body & Data:</span>
-                        <span className="font-medium">{activeClient?.brand.bodyFont}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#97A0B3]">Monospace:</span>
-                        <span className="font-mono">{activeClient?.brand.monoFont}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Persona & Voice Tone */}
-                  <div className="p-3.5 bg-[#0B111C]/70 rounded-2xl space-y-2 border border-[#2A3446] text-xs flex flex-col justify-between">
-                    <div>
-                      <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
-                        PERSONA & VOICE TONE
-                      </span>
-                      <p className="text-[11px] text-[#F1F5F9] mt-1 leading-relaxed">
-                        {activeClient?.brand.toneSummary}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {activeClient?.brand.toneTags.map((tag) => (
-                        <span key={tag} className="px-2 py-0.5 rounded-md bg-[#161F2D] border border-[#2A3446] text-[10px] font-bold text-[#F1F5F9] shadow-2xs">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Approved Color Spectrum */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
-                    APPROVED COLOR SPECTRUM
-                  </span>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {activeClient?.brand.colors.map((c) => (
-                      <div key={c.hex} className="rounded-2xl border border-[#2A3446] overflow-hidden bg-[#161F2D] shadow-2xs space-y-1.5 pb-2">
-                        <div className="h-10 w-full" style={{ backgroundColor: c.hex }} />
-                        <div className="px-2.5">
-                          <span className="text-[11px] font-bold text-white block truncate">{c.name}</span>
-                          <span className="text-[10px] font-mono text-[#97A0B3]">{c.hex}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Social Channel */}
-                <div className="p-3.5 bg-[#0B111C]/80 rounded-2xl border border-[#2A3446] flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-xs">
-                      <Instagram className="w-5 h-5" />
-                    </div>
-                    <div>
+              {!isClientOnboarded ? (
+                <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-white">{activeClient?.brand.social.handle}</span>
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-extrabold uppercase">
-                          {activeClient?.brand.social.status}
-                        </span>
+                        <Palette className={`w-4 h-4 ${isPaidNotOnboarded ? "text-sky-400" : "text-amber-400"}`} />
+                        <h2 className="text-xs font-extrabold text-white uppercase tracking-wider">
+                          Client Brand Ecosystem & Guidelines
+                        </h2>
                       </div>
-                      <span className="text-[11px] text-[#97A0B3]">
-                        {activeClient?.brand.social.followers} • Live Sync active ({activeClient?.brand.social.syncInterval})
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${isPaidNotOnboarded ? "bg-sky-500/15 text-sky-400 border-sky-500/30" : "bg-amber-500/15 text-amber-400 border-amber-500/30"}`}>
+                        {isPaidNotOnboarded ? "Awaiting Intake Questionnaire" : "Pending Onboarding"}
                       </span>
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => showToast(`Opening ${activeClient?.brand.social.handle} live analytics...`)}
-                    className="px-3 py-1.5 rounded-xl border border-[#2A3446] bg-[#161F2D] hover:bg-[#0B111C] text-xs font-bold text-[#F1F5F9] shadow-2xs cursor-pointer"
-                  >
-                    Launch Channel
-                  </button>
-                </div>
 
-                <div className="flex flex-wrap items-center justify-between text-xs text-[#97A0B3] font-medium pt-3 border-t border-[#2A3446] gap-2">
-                  <div className="flex items-center gap-3 text-[#7FA0D6] font-bold">
-                    <span className="cursor-pointer hover:underline flex items-center gap-1">
-                      <Folder className="w-3.5 h-3.5" /> {activeClient?.brand.brandVaultLink}
-                    </span>
-                    <span>•</span>
-                    <span className="cursor-pointer hover:underline flex items-center gap-1">
-                      <ExternalLink className="w-3.5 h-3.5" /> {activeClient?.brand.figmaLink}
-                    </span>
-                    <span>•</span>
+                    <div className="p-8 text-center space-y-3 bg-[#0B111C]/60 rounded-2xl border border-[#2A3446]">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto border ${isPaidNotOnboarded ? "bg-sky-500/10 border-sky-500/20 text-sky-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"}`}>
+                        <Palette className="w-6 h-6" />
+                      </div>
+                      <h4 className="text-sm font-bold text-white">
+                        {isPaidNotOnboarded ? "Brand DNA Brief In Progress" : "Brand DNA Not Available"}
+                      </h4>
+                      <p className="text-xs text-[#97A0B3] max-w-md mx-auto leading-relaxed">
+                        {isPaidNotOnboarded
+                          ? "The client has paid for their subscription. Approved brand color palette, typography hierarchy, tone voice, and asset vault will be generated once they complete the onboarding questionnaire."
+                          : "user not paid and not onboarded yet. Brand guidelines, visual spectrum, and drive vaults will be configured after plan activation and onboarding completion."}
+                      </p>
+                      {isPaidNotOnboarded && (
+                        <span className="inline-block mt-2 px-3 py-1 rounded-full text-[11px] font-bold bg-[#161F2D] text-sky-300 border border-sky-500/30">
+                          Onboarding Progress: Stage {liveBrandProfile?.onboarding_stage || 1} of 4
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between text-xs text-[#97A0B3] font-medium pt-3 border-t border-[#2A3446] gap-2">
+                    <span className="text-[#97A0B3]">Brand Kit Status: {isPaidNotOnboarded ? "Awaiting Submission" : "Not Initialized"}</span>
                     <Link
-                      to={`/admin/clients/${activeClient?.id || "ryze"}/brand`}
-                      className="cursor-pointer hover:underline flex items-center gap-1 text-[#7FA0D6]"
+                      to={`/admin/clients/${liveBrandProfile?.client_id || activeClient?.id || ""}/brand`}
+                      className="text-[#7FA0D6] font-bold hover:underline flex items-center gap-1"
                     >
-                      Brand DNA & Brief →
+                      View Brand Intake Overview &rarr;
                     </Link>
                   </div>
-                  <span>Last audit {activeClient?.brand.lastAuditDate}</span>
                 </div>
-              </div>
-
-              {/* CARD 4: ASSIGNED CREATIVE POD */}
-              <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5 flex flex-col justify-between">
-                <div className="space-y-4">
+              ) : (
+                <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5">
                   <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
                     <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4 text-[#7FA0D6]" />
+                      <Palette className="w-4 h-4 text-[#7FA0D6]" />
                       <h2 className="text-xs font-extrabold text-white uppercase tracking-wider">
-                        Assigned creative pod
+                        Client Brand Ecosystem & Guidelines
                       </h2>
                     </div>
-                    <span className="px-2.5 py-0.5 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] text-[10px] font-bold border border-[#7FA0D6]/30">
-                      {activeClient?.pod.name}: {activeClient?.pod.tagline}
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold">
+                      {activeClient?.brand?.kitVersion || "Design Kit v2.4"}
                     </span>
                   </div>
 
-                  {/* Pod Lead */}
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
-                      POD LEAD & CREATIVE DIRECTOR
-                    </span>
-                    <div className="p-3 bg-[#0B111C]/70 rounded-2xl flex items-center justify-between border border-[#2A3446]">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center shadow-xs">
-                          {activeClient?.pod.leadAvatar}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Typography Pairing & System */}
+                    <div className="p-3.5 bg-[#0B111C]/70 rounded-2xl space-y-2 border border-[#2A3446] text-xs">
+                      <div className="flex items-center gap-1.5 text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
+                        <Type className="size-3.5 text-[#7FA0D6]" />
+                        <span>TYPOGRAPHY PAIRING & SYSTEM</span>
+                      </div>
+                      <div className="space-y-2 pt-1 text-[#F1F5F9]">
+                        <div className="p-2.5 bg-[#161F2D]/60 rounded-xl border border-[#2A3446]">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] block mb-0.5">
+                            Headlines / Display
+                          </span>
+                          <p className="font-bold text-sm text-white">{realTypography.headingsFont}</p>
+                          <p className="text-[11px] text-[#97A0B3] mt-0.5">Bold, punchy titles optimized for feed stops.</p>
                         </div>
-                        <div>
-                          <h4 className="text-xs font-bold text-white">{activeClient?.pod.leadName}</h4>
-                          <span className="text-[11px] text-[#97A0B3]">{activeClient?.pod.leadTitle}</span>
+                        <div className="p-2.5 bg-[#161F2D]/60 rounded-xl border border-[#2A3446]">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] block mb-0.5">
+                            Body Copy / Subtitles
+                          </span>
+                          <p className="font-medium text-xs text-white">{realTypography.bodyFont}</p>
+                          <p className="text-[11px] text-[#97A0B3] mt-0.5">High legibility for reel captions and carousel body copy.</p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => showToast(`Connecting to ${activeClient?.pod.leadName} via Slack/Creo Chat...`)}
-                        className="p-2 rounded-xl bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] hover:text-[#7FA0D6] shadow-2xs cursor-pointer"
-                        title="Chat with Pod Lead"
-                      >
-                        <MessageSquare className="w-4 h-4" />
-                      </button>
+                    </div>
+
+                    {/* Persona & Voice Tone */}
+                    <div className="p-3.5 bg-[#0B111C]/70 rounded-2xl space-y-2 border border-[#2A3446] text-xs flex flex-col justify-between">
+                      <div>
+                        <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
+                          PERSONA & VOICE TONE
+                        </span>
+                        <p className="text-[11px] text-[#F1F5F9] mt-1 leading-relaxed">
+                          {realTone.summary}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        {realTone.audience && (
+                          <div className="pt-2 border-t border-[#2A3446]/60">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#97A0B3] block">
+                              Target Audience
+                            </span>
+                            <p className="text-[11px] text-[#F1F5F9] mt-0.5 line-clamp-2">
+                              {realTone.audience}
+                            </p>
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {realTone.tags.map((tag: string, tagIdx: number) => (
+                            <span key={`${tag}-${tagIdx}`} className="px-2 py-0.5 rounded-md bg-[#161F2D] border border-[#2A3446] text-[10px] font-bold text-[#F1F5F9] shadow-2xs">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Squad Members */}
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
-                      SQUAD MEMBERS
-                    </span>
-                    <div className="space-y-1.5">
-                      {activeClient?.pod.squad.map((member) => (
-                        <div key={member.name} className="p-2.5 bg-[#0B111C]/50 rounded-xl flex items-center justify-between text-xs border border-[#2A3446]">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-7 h-7 rounded-full bg-gray-200 text-[#F1F5F9] font-bold text-[10px] flex items-center justify-center">
-                              {member.avatar}
-                            </div>
-                            <div>
-                              <span className="font-bold text-white block leading-tight">{member.name}</span>
-                              <span className="text-[10px] text-[#97A0B3]">{member.role}</span>
+                  {/* Visual Palette & Tokens */}
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Palette className="size-3.5 text-[#7FA0D6]" />
+                        <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
+                          VISUAL PALETTE & TOKENS
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-medium text-[#97A0B3]">
+                        Click swatch to copy hex
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {realColors.map((c, cIdx) => (
+                        <div
+                          key={`${c.hex}-${cIdx}`}
+                          onClick={() => handleCopyHex(c.hex, cIdx)}
+                          className="group relative bg-[#0B111C] border border-[#2A3446] hover:border-[#7FA0D6]/50 rounded-xl p-2.5 cursor-pointer transition-all hover:scale-[1.02] shadow-sm"
+                          title="Click to copy hex"
+                        >
+                          <div
+                            className="w-full aspect-[4/3] rounded-lg mb-2.5 border border-[#2A3446] shadow-inner relative flex items-center justify-center"
+                            style={{ backgroundColor: c.hex }}
+                          >
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-md px-2 py-1 flex items-center gap-1 text-[10px] text-white font-medium">
+                              {copiedHexIndex === cIdx ? (
+                                <Check className="size-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="size-3" />
+                              )}
+                              <span>{copiedHexIndex === cIdx ? "Copied" : "Copy"}</span>
                             </div>
                           </div>
-                          <span className="font-mono font-bold text-[11px] text-[#F1F5F9]">{member.hoursPerWeek}h/wk</span>
+                          <p className="text-[11px] font-bold text-white truncate">{c.name}</p>
+                          <p className="font-mono text-[10px] text-[#97A0B3] uppercase tracking-wider mt-0.5">
+                            {c.hex}
+                          </p>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Pod Capacity Commitment */}
-                  <div className="space-y-2 pt-1">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="text-[#F1F5F9]">Pod Capacity Commitment</span>
-                      <span className="text-[#7FA0D6] font-mono">
-                        {activeClient?.pod.capacityAllocatedHrs} hrs/week allocated
+                  {/* Social Channel */}
+                  <div className="p-3.5 bg-[#0B111C]/80 rounded-2xl border border-[#2A3446] flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-xs">
+                        <Instagram className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-white">
+                            {liveBrandProfile?.instagram_username
+                              ? `@${liveBrandProfile.instagram_username}`
+                              : (activeClient?.brand?.social?.handle && activeClient.brand.social.handle !== "Not connected"
+                                  ? activeClient.brand.social.handle
+                                  : "Not connected")}
+                          </span>
+                          {liveBrandProfile?.instagram_username ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-extrabold uppercase">
+                              CONNECTED
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[9px] font-extrabold uppercase">
+                              NOT CONNECTED
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-[#97A0B3]">
+                          {liveBrandProfile?.instagram_username
+                            ? "Real-time Profile Connected • Verified Brand DNA"
+                            : "Awaiting Instagram handle connection during onboarding"}
+                        </span>
+                      </div>
+                    </div>
+                    {liveBrandProfile?.instagram_username && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const handle = (liveBrandProfile.instagram_username || "").replace("@", "");
+                          if (handle) window.open(`https://instagram.com/${handle}`, "_blank");
+                        }}
+                        className="px-3 py-1.5 rounded-xl border border-[#2A3446] bg-[#161F2D] hover:bg-[#0B111C] text-xs font-bold text-[#F1F5F9] shadow-2xs cursor-pointer"
+                      >
+                        Launch Channel
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between text-xs text-[#97A0B3] font-medium pt-3 border-t border-[#2A3446] gap-2">
+                    <div className="flex items-center gap-3 text-[#7FA0D6] font-bold">
+                      <span className="cursor-pointer hover:underline flex items-center gap-1">
+                        <Folder className="w-3.5 h-3.5" /> {activeClient?.brand?.brandVaultLink || "Client Brand Vault Drive"}
                       </span>
+                      <span>•</span>
+                      <span className="cursor-pointer hover:underline flex items-center gap-1">
+                        <ExternalLink className="w-3.5 h-3.5" /> {activeClient?.brand?.figmaLink || "Figma Master Design Kit"}
+                      </span>
+                      <span>•</span>
+                      <Link
+                        to={`/admin/clients/${activeClient?.id || ""}/brand`}
+                        className="cursor-pointer hover:underline flex items-center gap-1 text-[#7FA0D6]"
+                      >
+                        Brand DNA & Brief →
+                      </Link>
                     </div>
-                    <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
-                      <div
-                        className="bg-[#2563EB] h-full rounded-full transition-all"
-                        style={{ width: `${activeClient?.pod.bandwidthPercent}%` }}
-                      />
-                    </div>
-                    <span className="text-[11px] text-[#97A0B3] font-medium block">
-                      Sprint {activeClient?.sprintNumber} • {activeClient?.pod.bandwidthPercent}% bandwidth filled
-                    </span>
+                    <span>Last audit {activeClient?.brand?.lastAuditDate || "This Sprint"}</span>
                   </div>
                 </div>
+              )}
 
-                <div className="flex items-center justify-between text-xs text-[#97A0B3] pt-3 border-t border-[#2A3446] font-medium">
-                  <span>Daily Sync: {activeClient?.pod.dailySyncTime}</span>
-                  <button
-                    type="button"
-                    onClick={() => showToast(`Opening Pod Reallocation Studio for ${activeClient?.pod.name}...`)}
-                    className="text-[#7FA0D6] font-bold hover:underline cursor-pointer"
-                  >
-                    Reallocate Pod Hours
-                  </button>
+              {/* CARD 4: ASSIGNED CREATIVE POD */}
+              {!isClientOnboarded ? (
+                <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                      <div className="flex items-center gap-2">
+                        <Users className={`w-4 h-4 ${isPaidNotOnboarded ? "text-sky-400" : "text-amber-400"}`} />
+                        <h2 className="text-xs font-extrabold text-white uppercase tracking-wider">
+                          Assigned creative pod
+                        </h2>
+                      </div>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${isPaidNotOnboarded ? "bg-sky-500/15 text-sky-400 border-sky-500/30" : "bg-amber-500/15 text-amber-400 border-amber-500/30"}`}>
+                        {isPaidNotOnboarded ? "Pending Allocation" : "Not Assigned"}
+                      </span>
+                    </div>
+
+                    <div className="p-8 text-center space-y-3 bg-[#0B111C]/60 rounded-2xl border border-[#2A3446]">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto border ${isPaidNotOnboarded ? "bg-sky-500/10 border-sky-500/20 text-sky-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"}`}>
+                        <Users className="w-6 h-6" />
+                      </div>
+                      <h4 className="text-sm font-bold text-white">
+                        {isPaidNotOnboarded ? "Creative Pod Allocation in Progress" : "No Creative Pod Allocated"}
+                      </h4>
+                      <p className="text-xs text-[#97A0B3] max-w-md mx-auto leading-relaxed">
+                        {isPaidNotOnboarded
+                          ? "Pod Lead (Creative Director), Video Editor, and Graphic Designer will be allocated to this client once their onboarding brand requirements are submitted."
+                          : "user not paid and not onboarded yet. Creative Pod squad specialists are assigned upon active plan subscription and onboarding intake completion."}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-[#97A0B3] pt-3 border-t border-[#2A3446] font-medium">
+                    <span>Pod Allocation: {isPaidNotOnboarded ? "Awaiting Onboarding" : "Not Started"}</span>
+                    <span className="text-[#97A0B3] font-mono">0 hrs/wk committed</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] space-y-5 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-[#7FA0D6]" />
+                        <h2 className="text-xs font-extrabold text-white uppercase tracking-wider">
+                          Assigned creative pod
+                        </h2>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] text-[10px] font-bold border border-[#7FA0D6]/30">
+                        {activeClient?.pod?.name || "Pod A"}: {activeClient?.pod?.tagline || "Creative Strategy"}
+                      </span>
+                    </div>
+
+                    {/* Pod Lead */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
+                        POD LEAD & CREATIVE DIRECTOR
+                      </span>
+                      <div className="p-3 bg-[#0B111C]/70 rounded-2xl flex items-center justify-between border border-[#2A3446]">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                            {activeClient?.pod?.leadAvatar || "CD"}
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-bold text-white">{activeClient?.pod?.leadName || "Pod Creative Director"}</h4>
+                            <span className="text-[11px] text-[#97A0B3]">{activeClient?.pod?.leadTitle || "Lead Producer"}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => showToast(`Connecting to ${activeClient?.pod?.leadName || "Pod Lead"} via Slack/Creo Chat...`)}
+                          className="p-2 rounded-xl bg-[#161F2D] border border-[#2A3446] text-[#F1F5F9] hover:text-[#7FA0D6] shadow-2xs cursor-pointer"
+                          title="Chat with Pod Lead"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Squad Members */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider block">
+                        SQUAD MEMBERS
+                      </span>
+                      <div className="space-y-1.5">
+                        {(activeClient?.pod?.squad || []).map((member, mIdx) => (
+                          <div key={`${member.name || mIdx}`} className="p-2.5 bg-[#0B111C]/50 rounded-xl flex items-center justify-between text-xs border border-[#2A3446]">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-full bg-gray-200 text-[#F1F5F9] font-bold text-[10px] flex items-center justify-center">
+                                {member.avatar || "PS"}
+                              </div>
+                              <div>
+                                <span className="font-bold text-white block leading-tight">{member.name}</span>
+                                <span className="text-[10px] text-[#97A0B3]">{member.role}</span>
+                              </div>
+                            </div>
+                            <span className="font-mono font-bold text-[11px] text-[#F1F5F9]">{member.hoursPerWeek}h/wk</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Pod Capacity Commitment */}
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="text-[#F1F5F9]">Pod Capacity Commitment</span>
+                        <span className="text-[#7FA0D6] font-mono">
+                          {activeClient?.pod?.capacityAllocatedHrs ?? 32} hrs/week allocated
+                        </span>
+                      </div>
+                      <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-[#7FA0D6] h-full rounded-full transition-all"
+                          style={{ width: `${activeClient?.pod?.bandwidthPercent ?? 80}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-[#97A0B3] font-medium block">
+                        Sprint {activeClient?.sprintNumber ?? 1} • {activeClient?.pod?.bandwidthPercent ?? 80}% bandwidth filled
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-[#97A0B3] pt-3 border-t border-[#2A3446] font-medium">
+                    <span>Daily Sync: {activeClient?.pod?.dailySyncTime || "11:00 AM IST"}</span>
+                    <button
+                      type="button"
+                      onClick={() => showToast(`Opening Pod Reallocation Studio for ${activeClient?.pod?.name || "Pod"}...`)}
+                      className="text-[#7FA0D6] font-bold hover:underline cursor-pointer"
+                    >
+                      Reallocate Pod Hours
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ═════════════════════════════════════════════════════════════════
@@ -1527,7 +1904,7 @@ export function AdminClientsPage() {
                       placeholder="Filter deliverable..."
                       value={deliverableSearch}
                       onChange={(e) => setDeliverableSearch(e.target.value)}
-                      className="pl-8 pr-3 py-1.5 rounded-xl border border-[#2A3446] text-xs bg-[#0B111C] focus:bg-[#161F2D] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="pl-8 pr-3 py-1.5 rounded-xl border border-[#2A3446] text-xs bg-[#0B111C] focus:bg-[#161F2D] focus:outline-none focus:ring-1 focus:ring-blue-500 text-white"
                     />
                   </div>
                   <button
@@ -1543,203 +1920,186 @@ export function AdminClientsPage() {
               {filteredDeliverables.length === 0 ? (
                 <div className="py-12 border border-dashed border-[#2A3446] rounded-2xl text-center space-y-2">
                   <CheckCircle2 className="size-8 text-[#97A0B3] mx-auto opacity-40" />
-                  <p className="text-sm font-bold text-white">No Deliverables in Queue</p>
-                  <p className="text-xs text-[#97A0B3]">No active deliverables requiring attention for this client.</p>
+                  <p className="text-sm font-bold text-white">
+                    {!isClientOnboarded
+                      ? isPaidNotOnboarded
+                        ? "Deliverables Awaiting Onboarding Form"
+                        : "Deliverables Inactive"
+                      : "No Deliverables in Queue"}
+                  </p>
+                  <p className="text-xs text-[#97A0B3]">
+                    {!isClientOnboarded
+                      ? isPaidNotOnboarded
+                        ? "Creative asset drafting begins once the client completes their onboarding intake questionnaire."
+                        : "User not paid and not onboarded yet. Creative deliverables will be scheduled after plan purchase."
+                      : "No active deliverables requiring attention for this client."}
+                  </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-                  {filteredDeliverables.map((deliv) => (
-                  <div
-                    key={deliv.id}
-                    className="bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-[0_2px_15px_rgba(0,0,0,0.03)] p-5 space-y-4 flex flex-col justify-between hover:shadow-lg hover:border-[#7FA0D6]/30 transition-all"
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${deliv.statusColor}`}>
-                          {deliv.status}
-                        </span>
-                        <span className="text-[10px] font-mono text-[#97A0B3] font-bold">{deliv.code}</span>
-                      </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+                  {filteredDeliverables.map((deliv, delivIdx) => {
+                    const statusUpper = (deliv.status || "").toUpperCase();
+                    const isReview = statusUpper === "IN REVIEW" || statusUpper === "PENDING_APPROVAL" || statusUpper === "INTERNAL_QA" || statusUpper === "READY FOR REVIEW";
+                    const isProduction = statusUpper === "IN PRODUCTION" || statusUpper === "IN_PRODUCTION";
+                    const isApproved = statusUpper === "APPROVED";
+                    const isReadyForReview = statusUpper === "READY FOR REVIEW";
 
-                      <div>
-                        <h4 className="text-sm font-black text-white leading-snug">{deliv.title}</h4>
-                        <p className="text-[11px] text-[#97A0B3] mt-1 line-clamp-2 leading-relaxed">
-                          {deliv.description}
-                        </p>
-                      </div>
-
-                      <div className="p-3 bg-[#0B111C]/70 rounded-2xl space-y-1.5 text-[11px] text-[#F1F5F9] border border-[#2A3446]">
-                        <div className="flex justify-between">
-                          <span className="text-[#97A0B3]">Format:</span>
-                          <span className="font-bold text-white">{deliv.format}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#97A0B3]">Due Date:</span>
-                          <span className="font-bold text-rose-600">{deliv.dueDate}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#97A0B3]">Assigned:</span>
-                          <span className="font-semibold text-white">{deliv.assignedTo}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="space-y-2 pt-2 border-t border-[#2A3446]">
-                      {deliv.status === "IN REVIEW" && (
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleApproveDeliverable(deliv.id, deliv.title)}
-                            className="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
-                          >
-                            <Check className="w-3.5 h-3.5 stroke-[3]" /> Approve
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeclineDeliverable(deliv.id, deliv.title)}
-                            className="w-full py-2 rounded-xl border border-[#2A3446] hover:bg-[#0B111C] text-[#F1F5F9] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                          >
-                            <X className="w-3.5 h-3.5" /> Decline
-                          </button>
-                        </div>
-                      )}
-
-                      {deliv.status === "IN PRODUCTION" && (
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setPreviewDeliverable(deliv)}
-                            className="w-full py-2 rounded-xl bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                          >
-                            <Eye className="w-3.5 h-3.5" /> Preview Canvas
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => showToast(`Revision request sent for "${deliv.title}".`)}
-                            className="w-full py-2 rounded-xl border border-[#2A3446] hover:bg-[#0B111C] text-[#F1F5F9] text-xs font-bold cursor-pointer transition-colors"
-                          >
-                            Request Revisions
-                          </button>
-                        </div>
-                      )}
-
-                      {deliv.status === "APPROVED" && (
-                        <div className="space-y-1.5">
-                          <button
-                            type="button"
-                            className="w-full py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center justify-center gap-1 border border-emerald-200 cursor-default"
-                          >
-                            <Lock className="w-3.5 h-3.5" /> Auto-Publish Locked
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => showToast("Viewing scheduled metadata...")}
-                            className="w-full py-1.5 text-center text-[11px] font-bold text-[#97A0B3] hover:text-white cursor-pointer"
-                          >
-                            View Scheduled Meta
-                          </button>
-                        </div>
-                      )}
-
-                      {deliv.status === "READY FOR REVIEW" && (
-                        <div className="space-y-1.5">
-                          <div className="grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleApproveDeliverable(deliv.id, deliv.title)}
-                              className="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
-                            >
-                              <Check className="w-3.5 h-3.5 stroke-[3]" /> Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => showToast(`Feedback notes opened for "${deliv.title}".`)}
-                              className="w-full py-2 rounded-xl border border-[#2A3446] hover:bg-[#0B111C] text-[#F1F5F9] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" /> Notes
-                            </button>
+                    return (
+                      <div
+                        key={deliv.id || delivIdx}
+                        className="bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-[0_2px_15px_rgba(0,0,0,0.03)] p-5 space-y-4 flex flex-col justify-between hover:shadow-lg hover:border-[#7FA0D6]/30 transition-all"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                              deliv.statusColor ||
+                              (isApproved
+                                ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                                : isReview
+                                ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                                : "bg-blue-500/15 text-blue-400 border-blue-500/30")
+                            }`}>
+                              {(deliv.status || "IN PRODUCTION").replace(/_/g, " ")}
+                            </span>
+                            <span className="text-[10px] font-mono text-[#97A0B3] font-bold">
+                              {deliv.code || `DEL-${deliv.id ? deliv.id.slice(0, 4) : String(delivIdx + 1).padStart(2, "0")}`}
+                            </span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setPreviewDeliverable(deliv)}
-                            className="w-full py-1.5 text-center text-[11px] font-bold text-[#7FA0D6] hover:underline cursor-pointer flex items-center justify-center gap-1"
-                          >
-                            <FileText className="w-3.5 h-3.5" /> Open Full Presentation
-                          </button>
-                        </div>
-                      )}
 
-                      {deliv.actions.some((a) => a.includes("Preview Video Draft")) && (
-                        <button
-                          type="button"
-                          onClick={() => setPreviewDeliverable(deliv)}
-                          className="w-full py-1.5 text-center text-[11px] font-bold text-[#7FA0D6] hover:underline cursor-pointer flex items-center justify-center gap-1"
-                        >
-                          <Play className="w-3 h-3 fill-blue-600" /> Preview Video Draft (0:45)
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                          <div>
+                            <h4 className="text-sm font-black text-white leading-snug">{deliv.title}</h4>
+                            <p className="text-[11px] text-[#97A0B3] mt-1 line-clamp-2 leading-relaxed">
+                              {deliv.description || "Production asset managed through Creo creative pod."}
+                            </p>
+                          </div>
+
+                          <div className="p-3 bg-[#0B111C]/70 rounded-2xl space-y-1.5 text-[11px] text-[#F1F5F9] border border-[#2A3446]">
+                            <div className="flex justify-between">
+                              <span className="text-[#97A0B3]">Format:</span>
+                              <span className="font-bold text-white">{deliv.format || deliv.type || deliv.deliverable_type || "Asset"}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#97A0B3]">Due Date:</span>
+                              <span className="font-bold text-rose-500">{deliv.dueDate || deliv.date || "Next Cycle"}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#97A0B3]">Assigned:</span>
+                              <span className="font-semibold text-white">{deliv.assignedTo || deliv.assigned_name || "Creative Squad"}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="space-y-2 pt-2 border-t border-[#2A3446]">
+                          {isReview && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleApproveDeliverable(deliv.id, deliv.title)}
+                                className="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
+                              >
+                                <Check className="w-3.5 h-3.5 stroke-[3]" /> Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeclineDeliverable(deliv.id, deliv.title)}
+                                className="w-full py-2 rounded-xl border border-[#2A3446] hover:bg-[#0B111C] text-[#F1F5F9] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" /> Decline
+                              </button>
+                            </div>
+                          )}
+
+                          {isProduction && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewDeliverable(deliv)}
+                                className="w-full py-2 rounded-xl bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <Eye className="w-3.5 h-3.5" /> Preview Canvas
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => showToast(`Revision request sent for "${deliv.title}".`)}
+                                className="w-full py-2 rounded-xl border border-[#2A3446] hover:bg-[#0B111C] text-[#F1F5F9] text-xs font-bold cursor-pointer transition-colors"
+                              >
+                                Request Revisions
+                              </button>
+                            </div>
+                          )}
+
+                          {isApproved && (
+                            <div className="space-y-1.5">
+                              <button
+                                type="button"
+                                className="w-full py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center justify-center gap-1 border border-emerald-200 cursor-default"
+                              >
+                                <Lock className="w-3.5 h-3.5" /> Auto-Publish Locked
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => showToast("Viewing scheduled metadata...")}
+                                className="w-full py-1.5 text-center text-[11px] font-bold text-[#97A0B3] hover:text-white cursor-pointer"
+                              >
+                                View Scheduled Meta
+                              </button>
+                            </div>
+                          )}
+
+                          {isReadyForReview && (
+                            <div className="space-y-1.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveDeliverable(deliv.id, deliv.title)}
+                                  className="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
+                                >
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" /> Approve
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => showToast(`Feedback notes opened for "${deliv.title}".`)}
+                                  className="w-full py-2 rounded-xl border border-[#2A3446] hover:bg-[#0B111C] text-[#F1F5F9] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" /> Notes
+                                </button>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setPreviewDeliverable(deliv)}
+                                className="w-full py-1.5 text-center text-[11px] font-bold text-[#7FA0D6] hover:underline cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                <FileText className="w-3.5 h-3.5" /> Open Full Presentation
+                              </button>
+                            </div>
+                          )}
+
+                          {(deliv.is_video || (Array.isArray(deliv.actions) && deliv.actions.some((a: string) => a.includes("Preview Video Draft")))) && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewDeliverable(deliv)}
+                              className="w-full py-1.5 text-center text-[11px] font-bold text-[#7FA0D6] hover:underline cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <Play className="w-3 h-3 fill-blue-600" /> Preview Video Draft (0:45)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+            );
+          })()}
 
         {/* ═════════════════════════════════════════════════════════════════
             MODALS
         ═════════════════════════════════════════════════════════════════ */}
 
-        {/* 1. Edit Profile Modal */}
-        {isEditProfileOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-            <div className="bg-[#161F2D] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-[#2A3446]">
-              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-                <h3 className="text-base font-black text-white">Edit Client Profile: {activeClient?.name}</h3>
-                <button type="button" onClick={() => setIsEditProfileOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="space-y-3 text-xs text-[#F1F5F9]">
-                <div>
-                  <label className="block font-bold mb-1">Company / Brand Name</label>
-                  <input type="text" defaultValue={activeClient?.name} className="w-full px-3 py-2 rounded-xl border border-[#2A3446]" />
-                </div>
-                <div>
-                  <label className="block font-bold mb-1">Industry / Category</label>
-                  <input type="text" defaultValue={activeClient?.industry} className="w-full px-3 py-2 rounded-xl border border-[#2A3446]" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-bold mb-1">Primary Signer</label>
-                    <input type="text" defaultValue={activeClient?.contact.name} className="w-full px-3 py-2 rounded-xl border border-[#2A3446]" />
-                  </div>
-                  <div>
-                    <label className="block font-bold mb-1">Signer Email</label>
-                    <input type="email" defaultValue={activeClient?.contact.email} className="w-full px-3 py-2 rounded-xl border border-[#2A3446]" />
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
-                <button type="button" onClick={() => setIsEditProfileOpen(false)} className="px-4 py-2 rounded-xl border text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer">
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    showToast("Client profile updated successfully.");
-                    setIsEditProfileOpen(false);
-                  }}
-                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
-                >
-                  Save Changes
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {/* 2. Monthly Invoice Modal */}
         {isInvoiceModalOpen && (
@@ -1772,7 +2132,7 @@ export function AdminClientsPage() {
                 </div>
                 <div className="flex justify-between pt-2 border-t border-[#2A3446] font-black text-sm">
                   <span>Total Amount:</span>
-                  <span className="text-[#7FA0D6]">₹{activeClient?.monthlyFee.toLocaleString()}.00</span>
+                  <span className="text-[#7FA0D6]">₹{(activeClient?.monthlyFee ?? 0).toLocaleString()}.00</span>
                 </div>
               </div>
               <button
@@ -1789,91 +2149,7 @@ export function AdminClientsPage() {
           </div>
         )}
 
-        {/* 3. New Request Modal */}
-        {isNewRequestOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-[#2A3446]">
-              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-                <div>
-                  <h3 className="text-base font-black text-white">New Content Request</h3>
-                  <p className="text-xs text-[#97A0B3]">Submitting to {activeClient?.pod.name} for {activeClient?.name}</p>
-                </div>
-                <button type="button" onClick={() => setIsNewRequestOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
 
-              <form onSubmit={handleCreateRequest} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Asset Title</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Q4 Executive Product Video Hook"
-                    value={newRequestForm.title}
-                    onChange={(e) => setNewRequestForm({ ...newRequestForm, title: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Deliverable Type</label>
-                    <select
-                      value={newRequestForm.type}
-                      onChange={(e) => setNewRequestForm({ ...newRequestForm, type: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    >
-                      <option value="Reel">🎬 Reel / Short</option>
-                      <option value="Carousel">🎨 Carousel (3-5 slides)</option>
-                      <option value="Static Post">🖼️ Static Hero Graphic</option>
-                      <option value="Deck">📊 Presentation Deck</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Priority</label>
-                    <select
-                      value={newRequestForm.priority}
-                      onChange={(e) => setNewRequestForm({ ...newRequestForm, priority: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    >
-                      <option value="Standard">Standard (3-4 Days)</option>
-                      <option value="Expedited">Expedited (48 Hours)</option>
-                      <option value="Urgent">Urgent (24 Hours)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Creative Brief Notes</label>
-                  <textarea
-                    rows={3}
-                    placeholder="Specify key talking points, hooks, or assets to reference..."
-                    value={newRequestForm.notes}
-                    onChange={(e) => setNewRequestForm({ ...newRequestForm, notes: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs focus:outline-none"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
-                  <button
-                    type="button"
-                    onClick={() => setIsNewRequestOpen(false)}
-                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm cursor-pointer"
-                  >
-                    Submit to Production
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
 
         {/* 4. Preview Canvas / Video Modal */}
         {previewDeliverable && (
@@ -1889,17 +2165,17 @@ export function AdminClientsPage() {
                 </button>
               </div>
 
-              <div className="aspect-video bg-[#0F172A] rounded-2xl flex flex-col items-center justify-center text-white p-6 relative overflow-hidden shadow-inner">
+              <div className="aspect-video bg-[#0B111C] rounded-2xl flex flex-col items-center justify-center text-white p-6 relative overflow-hidden shadow-inner">
                 <div className="w-14 h-14 rounded-full bg-[#161F2D]/20 backdrop-blur-md flex items-center justify-center text-white mb-2 cursor-pointer hover:scale-110 transition-transform">
                   <Play className="w-6 h-6 fill-white ml-0.5" />
                 </div>
-                <span className="text-xs font-bold text-gray-200">{previewDeliverable.format} Preview</span>
-                <span className="text-[10px] text-[#97A0B3] mt-0.5">Assigned Specialist: {previewDeliverable.assignedTo}</span>
+                <span className="text-xs font-bold text-gray-200">{previewDeliverable?.format || "Asset"} Preview</span>
+                <span className="text-[10px] text-[#97A0B3] mt-0.5">Assigned Specialist: {previewDeliverable?.assignedTo || previewDeliverable?.assigned_name || "Creative Specialist"}</span>
               </div>
 
               <div className="p-3.5 bg-[#0B111C] rounded-2xl text-xs text-[#F1F5F9] space-y-1">
-                <div><strong>Creative Scope:</strong> {previewDeliverable.description}</div>
-                <div><strong>Target Delivery:</strong> {previewDeliverable.dueDate}</div>
+                <div><strong>Creative Scope:</strong> {previewDeliverable?.description || "Asset Scope"}</div>
+                <div><strong>Target Delivery:</strong> {previewDeliverable?.dueDate || previewDeliverable?.date || "Current Sprint"}</div>
               </div>
 
               <div className="flex items-center justify-end gap-2">
@@ -1913,7 +2189,7 @@ export function AdminClientsPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    handleApproveDeliverable(previewDeliverable.id, previewDeliverable.title);
+                    handleApproveDeliverable(previewDeliverable?.id, previewDeliverable?.title || "Asset");
                     setPreviewDeliverable(null);
                   }}
                   className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
@@ -1921,6 +2197,486 @@ export function AdminClientsPage() {
                   Approve Deliverable
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. Cancel Client Plan & Remove Retainer Modal */}
+        {isCancelClientModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-500/40">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-5 h-5 text-rose-500" />
+                  <h3 className="text-base font-black text-white">Cancel Plan & Remove Client</h3>
+                </div>
+                <button type="button" onClick={() => setIsCancelClientModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs text-[#F1F5F9]">
+                <p className="text-[#97A0B3] leading-relaxed">
+                  Are you sure you want to cancel the retainer plan for <strong className="text-white">{activeClient?.name}</strong>?
+                </p>
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-300 font-semibold space-y-1">
+                  <div>• Monthly Retainer: ₹{(activeClient?.monthlyFee ?? 0).toLocaleString()}/mo</div>
+                  <div>• Status: CANCELLED (Plan & Access Revoked)</div>
+                </div>
+              </div>
+
+              {removeError && <p role="alert" className="text-sm text-[#D8BF9B]">{removeError}</p>}
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                <button
+                  type="button"
+                  onClick={() => setIsCancelClientModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                >
+                  Keep Active
+                </button>
+                <button
+                  type="button"
+                  disabled={removingClient}
+                  onClick={() => { if (activeClient) void offboardClient(activeClient.id, activeClient.name); }}
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                >
+                  {removingClient ? "Removing…" : "Confirm Cancellation"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 6. Onboard New Client Modal */}
+        {isOnboardClientModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-[#2A3446]">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Plus className="w-5 h-5 text-[#7FA0D6]" />
+                  <h3 className="text-base font-black text-white">Onboard New Client</h3>
+                </div>
+                <button type="button" onClick={() => setIsOnboardClientModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const trimmedName = newClientNameInput.trim();
+                  if (!trimmedName) return;
+
+                  const newId = trimmedName.toLowerCase().replace(/[^a-z0-9]/g, "-") || `client-${Date.now()}`;
+                  const words = trimmedName.split(/\s+/).filter(Boolean);
+                  const firstLetter = words[0]?.[0] || "";
+                  const secondLetter = words[1]?.[0] || "";
+                  const initials = (firstLetter && secondLetter)
+                    ? (firstLetter + secondLetter).toUpperCase() 
+                    : trimmedName.slice(0, 2).toUpperCase();
+
+                  const newClientObj: ClientDetailData = {
+                    id: newId,
+                    name: trimmedName,
+                    initials,
+                    industry: newClientIndustryInput.trim() || "DTC E-Commerce & Retail",
+                    timezone: "Client Time: IST (UTC+5:30)",
+                    activeSince: "Active since Oct 2026",
+                    tier: "Growth Retainer",
+                    tierBadge: "GROWTH RETAINER",
+                    status: "ACTIVE RETAINER",
+                    monthlyFee: 50000,
+                    addon: "Add-on: Creative Pod",
+                    nextBilling: "Nov 1, 2026",
+                    billingMethod: "Direct ACH / Razorpay",
+                    totalAssetsDelivered: 0,
+                    totalAssetsQuota: 48,
+                    postsDelivered: 0,
+                    postsQuota: 18,
+                    reelsDelivered: 0,
+                    reelsQuota: 10,
+                    storiesDelivered: 0,
+                    storiesQuota: 20,
+                    sprintNumber: 44,
+                    daysRemainingInSprint: 14,
+                    contact: {
+                      name: `${trimmedName} Executive`,
+                      title: "Primary Account Owner",
+                      email: `${newId}@clientbrand.com`,
+                      phone: "+91 98401 99887",
+                      renewedDate: "Oct 1, 2026",
+                      termMonths: 12,
+                    },
+                    brand: {
+                      kitVersion: "Design Kit v1.0",
+                      headingsFont: "Plus Jakarta Sans",
+                      bodyFont: "Inter Sans",
+                      monoFont: "JetBrains Mono",
+                      toneSummary: `Dynamic, high-impact social media creatives engineered for ${trimmedName}. High-clarity typography with conversion-optimized video hooks.`,
+                      toneTags: ["High Conversion", "Brand Growth", "Active Retainer"],
+                      colors: [
+                        { name: "Primary Deep Navy", hex: "#0B111C" },
+                        { name: "Accent Royal Blue", hex: "#7FA0D6" },
+                        { name: "Cyan Highlight", hex: "#7FA0D6" },
+                        { name: "Clean Neutral", hex: "#F8FAFC", isLight: true },
+                      ],
+                      social: {
+                        handle: `@${newId}`,
+                        followers: "API Connected",
+                        status: "API CONNECTED",
+                        syncInterval: "15m refresh",
+                      },
+                      brandVaultLink: `${trimmedName} Brand Drive`,
+                      figmaLink: `${trimmedName} Master Design Kit`,
+                      lastAuditDate: "Just Now",
+                    },
+                    pod: {
+                      name: newClientPodInput.split(" ")[0] || "Pod A",
+                      tagline: "Creative & Brand Strategy",
+                      leadName: "Alex Rivera",
+                      leadTitle: "Lead Producer",
+                      leadAvatar: "AR",
+                      squad: [
+                        { name: "Production Squad", role: "Creative Specialist", hoursPerWeek: 32, avatar: "PS" },
+                      ],
+                      capacityAllocatedHrs: 32,
+                      bandwidthPercent: 80,
+                      dailySyncTime: "11:00 AM IST",
+                    },
+                    deliverables: [],
+                  };
+
+                  setCustomClients((prev) => ({ ...prev, [newId]: newClientObj }));
+                  showToast(`Successfully onboarded client "${trimmedName}"!`);
+                  setIsOnboardClientModalOpen(false);
+                  setNewClientNameInput("");
+                  setNewClientIndustryInput("");
+                }}
+                className="space-y-3.5 text-xs"
+              >
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Client / Brand Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Acme Corp"
+                    value={newClientNameInput}
+                    onChange={(e) => setNewClientNameInput(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-xs font-medium text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Industry / Category</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. DTC E-Commerce & Retail"
+                    value={newClientIndustryInput}
+                    onChange={(e) => setNewClientIndustryInput(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-xs font-medium text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Assigned Creative Pod</label>
+                  <NativeSelect
+                    value={newClientPodInput}
+                    onChange={(e) => setNewClientPodInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-bold bg-[#0B111C] text-white"
+                  >
+                    <option value="Pod A (Creative & Brand Strategy)">Pod A (Creative & Brand Strategy)</option>
+                    <option value="Pod B (Performance & Video Ops)">Pod B (Performance & Video Ops)</option>
+                    <option value="Pod C (3D Motion & Visual Design)">Pod C (3D Motion & Visual Design)</option>
+                  </NativeSelect>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                  <button
+                    type="button"
+                    onClick={() => setIsOnboardClientModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm cursor-pointer"
+                  >
+                    Onboard Client
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 7. Remove Client Modal */}
+        {isRemoveClientModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-500/40">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-5 h-5 text-rose-500" />
+                  <h3 className="text-base font-black text-white">Remove / Offboard Client</h3>
+                </div>
+                <button type="button" onClick={() => setIsRemoveClientModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Select Client to Remove</label>
+                  <NativeSelect
+                    value={clientToRemoveInput}
+                    onChange={(e) => setClientToRemoveInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-bold bg-[#0B111C] text-white"
+                  >
+                    {clientList.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name} ({client.industry})
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+
+                <p className="text-[#97A0B3] text-[11px] leading-relaxed">
+                  Offboarding <strong className="text-white">{clientToRemoveInput}</strong> will cancel their active plan, revoke account access, and remove their team mapping. Billing and content history will be retained.
+                </p>
+
+                {removeError && <p role="alert" className="text-sm text-[#D8BF9B]">{removeError}</p>}
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                  <button
+                    type="button"
+                    onClick={() => setIsRemoveClientModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={removingClient || !clientList.some(client => client.name === clientToRemoveInput || client.id === clientToRemoveInput)}
+                    onClick={() => {
+                      const client = clientList.find(client => client.name === clientToRemoveInput || client.id === clientToRemoveInput);
+                      if (client) void offboardClient(client.id, client.name);
+                    }}
+                    className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                  >
+                    Remove Client
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 8. Offline Payment Requests Review Modal */}
+        {isManualPaymentsModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-[#2A3446] overflow-hidden">
+              <div className="flex items-center justify-between border-b border-[#2A3446] p-5 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Banknote className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white">Offline Payment Verification Claims</h3>
+                    <p className="text-xs text-[#97A0B3]">Review offline payment claims (cash, bank transfer, cheque, contract) and bypass Step 3 payment.</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setIsManualPaymentsModalOpen(false)} className="p-1.5 text-[#97A0B3] hover:text-white rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 flex-1 overflow-y-auto space-y-4">
+                {manualPayments.length === 0 ? (
+                  <div className="py-12 border border-dashed border-[#2A3446] rounded-2xl text-center space-y-2">
+                    <Banknote className="size-8 text-[#97A0B3] mx-auto opacity-40" />
+                    <p className="text-sm font-bold text-white">No Offline Payment Claims</p>
+                    <p className="text-xs text-[#97A0B3]">No clients have submitted an offline verification request yet.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {manualPayments.map((req) => (
+                      <div
+                        key={req.id}
+                        className={`p-4 rounded-2xl border transition-all ${
+                          req.status === "PENDING"
+                            ? "bg-[#0B111C] border-amber-500/40 shadow-sm"
+                            : "bg-[#0B111C]/60 border-[#2A3446]"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#2A3446]/60">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white text-sm">{req.client_email}</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                  req.status === "PENDING"
+                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                    : req.status === "APPROVED"
+                                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                    : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                                }`}
+                              >
+                                {req.status}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-[#97A0B3] mt-0.5 block">
+                              Claimed on {new Date(req.created_at).toLocaleString()}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="px-2.5 py-1 rounded-lg bg-[#161F2D] border border-[#2A3446] text-[#7FA0D6] font-bold">
+                              {req.plan_name}
+                            </span>
+                            <span className="px-2.5 py-1 rounded-lg bg-[#161F2D] border border-[#2A3446] text-white font-mono font-bold">
+                              ₹{req.amount.toLocaleString()}
+                            </span>
+                            <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 font-bold uppercase">
+                              {req.payment_method}
+                            </span>
+                          </div>
+                        </div>
+
+                        {req.reference_note && (
+                          <div className="mt-3 p-2.5 bg-[#161F2D] rounded-xl text-xs text-[#F1F5F9] border border-[#2A3446]/50">
+                            <span className="text-[10px] font-bold uppercase text-[#97A0B3] block mb-0.5">Client Note / Reference</span>
+                            {req.reference_note}
+                          </div>
+                        )}
+
+                        {req.admin_notes && (
+                          <div className="mt-2 text-[11px] text-[#97A0B3] italic">
+                            Admin Note: {req.admin_notes}
+                          </div>
+                        )}
+
+                        {req.status === "PENDING" && (
+                          <div className="mt-3 pt-3 border-t border-[#2A3446]/60 flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={processingPaymentId === req.id}
+                              onClick={() => void handleRejectPayment(req)}
+                              className="px-3 py-1.5 rounded-xl border border-rose-500/40 hover:bg-rose-500/10 text-rose-300 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                            >
+                              Decline Claim
+                            </button>
+                            <button
+                              type="button"
+                              disabled={processingPaymentId === req.id}
+                              onClick={() => void handleApprovePayment(req)}
+                              className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              {processingPaymentId === req.id ? "Approving..." : "Approve & Bypass Step 3"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-[#2A3446] flex justify-between items-center bg-[#0B111C]/40">
+                <span className="text-xs text-[#97A0B3]">
+                  {pendingManualPayments.length} pending verification {pendingManualPayments.length === 1 ? "claim" : "claims"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsManualPaymentsModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#161F2D] cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 9. Direct Bypass Payment Modal */}
+        {isDirectBypassModalOpen && directBypassTargetClient && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-emerald-500/40">
+              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+                <div className="flex items-center gap-2">
+                  <Banknote className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-base font-black text-white">Direct Payment Bypass (Step 3)</h3>
+                </div>
+                <button type="button" onClick={() => setIsDirectBypassModalOpen(false)} className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-xs text-emerald-300">
+                <p className="font-bold">Bypassing payment for: {directBypassTargetClient.name}</p>
+                <p className="text-[11px] text-emerald-400/80 mt-0.5">{directBypassTargetClient.email}</p>
+                <p className="text-[11px] mt-1 text-gray-300">This activates an active retainer and immediately advances the client past Step 3 to Step 4 (Questionnaire).</p>
+              </div>
+
+              <form onSubmit={handleDirectBypassSubmit} className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Select Retainer Plan</label>
+                  <NativeSelect
+                    value={directBypassPlanId}
+                    onChange={(e) => setDirectBypassPlanId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-bold bg-[#0B111C] text-white"
+                  >
+                    {plansQuery.data?.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name} (₹{(p.price_minor / 100).toLocaleString()}/mo)
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Payment Method / Source</label>
+                  <NativeSelect
+                    value={directBypassPaymentMethod}
+                    onChange={(e) => setDirectBypassPaymentMethod(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-bold bg-[#0B111C] text-white"
+                  >
+                    <option value="cash">Cash in Hand</option>
+                    <option value="bank_transfer">Direct Bank NEFT/RTGS/IMPS</option>
+                    <option value="cheque">Cheque Deposit</option>
+                    <option value="contract">Annual Agreement / Contract</option>
+                    <option value="upi">Direct UPI Transfer</option>
+                  </NativeSelect>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-[#F1F5F9] mb-1">Admin Reference / Approval Notes (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={directBypassNotes}
+                    onChange={(e) => setDirectBypassNotes(e.target.value)}
+                    placeholder="e.g. Received cash payment at agency office on Oct 12, receipt #4092"
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-xs font-medium text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
+                  <button
+                    type="button"
+                    onClick={() => setIsDirectBypassModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={directBypassBusy}
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    {directBypassBusy ? "Bypassing..." : "Confirm & Bypass"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -1933,6 +2689,7 @@ export function AdminClientsPage() {
 // 2. ADMIN DELIVERABLES PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 export function AdminDeliverablesPage() {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClient, setSelectedClient] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1941,53 +2698,75 @@ export function AdminDeliverablesPage() {
   const [commentModalItem, setCommentModalItem] = useState<any | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const [revisionItem, setRevisionItem] = useState<{ id: string; title: string } | null>(null);
+  const [revisionReason, setRevisionReason] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const deliverablesQuery = useQuery({ queryKey: ["admin-uploaded-deliverables", user?.id], enabled: !!user, queryFn: () => fetchAdminDeliverables(), retry: false });
+  const deliverablesList = (deliverablesQuery.data || []).map((d: any) => ({
+    ...d,
+    assetCode: d.id.slice(0, 8),
+    title: d.title || "Untitled upload",
+    client: d.client || d.client_name || "Client unavailable",
+    clientInitial: (d.client || d.client_name || "?").slice(0, 2).toUpperCase(),
+    clientBg: "bg-[#2A3446]",
+    statusLabel: (d.status || "unknown").replaceAll("_", " "),
+    statusBadge: "bg-[#161F2D] text-[#7FA0D6] border-[#2A3446]",
+    formatType: d.deliverable_type || d.type || "unknown",
+    formatLabel: d.type || d.deliverable_type || "Format unavailable",
+    format: d.type || d.deliverable_type || "Format unavailable",
+    previewUrl: d.file_url ? resolveAssetUrl(d.file_url) : null,
+    pod: d.pod_name || "Not provided",
+    podLead: d.pod_lead || null,
+    slaText: d.scheduled_at ? `Scheduled ${new Date(d.scheduled_at).toLocaleDateString()}` : "Not scheduled",
+    slaColor: "text-[#97A0B3]",
+  }));
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
-
-  const [deliverablesList, setDeliverablesList] = useState<any[]>([]);
-
-  const handleApprove = (id: string, title: string) => {
-    setDeliverablesList((prev) =>
-      prev.map((d) =>
-        d.id === id
-          ? {
-              ...d,
-              status: "approved",
-              statusLabel: "Approved",
-              statusBadge: "bg-emerald-50 text-emerald-700 border-emerald-100",
-              slaType: "completed",
-              slaText: "Approved Just Now",
-              slaColor: "text-emerald-600 font-bold",
-            }
-          : d
-      )
-    );
-    showToast(`✓ Deliverable "${title}" approved and marked ready for client handoff!`);
+  const handleApprove = async (id: string, _title: string) => {
+    if (reviewBusy) return;
+    setReviewBusy(true); setReviewError(null);
+    try {
+      await request(`/api/v1/deliverables/${id}/qa-approve`, { method: "POST" });
+      await deliverablesQuery.refetch();
+      setPreviewItem(null);
+      showToast("QA approved. The asset is now awaiting client review.");
+    } catch (error) { setReviewError(error instanceof Error ? error.message : "QA approval failed."); }
+    finally { setReviewBusy(false); }
   };
-
   const handleDecline = (id: string, title: string) => {
-    const reason = window.prompt(`Enter revision request or rejection reason for "${title}":`);
-    if (reason !== null) {
-      setDeliverablesList((prev) =>
-        prev.map((d) =>
-          d.id === id
-            ? {
-                ...d,
-                status: "declined",
-                statusLabel: "Declined",
-                statusBadge: "bg-rose-50 text-rose-700 border-rose-100",
-                slaType: "target",
-                slaText: "Revision Required",
-                slaColor: "text-rose-600 font-bold",
-              }
-            : d
-        )
-      );
-      showToast(`Revision request dispatched for "${title}".`);
-    }
+    setRevisionItem({ id, title }); setRevisionReason(""); setReviewError(null);
   };
+  const submitRevision = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!revisionItem || !revisionReason.trim() || reviewBusy) return;
+    setReviewBusy(true); setReviewError(null);
+    try {
+      await request(`/api/v1/deliverables/${revisionItem.id}/qa-reject`, { method: "POST", body: JSON.stringify({ notes: revisionReason.trim() }) });
+      await deliverablesQuery.refetch();
+      setRevisionItem(null); setPreviewItem(null);
+      showToast("Revision feedback saved and sent back to the production team.");
+    } catch (error) { setReviewError(error instanceof Error ? error.message : "Unable to save revision feedback."); }
+    finally { setReviewBusy(false); }
+  };
+
+  const movedToProductionCount = deliverablesList.filter(
+    (d) => d.status === "in_production" || d.status === "in_progress" || d.status === "backlog"
+  ).length;
+
+  const pendingReviewCount = deliverablesList.filter(
+    (d) => d.status === "pending_qa" || d.status === "pending_approval"
+  ).length;
+
+  const approvedTodayCount = deliverablesList.filter(
+    (d) => d.status === "ready_to_publish" || d.status === "approved" || d.status === "completed"
+  ).length;
+
+  const declinedCount = deliverablesList.filter(
+    (d) => d.status === "qa_rejected" || d.status === "rejected" || d.status === "revision_requested"
+  ).length;
 
   const filteredDeliverables = deliverablesList.filter((d) => {
     const matchesSearch =
@@ -1999,16 +2778,7 @@ export function AdminDeliverablesPage() {
     const matchesClient =
       selectedClient === "all" || d.client.toLowerCase().includes(selectedClient.toLowerCase());
 
-    const matchesStatus =
-      statusFilter === "all"
-        ? true
-        : statusFilter === "in_production"
-        ? d.status === "in_production"
-        : statusFilter === "in_review"
-        ? d.status === "in_review"
-        : statusFilter === "approved"
-        ? d.status === "approved"
-        : true;
+    const matchesStatus = statusFilter === "all" || d.status === statusFilter;
 
     const matchesFormat =
       selectedFormat === "all" ? true : d.formatType === selectedFormat;
@@ -2019,89 +2789,89 @@ export function AdminDeliverablesPage() {
   return (
     <div data-surface="ops" className="w-full min-h-screen font-sans bg-[#0B111C] flex flex-col">
       <AdminTopHeader activeTab="Content Engine" />
-      <main className="flex-1 px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6">
+      <main className="flex-1 px-3.5 sm:px-6 lg:px-8 pt-4 pb-24 sm:pb-16 max-w-[1500px] w-full mx-auto space-y-4 sm:space-y-6">
         {/* Toast Notification */}
         {toastMessage && (
-          <div className="fixed top-24 right-8 z-50 bg-[#0F172A] text-white px-5 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 animate-bounce">
+          <div className="fixed top-20 right-4 sm:right-8 left-4 sm:left-auto z-50 bg-[#0B111C] text-white px-5 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 animate-bounce">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
         )}
 
         {/* 4 KPI Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-3.5 sm:p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
+              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider truncate">
                 MOVED TO PRODUCTION
               </span>
-              <div className="w-7 h-7 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center font-bold shrink-0">
                 <Zap className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">42</div>
-            <div className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-              ↗ +12% this week
+            <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">{movedToProductionCount}</div>
+            <div className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+              {movedToProductionCount === 0 ? "0 active" : `${movedToProductionCount} active`}
             </div>
           </div>
 
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-3.5 sm:p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
+              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider truncate">
                 PENDING REVIEW
               </span>
-              <div className="w-7 h-7 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center font-bold shrink-0">
                 <Clock className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">24</div>
-            <div className="text-xs font-bold text-amber-600 flex items-center gap-1">
-              ⚡ 4 near SLA limit
+            <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">{pendingReviewCount}</div>
+            <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
+              {pendingReviewCount === 0 ? "0 review" : `${pendingReviewCount} in review`}
             </div>
           </div>
 
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-3.5 sm:p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
+              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider truncate">
                 APPROVED TODAY
               </span>
-              <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-bold shrink-0">
                 <CheckCircle2 className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">116</div>
-            <div className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-              ✓ 98.4% First-Pass
+            <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">{approvedTodayCount}</div>
+            <div className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+              {approvedTodayCount === 0 ? "0 approved" : `${approvedTodayCount} approved`}
             </div>
           </div>
 
-          <div className="kpi-card bg-[#161F2D] rounded-3xl p-5 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card bg-[#161F2D] rounded-3xl p-3.5 sm:p-5 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">
+              <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider truncate">
                 DECLINED / REVISE
               </span>
-              <div className="w-7 h-7 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+              <div className="w-7 h-7 rounded-xl bg-rose-500/15 text-rose-400 flex items-center justify-center font-bold shrink-0">
                 <AlertTriangle className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-3xl font-black text-white tracking-tight">8</div>
-            <div className="text-xs font-bold text-rose-600 flex items-center gap-1">
-              ↘ -2 vs yesterday
+            <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">{declinedCount}</div>
+            <div className="text-xs font-bold text-rose-400 flex items-center gap-1">
+              {declinedCount === 0 ? "0 revisions" : `${declinedCount} revisions`}
             </div>
           </div>
         </div>
 
         {/* Filter Bar */}
-        <div className="bg-[#161F2D] rounded-2xl p-4 border border-[#2A3446] shadow-[0_2px_12px_rgba(0,0,0,0.02)] flex flex-wrap items-center justify-between gap-4">
+        <div className="bg-[#161F2D] rounded-2xl p-3.5 sm:p-4 border border-[#2A3446] shadow-[0_2px_12px_rgba(0,0,0,0.02)] flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-between gap-3 sm:gap-4">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
+            <div className="relative w-full sm:w-72">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#97A0B3]" />
               <input
                 type="text"
                 placeholder="Search deliverables, code, tags..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 w-72 rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs"
+                className="pl-10 pr-4 py-2 w-full rounded-xl border border-[#2A3446] bg-[#0B111C] text-xs font-medium text-white placeholder-[#97A0B3] focus:outline-none focus:ring-2 focus:ring-[#7FA0D6]/20 shadow-2xs"
               />
             </div>
 
@@ -2109,40 +2879,21 @@ export function AdminDeliverablesPage() {
               value={selectedClient}
               onChange={setSelectedClient}
               ariaLabel="Filter Deliverable Client"
-              options={[
-                { value: "all", label: "All Clients" },
-                { value: "Ryze", label: "Ryze" },
-                { value: "Aravindan", label: "Aravindan" },
-                { value: "Shanmugaraj", label: "Shanmugaraj" },
-                { value: "Luma", label: "Luma Global" },
-              ]}
+              options={[{ value: "all", label: "All Clients" }, ...Array.from(new Set(deliverablesList.map(d => d.client))).map(client => ({ value: client, label: client }))]}
             />
 
             <CustomSelect
               value={statusFilter}
               onChange={setStatusFilter}
               ariaLabel="Filter Deliverable Status"
-              options={[
-                { value: "all", label: "All Statuses" },
-                { value: "in_review", label: "In Review" },
-                { value: "in_production", label: "In Production" },
-                { value: "approved", label: "Approved" },
-              ]}
+              options={[{ value: "all", label: "All Statuses" }, ...Array.from(new Set(deliverablesList.map(d => d.status))).map(status => ({ value: status, label: status.replaceAll("_", " ") }))]}
             />
 
             <CustomSelect
               value={selectedFormat}
               onChange={setSelectedFormat}
               ariaLabel="Filter Deliverable Format Type"
-              options={[
-                { value: "all", label: "All Formats" },
-                { value: "3d", label: "3D Render" },
-                { value: "deck", label: "Presentation Deck" },
-                { value: "photo", label: "Photo Retouching" },
-                { value: "video", label: "Short-form Video" },
-                { value: "banner", label: "Ad Banner Set" },
-                { value: "interactive", label: "WebGL Interactive" },
-              ]}
+              options={[{ value: "all", label: "All Formats" }, ...Array.from(new Map(deliverablesList.map(d => [d.formatType, d.formatLabel])).entries()).map(([value, label]) => ({ value, label }))]}
             />
           </div>
 
@@ -2153,8 +2904,25 @@ export function AdminDeliverablesPage() {
           </div>
         </div>
 
+        {deliverablesQuery.isPending && <p role="status" className="p-4 text-[#97A0B3]">Loading uploaded deliverables…</p>}
+        {(deliverablesQuery.error || reviewError) && !revisionItem && <div role="alert" className="p-4 border border-[#D8BF9B] rounded-xl text-[#D8BF9B]">{reviewError || deliverablesQuery.error?.message}<button onClick={() => void deliverablesQuery.refetch()} className="ml-3 underline">Retry loading</button></div>}
+        <Dialog.Root open={!!revisionItem} onOpenChange={open => { if (!open && !reviewBusy) setRevisionItem(null); }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[10000]" />
+            <Dialog.Content className="fixed z-[10001] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw_-_2rem)] max-w-lg bg-[#161F2D] border border-[#2A3446] rounded-2xl p-6 text-white shadow-2xl">
+              <Dialog.Title className="text-lg font-bold">Request an edit</Dialog.Title>
+              <Dialog.Description className="text-sm text-[#97A0B3] mt-2 mb-5">Explain what needs to change in {revisionItem?.title}. Feedback is saved to this upload and returned to the production team.</Dialog.Description>
+              <form onSubmit={submitRevision} className="space-y-4">
+                <label className="block text-sm font-semibold" htmlFor="admin-revision-reason">Revision feedback</label>
+                <textarea id="admin-revision-reason" value={revisionReason} onChange={event => setRevisionReason(event.target.value)} required maxLength={2000} rows={5} disabled={reviewBusy} className="w-full p-3 bg-[#0B111C] border border-[#2A3446] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#7FA0D6]" placeholder="Describe the changes needed…" />
+                {reviewError && <p role="alert" className="text-sm text-[#D8BF9B]">{reviewError}</p>}
+                <div className="flex justify-end gap-3"><Dialog.Close disabled={reviewBusy} className="px-4 py-3 rounded-xl border border-[#2A3446]">Cancel</Dialog.Close><button type="submit" disabled={reviewBusy || !revisionReason.trim()} className="px-4 py-3 rounded-xl bg-[#BCCCE6] text-[#050810] font-semibold disabled:opacity-50">{reviewBusy ? "Saving…" : "Send revision request"}</button></div>
+              </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
         {/* 3-Column Deliverables Grid or Empty State */}
-        {filteredDeliverables.length === 0 ? (
+        {!deliverablesQuery.isPending && !deliverablesQuery.isError && filteredDeliverables.length === 0 ? (
           <div className="bg-[#161F2D] rounded-3xl border border-[#2A3446] p-12 text-center text-[#97A0B3] space-y-3">
             <Layers className="w-10 h-10 text-[#2A3446] mx-auto" />
             <h3 className="text-base font-bold text-white">No deliverables in queue</h3>
@@ -2163,7 +2931,7 @@ export function AdminDeliverablesPage() {
             </p>
           </div>
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-6">
           {filteredDeliverables.map((item) => (
             <div
               key={item.id}
@@ -2198,6 +2966,7 @@ export function AdminDeliverablesPage() {
                 <h3 className="text-sm font-black text-white line-clamp-2 mb-1.5">
                   {item.title}
                 </h3>
+                <PublishingControl deliverableId={item.id} />
                 <p className="text-[11px] font-semibold text-[#97A0B3] flex items-center gap-1.5">
                   <Tag className="w-3 h-3 text-[#97A0B3]" />
                   {item.format}
@@ -2209,11 +2978,7 @@ export function AdminDeliverablesPage() {
                 className="relative h-44 bg-gray-900 group cursor-pointer overflow-hidden mx-5 rounded-2xl"
                 onClick={() => setPreviewItem(item)}
               >
-                <img
-                  src={item.previewUrl}
-                  alt={item.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90 group-hover:opacity-100"
-                />
+                <DeliverableMedia url={item.previewUrl} isVideo={!!item.is_video} title={item.title} controls={false} className="w-full h-full" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                   <span className="px-4 py-2 bg-[#161F2D]/90 backdrop-blur-md rounded-xl text-xs font-black text-white shadow-xl flex items-center gap-1.5">
                     <Eye className="w-3.5 h-3.5 text-[#7FA0D6]" /> Quick Preview
@@ -2230,7 +2995,7 @@ export function AdminDeliverablesPage() {
                       Pod:
                     </span>
                     <span className="px-2 py-0.5 rounded-md bg-[#7FA0D6]/15 text-[#7FA0D6] text-[11px] font-black">
-                      {item.pod} ({item.podLead})
+                      {item.pod} {item.podLead ? `(${item.podLead})` : ""}
                     </span>
                   </div>
                   <span className="text-[11px] font-bold text-[#97A0B3]">
@@ -2249,7 +3014,7 @@ export function AdminDeliverablesPage() {
                     className="text-[#97A0B3] hover:text-[#7FA0D6] text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
-                    {item.commentsCount} notes
+                    Review notes
                   </button>
                 </div>
 
@@ -2257,15 +3022,17 @@ export function AdminDeliverablesPage() {
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => handleApprove(item.id, item.title)}
-                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-colors flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-600/20 cursor-pointer"
+                    disabled={reviewBusy || item.status !== "pending_qa" || !item.previewUrl}
+                    onClick={() => void handleApprove(item.id, item.title)}
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-colors flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-600/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" /> Approve
                   </button>
                   <button
                     type="button"
+                    disabled={reviewBusy || item.status !== "pending_qa" || !item.previewUrl}
                     onClick={() => handleDecline(item.id, item.title)}
-                    className="flex-1 py-2.5 bg-[#1F2C3F] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="flex-1 py-2.5 bg-[#161F2D] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <X className="w-3.5 h-3.5 stroke-[2.5]" /> Request Edit
                   </button>
@@ -2295,18 +3062,14 @@ export function AdminDeliverablesPage() {
                 <button
                   type="button"
                   onClick={() => setPreviewItem(null)}
-                  className="p-1.5 rounded-xl hover:bg-[#1F2C3F] text-[#97A0B3] hover:text-white cursor-pointer"
+                  className="p-1.5 rounded-xl hover:bg-[#161F2D] text-[#97A0B3] hover:text-white cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               <div className="rounded-2xl overflow-hidden bg-black max-h-[420px] flex items-center justify-center">
-                <img
-                  src={previewItem.previewUrl}
-                  alt={previewItem.title}
-                  className="w-full h-auto max-h-[420px] object-contain"
-                />
+                <DeliverableMedia url={previewItem.previewUrl} isVideo={!!previewItem.is_video} title={previewItem.title} className="w-full max-h-[420px]" />
               </div>
 
               <div className="p-4 bg-[#0B111C] rounded-2xl space-y-2 text-xs">
@@ -2314,7 +3077,7 @@ export function AdminDeliverablesPage() {
                 <p className="text-[#F1F5F9] leading-relaxed">{previewItem.description}</p>
                 <div className="flex flex-wrap gap-4 pt-2 text-[11px] text-[#97A0B3] border-t border-[#2A3446]">
                   <span><strong>Format:</strong> {previewItem.format}</span>
-                  <span><strong>Pod:</strong> {previewItem.pod} ({previewItem.podLead})</span>
+                  <span><strong>Pod:</strong> {previewItem.pod} {previewItem.podLead ? `(${previewItem.podLead})` : ""}</span>
                   <span><strong>SLA:</strong> {previewItem.slaText}</span>
                 </div>
               </div>
@@ -2322,16 +3085,18 @@ export function AdminDeliverablesPage() {
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
+                  disabled={reviewBusy || previewItem.status !== "pending_qa" || !previewItem.previewUrl}
                   onClick={() => {
                     handleDecline(previewItem.id, previewItem.title);
                     setPreviewItem(null);
                   }}
-                  className="px-4 py-2 rounded-xl bg-[#1F2C3F] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 text-xs font-bold cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-[#161F2D] hover:bg-rose-50 text-[#F1F5F9] hover:text-rose-600 text-xs font-bold cursor-pointer"
                 >
                   Request Revision
                 </button>
                 <button
                   type="button"
+                  disabled={reviewBusy || previewItem.status !== "pending_qa" || !previewItem.previewUrl}
                   onClick={() => {
                     handleApprove(previewItem.id, previewItem.title);
                     setPreviewItem(null);
@@ -2365,26 +3130,7 @@ export function AdminDeliverablesPage() {
                 </button>
               </div>
 
-              <div className="space-y-3">
-                <div className="p-3 bg-[#0B111C] rounded-2xl border border-[#2A3446] space-y-1">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-[#97A0B3]">
-                    <span>David K. (Client Lead)</span>
-                    <span>Today 10:45 AM</span>
-                  </div>
-                  <p className="text-xs text-[#F1F5F9] leading-relaxed font-medium">
-                    "Typography and layout look crisp. Please ensure the hex code for brand teal matches #06B6D4."
-                  </p>
-                </div>
-                <div className="p-3 bg-[#7FA0D6]/15/50 rounded-2xl border border-[#7FA0D6]/30 space-y-1">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-[#7FA0D6]">
-                    <span>Elena Rostova (Pod A)</span>
-                    <span>Today 2:15 PM</span>
-                  </div>
-                  <p className="text-xs text-[#F1F5F9] leading-relaxed font-medium">
-                    "Updated slide shaders and color profiles. Ready for final review."
-                  </p>
-                </div>
-              </div>
+              <p className="text-sm text-[#BCCCE6] whitespace-pre-wrap">{commentModalItem.description || "No revision feedback recorded for this upload."}</p>
 
               <div className="pt-2 flex justify-end">
                 <button
@@ -2413,6 +3159,7 @@ export function AdminTasksPage() {
   const [priorityFilter, _setPriorityFilter] = useState<"all" | "urgent" | "high">("all"); void _setPriorityFilter;
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [previewTask, setPreviewTask] = useState<any | null>(null);
+  const [mobileKanbanCol, setMobileKanbanCol] = useState<"all" | "todo" | "in_progress" | "under_review" | "approved">("all");
 
   const [newTaskForm, setNewTaskForm] = useState({
     title: "",
@@ -2426,7 +3173,135 @@ export function AdminTasksPage() {
     column: "todo",
   });
 
-  const [kanbanTasks, setKanbanTasks] = useState<any[]>([]);
+  const [kanbanTasks, setKanbanTasks] = useState<any[]>([
+    {
+      id: "task-101",
+      column: "in_progress",
+      client: "Ryze Mushroom Coffee",
+      clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+      priority: "Urgent",
+      priorityPill: "bg-rose-600 text-white font-black",
+      title: "3D Product Render & Motion Hook (15s Reel)",
+      type: "3D Render / Blender",
+      avatar: "VM",
+      avatarBg: "bg-blue-600",
+      assigneeName: "Vikram Malhotra",
+      sp: 8,
+      due: "Today, 6:00 PM",
+      pod: "Pod A",
+    },
+    {
+      id: "task-102",
+      column: "todo",
+      client: "Ryze Mushroom Coffee",
+      clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+      priority: "High",
+      priorityPill: "bg-rose-500/15 text-rose-400 border border-rose-500/30",
+      title: "DTC Ad Hook Variations (15s Reel Clips)",
+      type: "Performance Editing",
+      avatar: "SC",
+      avatarBg: "bg-purple-600",
+      assigneeName: "Sarah Connor",
+      sp: 5,
+      due: "Tomorrow, 2:00 PM",
+      pod: "Pod B",
+    },
+    {
+      id: "task-103",
+      column: "under_review",
+      client: "Acme Corp",
+      clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+      priority: "High",
+      priorityPill: "bg-rose-500/15 text-rose-400 border border-rose-500/30",
+      title: "Instagram Story Templates (1080x1920 Figma Kit)",
+      type: "Visual Design",
+      avatar: "ER",
+      avatarBg: "bg-emerald-600",
+      assigneeName: "Elena Rostova",
+      sp: 3,
+      due: "Oct 5, 2026",
+      pod: "Pod A",
+    },
+    {
+      id: "task-104",
+      column: "approved",
+      client: "Kavya Organics",
+      clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+      priority: "Normal",
+      priorityPill: "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
+      title: "Brand Guidelines & Color Palette Audit (v2.0)",
+      type: "Brand Strategy",
+      avatar: "MB",
+      avatarBg: "bg-amber-600",
+      assigneeName: "Marcus Brody",
+      sp: 4,
+      due: "Oct 3, 2026",
+      pod: "Pod C",
+    },
+    {
+      id: "task-105",
+      column: "in_progress",
+      client: "Ryze Mushroom Coffee",
+      clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+      priority: "High",
+      priorityPill: "bg-rose-500/15 text-rose-400 border border-rose-500/30",
+      title: "TikTok Motion Hook (Rec.709 Color Grading)",
+      type: "Color Grading",
+      avatar: "AR",
+      avatarBg: "bg-[#7FA0D6]",
+      assigneeName: "Alex Rivera",
+      sp: 6,
+      due: "Today, 8:00 PM",
+      pod: "Pod B",
+    },
+    {
+      id: "task-106",
+      column: "todo",
+      client: "Acme Corp",
+      clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+      priority: "Urgent",
+      priorityPill: "bg-rose-600 text-white font-black",
+      title: "Motion Graphics Carousel Post (5 Slides)",
+      type: "Motion Graphics",
+      avatar: "VM",
+      avatarBg: "bg-blue-600",
+      assigneeName: "Vikram Malhotra",
+      sp: 4,
+      due: "Tomorrow, 11:00 AM",
+      pod: "Pod C",
+    },
+  ]);
+
+  useEffect(() => {
+    fetchKanbanTasks()
+      .then((data) => {
+        if (!data) return;
+        const all = [
+          ...(data.backlog || []).map((t: any) => ({ ...t, column: "todo" })),
+          ...(data.in_production || []).map((t: any) => ({ ...t, column: "in_progress" })),
+          ...(data.internal_qa || []).map((t: any) => ({ ...t, column: "under_review" })),
+          ...(data.client_review || []).map((t: any) => ({ ...t, column: "under_review" })),
+          ...(data.ready_to_publish || []).map((t: any) => ({ ...t, column: "approved" })),
+        ].map((t: any) => ({
+          id: t.id,
+          column: t.column,
+          client: t.client_name || "Client",
+          clientPill: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
+          priority: t.is_near_sla ? "Urgent" : (t.priority || "Normal"),
+          priorityPill: t.is_near_sla ? "bg-rose-600 text-white font-black" : "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
+          title: t.deliverable?.title || t.deliverable_type || "Design Task",
+          type: t.deliverable_type || "Design",
+          avatar: t.assignee_name ? t.assignee_name.split(" ").map((n: string) => n[0]).join("").slice(0,2).toUpperCase() : "UN",
+          avatarBg: "bg-blue-600",
+          assigneeName: t.assignee_name || "Unassigned",
+          sp: t.effort_points || 4,
+          due: t.due_date ? new Date(t.due_date).toLocaleDateString() : "No Date",
+          pod: "Pod A",
+        }));
+        setKanbanTasks(all);
+      })
+      .catch(console.error);
+  }, []);
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2443,7 +3318,7 @@ export function AdminTasksPage() {
           ? "bg-rose-600 text-white font-black"
           : newTaskForm.priority === "High"
           ? "bg-rose-50 text-rose-600 border-rose-100"
-          : "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]",
+          : "bg-[#161F2D] text-[#F1F5F9] border-[#2A3446]",
       title: newTaskForm.title.trim(),
       type: newTaskForm.category,
       avatar: newTaskForm.assignee
@@ -2504,25 +3379,25 @@ export function AdminTasksPage() {
   return (
     <div data-surface="ops" className="w-full min-h-screen font-sans bg-[#0B111C] flex flex-col">
       <AdminTopHeader activeTab="Content Engine" />
-      <main className="flex-1 px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6">
+      <main className="flex-1 px-3.5 sm:px-6 lg:px-8 pt-4 pb-24 sm:pb-16 max-w-[1500px] w-full mx-auto space-y-4 sm:space-y-6">
         {/* Header Title and Search Filter Bar */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30">
-              <span className="w-2 h-2 rounded-full bg-[#2563EB] animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-[#7FA0D6] animate-pulse" />
               Live Sync
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#97A0B3]" />
               <input
                 type="text"
                 placeholder="Filter deliverables, tags, owners..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-4 py-2 w-64 rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs"
+                className="pl-9 pr-4 py-2 w-full rounded-xl border border-[#2A3446] bg-[#161F2D] text-xs font-medium text-white placeholder-[#97A0B3] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs"
               />
             </div>
 
@@ -2551,17 +3426,48 @@ export function AdminTasksPage() {
             <button
               type="button"
               onClick={() => setIsCreateModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
             >
               <Plus className="w-4 h-4 stroke-[3]" /> Create Task
             </button>
           </div>
         </div>
 
+        {/* Mobile Kanban Column Switcher Pills */}
+        <div className="sm:hidden flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {[
+            { id: "all", label: "All Columns", count: filteredTasks.length },
+            { id: "todo", label: "To Do", count: todoTasks.length },
+            { id: "in_progress", label: "In Progress", count: inProgressTasks.length },
+            { id: "under_review", label: "Review", count: underReviewTasks.length },
+            { id: "approved", label: "Done", count: approvedTasks.length },
+          ].map((col) => (
+            <button
+              key={col.id}
+              type="button"
+              onClick={() => setMobileKanbanCol(col.id as any)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0 ${
+                mobileKanbanCol === col.id
+                  ? "bg-[#7FA0D6] text-white shadow-sm"
+                  : "bg-[#161F2D] text-[#97A0B3] border border-[#2A3446]"
+              }`}
+            >
+              <span>{col.label}</span>
+              <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
+                mobileKanbanCol === col.id ? "bg-white/20 text-white" : "bg-[#0B111C] text-[#97A0B3]"
+              }`}>
+                {col.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
         {/* 4 Kanban Columns */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
           {/* Column 1: TO DO */}
-          <div className="bg-[#161F2D]/40 rounded-3xl p-4 flex flex-col space-y-3.5 border border-[#2A3446]/60">
+          <div className={`bg-[#161F2D]/40 rounded-3xl p-4 space-y-3.5 border border-[#2A3446]/60 ${
+            mobileKanbanCol !== "all" && mobileKanbanCol !== "todo" ? "hidden sm:flex flex-col" : "flex flex-col"
+          }`}>
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
@@ -2591,7 +3497,7 @@ export function AdminTasksPage() {
                   </div>
                   <h4 className="text-xs font-bold text-white line-clamp-2">{task.title}</h4>
                   {task.imageUrl && (
-                    <div className="h-24 rounded-xl overflow-hidden bg-[#1F2C3F]">
+                    <div className="h-24 rounded-xl overflow-hidden bg-[#161F2D]">
                       <img src={task.imageUrl} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -2610,7 +3516,9 @@ export function AdminTasksPage() {
           </div>
 
           {/* Column 2: IN PROGRESS */}
-          <div className="bg-[#161F2D]/40 rounded-3xl p-4 flex flex-col space-y-3.5 border border-[#2A3446]/60">
+          <div className={`bg-[#161F2D]/40 rounded-3xl p-4 space-y-3.5 border border-[#2A3446]/60 ${
+            mobileKanbanCol !== "all" && mobileKanbanCol !== "in_progress" ? "hidden sm:flex flex-col" : "flex flex-col"
+          }`}>
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#7FA0D6]/150 animate-pulse" />
@@ -2640,7 +3548,7 @@ export function AdminTasksPage() {
                   </div>
                   <h4 className="text-xs font-bold text-white line-clamp-2">{task.title}</h4>
                   {task.imageUrl && (
-                    <div className="h-24 rounded-xl overflow-hidden bg-[#1F2C3F]">
+                    <div className="h-24 rounded-xl overflow-hidden bg-[#161F2D]">
                       <img src={task.imageUrl} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -2651,7 +3559,7 @@ export function AdminTasksPage() {
                       </div>
                       <span className="font-medium text-[#F1F5F9]">{task.assigneeName}</span>
                     </div>
-                    <span className="font-bold text-rose-600">{task.due}</span>
+                    <span className="font-bold text-rose-400">{task.due}</span>
                   </div>
                 </div>
               ))}
@@ -2659,7 +3567,9 @@ export function AdminTasksPage() {
           </div>
 
           {/* Column 3: UNDER REVIEW */}
-          <div className="bg-[#161F2D]/40 rounded-3xl p-4 flex flex-col space-y-3.5 border border-[#2A3446]/60">
+          <div className={`bg-[#161F2D]/40 rounded-3xl p-4 space-y-3.5 border border-[#2A3446]/60 ${
+            mobileKanbanCol !== "all" && mobileKanbanCol !== "under_review" ? "hidden sm:flex flex-col" : "flex flex-col"
+          }`}>
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
@@ -2667,7 +3577,7 @@ export function AdminTasksPage() {
                   UNDER REVIEW
                 </h3>
               </div>
-              <span className="px-2 py-0.5 rounded-full bg-[#161F2D] text-amber-600 text-[11px] font-bold border border-[#2A3446] shadow-2xs">
+              <span className="px-2 py-0.5 rounded-full bg-[#161F2D] text-amber-400 text-[11px] font-bold border border-[#2A3446] shadow-2xs">
                 {underReviewTasks.length}
               </span>
             </div>
@@ -2695,7 +3605,7 @@ export function AdminTasksPage() {
                       </div>
                       <span className="font-medium text-[#F1F5F9]">{task.assigneeName}</span>
                     </div>
-                    <span className="font-bold text-amber-600">{task.pod}</span>
+                    <span className="font-bold text-amber-400">{task.pod}</span>
                   </div>
                 </div>
               ))}
@@ -2703,7 +3613,9 @@ export function AdminTasksPage() {
           </div>
 
           {/* Column 4: APPROVED */}
-          <div className="bg-[#161F2D]/40 rounded-3xl p-4 flex flex-col space-y-3.5 border border-[#2A3446]/60">
+          <div className={`bg-[#161F2D]/40 rounded-3xl p-4 space-y-3.5 border border-[#2A3446]/60 ${
+            mobileKanbanCol !== "all" && mobileKanbanCol !== "approved" ? "hidden sm:flex flex-col" : "flex flex-col"
+          }`}>
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
@@ -2733,7 +3645,7 @@ export function AdminTasksPage() {
                   </div>
                   <h4 className="text-xs font-bold text-white line-clamp-2">{task.title}</h4>
                   {task.imageUrl && (
-                    <div className="h-24 rounded-xl overflow-hidden bg-[#1F2C3F]">
+                    <div className="h-24 rounded-xl overflow-hidden bg-[#161F2D]">
                       <img src={task.imageUrl} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -2780,20 +3692,20 @@ export function AdminTasksPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Client Brand</label>
-                    <select
+                    <NativeSelect
                       value={newTaskForm.client}
                       onChange={(e) => setNewTaskForm({ ...newTaskForm, client: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
                     >
                       <option value="Ryze Mushroom Coffee">Ryze Mushroom Coffee</option>
-                    </select>
+                    </NativeSelect>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Creative Pod</label>
-                    <select
+                    <NativeSelect
                       value={newTaskForm.pod}
                       onChange={(e) => setNewTaskForm({ ...newTaskForm, pod: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
@@ -2801,14 +3713,14 @@ export function AdminTasksPage() {
                       <option value="Pod A">Pod A (Brand Strategy)</option>
                       <option value="Pod B">Pod B (Performance &amp; Video)</option>
                       <option value="Pod C">Pod C (3D Motion &amp; Design)</option>
-                    </select>
+                    </NativeSelect>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Priority</label>
-                    <select
+                    <NativeSelect
                       value={newTaskForm.priority}
                       onChange={(e) => setNewTaskForm({ ...newTaskForm, priority: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
@@ -2816,7 +3728,7 @@ export function AdminTasksPage() {
                       <option value="Normal">Normal</option>
                       <option value="High">High</option>
                       <option value="Urgent">Urgent</option>
-                    </select>
+                    </NativeSelect>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Story Points</label>
@@ -2898,862 +3810,7 @@ export function AdminTasksPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. ADMIN CALENDAR PAGE
 // ─────────────────────────────────────────────────────────────────────────────
-export function AdminCalendarPage() {
-  const { user } = useAuth();
-  const isTeamLead = user?.role === "team_lead";
-  const [selectedDayNumber, setSelectedDayNumber] = useState<number>(14);
-  const [selectedPodFilter, setSelectedPodFilter] = useState(isTeamLead ? "Pod A" : "all");
-  const [selectedClientFilter, setSelectedClientFilter] = useState("all");
-  const [selectedTypeFilter, setSelectedTypeFilter] = useState("all");
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-  const [selectedAssetModal, setSelectedAssetModal] = useState<any | null>(null);
-
-  const [scheduleForm, setScheduleForm] = useState({
-    title: "",
-    client: "Ryze",
-    pod: "Pod A",
-    type: "Reel",
-    dateDay: 14,
-    time: "4:30 PM",
-    tag: "Final Polish",
-  });
-
-  // Master schedule indexed by day number of November 2024
-  const [tasksByDay, setTasksByDay] = useState<Record<number, any[]>>({
-    8: [
-      {
-        id: "cal-8-1",
-        pod: "Pod A",
-        client: "Shanmugaraj",
-        title: "Customer Success Story Cutdown Reel",
-        type: "Reel",
-        assignee: "Karthik Raja",
-        avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
-        tag: "Approved",
-        tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
-        time: "11:30 AM",
-      },
-    ],
-    10: [
-      {
-        id: "cal-10-1",
-        pod: "Pod A",
-        client: "Aravindan",
-        title: "Brand Story Sequence · 3 Panels",
-        type: "Story",
-        assignee: "Ananya Deshmukh",
-        avatar: "CT",
-        avatarBg: "bg-teal-600",
-        tag: "Approved",
-        tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
-        time: "2:00 PM",
-      },
-    ],
-    14: [
-      {
-        id: "cal-14-1",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "Q4 Product Unboxing Teaser Reel",
-        type: "Reel",
-        assignee: "Karthik Raja",
-        avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
-        tag: "Final Polish",
-        tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
-        time: "4:30 PM",
-      },
-      {
-        id: "cal-14-2",
-        pod: "Pod A",
-        client: "Aravindan",
-        title: "Behind-The-Scenes Studio Setup (3-Slide Story)",
-        type: "Story",
-        assignee: "Ananya Deshmukh",
-        avatar: "CT",
-        avatarBg: "bg-teal-600",
-        tag: "Color Grading",
-        tagColor: "bg-purple-50 text-purple-700 border-purple-100",
-        time: "3:00 PM",
-      },
-      {
-        id: "cal-14-3",
-        pod: "Pod A",
-        client: "Shanmugaraj",
-        title: "TikTok Viral Hook Reel Cut #1 & #2",
-        type: "Reel",
-        assignee: "Elena R.",
-        avatar: "ER",
-        avatarBg: "bg-blue-600",
-        tag: "Sound Sync",
-        tagColor: "bg-cyan-50 text-cyan-700 border-cyan-100",
-        time: "2:00 PM",
-      },
-      {
-        id: "cal-14-4",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "Conversion Post Carousel (10 Panels)",
-        type: "Post",
-        assignee: "Dev Sharma",
-        avatar: "MV",
-        avatarBg: "bg-indigo-600",
-        tag: "Final Polish",
-        tagColor: "bg-indigo-50 text-indigo-700 border-indigo-100",
-        time: "3:30 PM",
-      },
-    ],
-    15: [
-      {
-        id: "cal-15-1",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "15-Sec Flash Sale Promo Story Set",
-        type: "Story",
-        assignee: "Karthik Raja",
-        avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
-        tag: "Approved",
-        tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
-        time: "10:00 AM",
-      },
-      {
-        id: "cal-15-2",
-        pod: "Pod A",
-        client: "Aravindan",
-        title: "Founder Q&A Vertical Micro-Reel #4",
-        type: "Reel",
-        assignee: "Elena R.",
-        avatar: "ER",
-        avatarBg: "bg-blue-600",
-        tag: "Final Polish",
-        tagColor: "bg-amber-50 text-amber-700 border-amber-100",
-        time: "1:30 PM",
-      },
-      {
-        id: "cal-15-3",
-        pod: "Pod A",
-        client: "Shanmugaraj",
-        title: "Top 5 Growth Hacks Infographic Post",
-        type: "Post",
-        assignee: "Dev Sharma",
-        avatar: "MV",
-        avatarBg: "bg-indigo-600",
-        tag: "Scheduled",
-        tagColor: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
-        time: "5:00 PM",
-      },
-    ],
-    18: [
-      {
-        id: "cal-18-1",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "Q4 Keynote Executive Post Showcase",
-        type: "Post",
-        assignee: "Elena R.",
-        avatar: "ER",
-        avatarBg: "bg-blue-600",
-        tag: "SLA Review",
-        tagColor: "bg-amber-50 text-amber-700 border-amber-100",
-        time: "11:00 AM",
-      },
-      {
-        id: "cal-18-2",
-        pod: "Pod A",
-        client: "Shanmugaraj",
-        title: "High-Energy Product Feature Cutdown Reel",
-        type: "Reel",
-        assignee: "Karthik Raja",
-        avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
-        tag: "Color Grading",
-        tagColor: "bg-purple-50 text-purple-700 border-purple-100",
-        time: "4:00 PM",
-      },
-    ],
-    20: [
-      {
-        id: "cal-20-1",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "60-Sec High-Velocity Tech Growth Reel",
-        type: "Reel",
-        assignee: "Ananya Deshmukh",
-        avatar: "CT",
-        avatarBg: "bg-teal-600",
-        tag: "Approved",
-        tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
-        time: "9:30 AM",
-      },
-      {
-        id: "cal-20-2",
-        pod: "Pod A",
-        client: "Aravindan",
-        title: "Interactive Audience Q&A Story Sequence",
-        type: "Story",
-        assignee: "Ananya Deshmukh",
-        avatar: "CT",
-        avatarBg: "bg-teal-600",
-        tag: "Drafting",
-        tagColor: "bg-[#1F2C3F] text-[#F1F5F9] border-[#2A3446]",
-        time: "2:00 PM",
-      },
-    ],
-    22: [
-      {
-        id: "cal-22-1",
-        pod: "Pod A",
-        client: "Aravindan",
-        title: "Black Friday Sneak Peek Teaser Reel",
-        type: "Reel",
-        assignee: "Karthik Raja",
-        avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
-        tag: "Final Polish",
-        tagColor: "bg-amber-50 text-amber-700 border-amber-100",
-        time: "12:00 PM",
-      },
-      {
-        id: "cal-22-2",
-        pod: "Pod A",
-        client: "Shanmugaraj",
-        title: "Cyber Monday Display Post Carousel",
-        type: "Post",
-        assignee: "Dev Sharma",
-        avatar: "MV",
-        avatarBg: "bg-indigo-600",
-        tag: "Approved",
-        tagColor: "bg-emerald-50 text-emerald-700 border-emerald-100",
-        time: "4:00 PM",
-      },
-    ],
-    25: [
-      {
-        id: "cal-25-1",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "Mobile App Onboarding Story Series",
-        type: "Story",
-        assignee: "Ananya Deshmukh",
-        avatar: "CT",
-        avatarBg: "bg-teal-600",
-        tag: "Sound Sync",
-        tagColor: "bg-cyan-50 text-cyan-700 border-cyan-100",
-        time: "3:00 PM",
-      },
-    ],
-    28: [
-      {
-        id: "cal-28-1",
-        pod: "Pod A",
-        client: "Ryze",
-        title: "End-of-Month Retrospective Reel Showcase",
-        type: "Reel",
-        assignee: "Karthik Raja",
-        avatar: "DK",
-        avatarBg: "bg-[#0F172A]",
-        tag: "Final Polish",
-        tagColor: "bg-amber-50 text-amber-700 border-amber-100",
-        time: "5:00 PM",
-      },
-    ],
-  });
-
-  // Helper for Deliverable Type Badge Styling & Icons
-  const getTypeBadge = (type: string) => {
-    switch (type) {
-      case "Reel":
-        return { label: "🎬 Reel", bg: "bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30" };
-      case "Story":
-        return { label: "📲 Story", bg: "bg-rose-500/15 text-rose-400 border border-rose-500/30" };
-      case "Post":
-        return { label: "📄 Post", bg: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" };
-      default:
-        return { label: `📌 ${type}`, bg: "bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30" };
-    }
-  };
-
-  const handleOpenScheduleForDay = (day: number) => {
-    setSelectedDayNumber(day);
-    setScheduleForm((prev) => ({
-      ...prev,
-      dateDay: day,
-    }));
-    setIsScheduleModalOpen(true);
-  };
-
-  const handleScheduleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!scheduleForm.title.trim()) return;
-
-    const targetDay = Number(scheduleForm.dateDay) || selectedDayNumber;
-
-    const newItem = {
-      id: `cal-${targetDay}-${Date.now()}`,
-      pod: isTeamLead ? "Pod A" : scheduleForm.pod,
-      client: scheduleForm.client,
-      title: scheduleForm.title.trim(),
-      type: scheduleForm.type,
-      assignee: "Staff Assigned",
-      avatar: "ST",
-      avatarBg: "bg-blue-600",
-      tag: scheduleForm.tag,
-      tagColor: "bg-[#7FA0D6]/15 text-[#7FA0D6] border-[#7FA0D6]/30",
-      time: scheduleForm.time || "4:00 PM",
-    };
-
-    setTasksByDay((prev) => ({
-      ...prev,
-      [targetDay]: [...(prev[targetDay] || []), newItem],
-    }));
-
-    setIsScheduleModalOpen(false);
-    setScheduleForm({
-      title: "",
-      client: "Ryze",
-      pod: "Pod A",
-      type: "Reel",
-      dateDay: selectedDayNumber,
-      time: "4:30 PM",
-      tag: "Final Polish",
-    });
-  };
-
-  // Get current day's tasks filtered by pod / client / type
-  const activePodFilter = isTeamLead ? "Pod A" : selectedPodFilter;
-  const rawDayTasks = tasksByDay[selectedDayNumber] || [];
-  const filteredDayTasks = rawDayTasks.filter((item) => {
-    if (activePodFilter !== "all" && item.pod !== activePodFilter) return false;
-    if (selectedClientFilter !== "all" && !item.client.toLowerCase().includes(selectedClientFilter.toLowerCase())) return false;
-    if (selectedTypeFilter !== "all" && item.type !== selectedTypeFilter) return false;
-    return true;
-  });
-
-  const isSelectedDateToday = selectedDayNumber === 14;
-
-  return (
-    <div data-surface="ops" className="w-full min-h-screen font-sans bg-[#0B111C] flex flex-col">
-      <AdminTopHeader activeTab="Content Engine" />
-      <main className="flex-1 px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6">
-        {/* Header and Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-[#161F2D] border border-[#2A3446] px-3 py-1.5 rounded-xl shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setSelectedDayNumber((prev) => Math.max(1, prev - 1))}
-                aria-label="Previous Day"
-                className="p-0.5 text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer rounded"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <Calendar className="w-4 h-4 text-[#7FA0D6]" />
-              <span className="text-xs font-bold text-white">
-                November {selectedDayNumber}, 2024 {isSelectedDateToday ? "(Today)" : ""}
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelectedDayNumber((prev) => Math.min(30, prev + 1))}
-                aria-label="Next Day"
-                className="p-0.5 text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer rounded"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-            {selectedDayNumber !== 14 && (
-              <button
-                type="button"
-                onClick={() => setSelectedDayNumber(14)}
-                className="text-xs font-bold text-[#7FA0D6] hover:text-blue-800 bg-[#7FA0D6]/15 px-2.5 py-1 rounded-lg border border-[#7FA0D6]/30 cursor-pointer transition-colors"
-              >
-                Jump to Today (14th)
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {isTeamLead ? (
-              <div className="px-3 py-2 rounded-xl border border-[#7FA0D6]/30 bg-[#7FA0D6]/15/70 text-xs font-bold text-[#7FA0D6] shadow-2xs">
-                Pod A Schedule
-              </div>
-            ) : (
-              <CustomSelect
-                value={selectedPodFilter}
-                onChange={setSelectedPodFilter}
-                ariaLabel="Filter Calendar Pod"
-                options={[
-                  { value: "all", label: "All Pods" },
-                  { value: "Pod A", label: "Pod A" },
-                  { value: "Pod B", label: "Pod B" },
-                  { value: "Pod C", label: "Pod C" },
-                ]}
-              />
-            )}
-
-            <CustomSelect
-              value={selectedTypeFilter}
-              onChange={setSelectedTypeFilter}
-              ariaLabel="Filter Deliverable Type"
-              options={[
-                { value: "all", label: "All Formats" },
-                { value: "Reel", label: "🎬 Reel" },
-                { value: "Story", label: "📲 Story" },
-                { value: "Post", label: "📄 Post" },
-              ]}
-            />
-
-            <CustomSelect
-              value={selectedClientFilter}
-              onChange={setSelectedClientFilter}
-              ariaLabel="Filter Calendar Client"
-              options={[
-                { value: "all", label: "All Assigned Clients" },
-                { value: "Ryze", label: "Ryze" },
-                { value: "Aravindan", label: "Aravindan" },
-                { value: "Shanmugaraj", label: "Shanmugaraj" },
-                { value: "Luma", label: "Luma Global" },
-              ]}
-            />
-
-            <button
-              type="button"
-              onClick={() => handleOpenScheduleForDay(selectedDayNumber)}
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
-            >
-              <Plus className="w-4 h-4 stroke-[3]" /> Schedule Asset
-            </button>
-          </div>
-        </div>
-
-
-
-        {/* Calendar Grid + Dynamic Selected Date Work Split */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main 7-Column Month Calendar View */}
-          <div className="lg:col-span-2 bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-[0_4px_20px_rgba(0,0,0,0.03)] p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-black text-white">November 2024</h2>
-                <span className="text-xs font-bold text-[#97A0B3]">Production Horizon</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-medium text-[#97A0B3] hidden sm:inline">
-                  Click any date to view scheduled work
-                </span>
-                <span className="text-xs font-bold text-[#7FA0D6] bg-[#7FA0D6]/15 px-3 py-1 rounded-full">
-                  14th Today
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-bold text-[#97A0B3] pb-2 border-b border-[#2A3446]">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-                <div key={d}>{d}</div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-7 gap-2">
-              {Array.from({ length: 30 }).map((_, i) => {
-                const dayNum = i + 1;
-                const isToday = dayNum === 14;
-                const isSelected = dayNum === selectedDayNumber;
-                const dayTasks = tasksByDay[dayNum] || [];
-
-                // Tally work types for date pill summary
-                const reelsCount = dayTasks.filter((t) => t.type === "Reel").length;
-                const storiesCount = dayTasks.filter((t) => t.type === "Story").length;
-                const otherCount = dayTasks.length - reelsCount - storiesCount;
-
-                return (
-                  <button
-                    key={dayNum}
-                    type="button"
-                    onClick={() => setSelectedDayNumber(dayNum)}
-                    className={`min-h-[92px] p-2 rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer group relative ${
-                      isSelected
-                        ? "bg-[#7FA0D6]/15/90 border-blue-500 ring-2 ring-blue-600/30 shadow-md scale-[1.02] z-10"
-                        : isToday
-                        ? "bg-[#7FA0D6]/15/40 border-[#7FA0D6]/30 hover:border-blue-300"
-                        : "bg-[#0B111C]/40 border-[#2A3446] hover:bg-[#161F2D] hover:border-[#7FA0D6]/30 hover:shadow-2xs"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span
-                        className={`text-xs font-black inline-block size-6 rounded-full flex items-center justify-center transition-colors ${
-                          isSelected
-                            ? "bg-blue-600 text-white shadow-xs"
-                            : isToday
-                            ? "bg-[#7FA0D6]/20 text-blue-800 font-bold"
-                            : "text-[#F1F5F9] group-hover:text-[#7FA0D6]"
-                        }`}
-                      >
-                        {dayNum}
-                      </span>
-                      {dayTasks.length > 0 && (
-                        <span
-                          className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
-                            isSelected ? "bg-blue-600 text-white" : "bg-gray-200 text-[#F1F5F9]"
-                          }`}
-                        >
-                          {dayTasks.length}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Day Deliverables Badges */}
-                    <div className="space-y-1 mt-1 w-full">
-                      {reelsCount > 0 && (
-                        <span className="block text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 truncate">
-                          🎬 {reelsCount} {reelsCount === 1 ? "Reel" : "Reels"}
-                        </span>
-                      )}
-                      {storiesCount > 0 && (
-                        <span className="block text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 truncate">
-                          📲 {storiesCount} {storiesCount === 1 ? "Story" : "Stories"}
-                        </span>
-                      )}
-                      {otherCount > 0 && (
-                        <span className="block text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 truncate">
-                          📌 {otherCount} Deliverable{otherCount > 1 ? "s" : ""}
-                        </span>
-                      )}
-                      {dayTasks.length === 0 && (
-                        <span className="block text-[9px] font-medium text-gray-300 group-hover:text-[#97A0B3] transition-colors pt-2">
-                          + Add item
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Right Column: Dynamic Work Container for Selected Date */}
-          <div className="bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-[0_4px_20px_rgba(0,0,0,0.03)] p-6 space-y-4 flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Dynamic Header */}
-              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-black text-white">
-                    {isSelectedDateToday
-                      ? "Today's Deliverables"
-                      : `Nov ${selectedDayNumber} Deliverables`}
-                  </h2>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-black text-[#7FA0D6] bg-[#7FA0D6]/15 px-2.5 py-1 rounded-full border border-[#7FA0D6]/30">
-                    {filteredDayTasks.length} {filteredDayTasks.length === 1 ? "Item" : "Items"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Sub-bar indicator showing selected date */}
-              <div className="flex items-center justify-between bg-[#0B111C]/80 px-3 py-2 rounded-xl border border-[#2A3446]">
-                <span className="text-xs font-semibold text-[#F1F5F9] flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#7FA0D6]" />
-                  Scheduled for <strong>Nov {selectedDayNumber}, 2024</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleOpenScheduleForDay(selectedDayNumber)}
-                  className="text-[11px] font-bold text-[#7FA0D6] hover:text-blue-800 flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5 stroke-[3]" /> Add
-                </button>
-              </div>
-
-              {/* Deliverable Items List for Selected Date */}
-              {filteredDayTasks.length > 0 ? (
-                <div className="space-y-3 max-h-[580px] overflow-y-auto pr-1">
-                  {filteredDayTasks.map((item) => {
-                    const typeBadge = getTypeBadge(item.type);
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => setSelectedAssetModal(item)}
-                        className="p-4 rounded-2xl border border-[#2A3446] hover:border-blue-300 bg-[#161F2D] hover:bg-[#7FA0D6]/15/20 shadow-2xs hover:shadow-sm transition-all cursor-pointer space-y-2.5 group"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-black text-[#7FA0D6] uppercase font-mono tracking-wider">
-                            {item.pod} • {item.client}
-                          </span>
-                          <span
-                            className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${typeBadge.bg}`}
-                          >
-                            {typeBadge.label}
-                          </span>
-                        </div>
-
-                        <h4 className="text-xs font-black text-white group-hover:text-[#7FA0D6] transition-colors leading-snug">
-                          {item.title}
-                        </h4>
-
-                        <div className="flex items-center justify-between text-[11px] text-[#97A0B3] pt-2 border-t border-[#2A3446]">
-                          <div className="flex items-center gap-1.5">
-                            <div
-                              className={`size-5.5 rounded-full ${item.avatarBg} text-white font-bold text-[9px] flex items-center justify-center shadow-2xs`}
-                            >
-                              {item.avatar}
-                            </div>
-                            <span className="font-semibold text-[#F1F5F9]">{item.assignee}</span>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${item.tagColor}`}
-                            >
-                              {item.tag}
-                            </span>
-                            <span className="font-bold text-white font-mono text-xs">
-                              {item.time}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                /* Empty State when no tasks exist on selected date */
-                <div className="py-12 px-4 text-center rounded-2xl border-2 border-dashed border-[#2A3446] bg-[#0B111C]/50 flex flex-col items-center justify-center space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center shadow-2xs">
-                    <Calendar className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-black text-white">
-                      No deliverables on Nov {selectedDayNumber}
-                    </h3>
-                    <p className="text-xs text-[#97A0B3] mt-1 max-w-[240px] mx-auto">
-                      No reels, stories, or slide decks are scheduled for this date yet.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleOpenScheduleForDay(selectedDayNumber)}
-                    className="mt-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors"
-                  >
-                    <Plus className="w-4 h-4 stroke-[3]" /> Schedule for Nov {selectedDayNumber}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Bottom Quick Action */}
-            <div className="pt-3 border-t border-[#2A3446] flex items-center justify-between text-xs text-[#97A0B3]">
-              <span className="font-medium">Total Assets in Nov:</span>
-              <span className="font-black text-white">
-                {Object.values(tasksByDay).reduce((acc, curr) => acc + curr.length, 0)} Items
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Schedule Modal */}
-        {isScheduleModalOpen && (
-          <div className="fixed inset-0 w-screen h-screen z-[9999] flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 overflow-y-auto">
-            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-[#2A3446]">
-              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-                <div>
-                  <h3 className="text-base font-black text-white">Schedule Content Asset</h3>
-                  <p className="text-xs text-[#97A0B3] mt-0.5">
-                    Target Date: Nov {scheduleForm.dateDay}, 2024
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsScheduleModalOpen(false)}
-                  className="p-1 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleScheduleSubmit} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Asset Title</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Black Friday Reel Cut Batch #2"
-                    value={scheduleForm.title}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, title: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Deliverable Type</label>
-                    <select
-                      value={scheduleForm.type}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, type: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    >
-                      <option value="Reel">🎬 Reel</option>
-                      <option value="Story">📲 Story</option>
-                      <option value="Carousel">🎨 Carousel</option>
-                      <option value="Slide Deck">📊 Slide Deck</option>
-                      <option value="Explainer Video">📹 Explainer Video</option>
-                      <option value="Shorts">⚡ Shorts</option>
-                      <option value="Banner">🖼️ Banner</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Target Client</label>
-                    <select
-                      value={scheduleForm.client}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, client: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    >
-                      <option value="Ryze">Ryze</option>
-                      <option value="Aravindan">Aravindan</option>
-                      <option value="Shanmugaraj">Shanmugaraj</option>
-                      <option value="Luma">Luma Global</option>
-                      <option value="Lumina Health">Lumina Health</option>
-                      <option value="Acme Corp">Acme Corp</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Target Pod</label>
-                    <select
-                      value={scheduleForm.pod}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, pod: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    >
-                      <option value="Pod A">Pod A</option>
-                      <option value="Pod B">Pod B</option>
-                      <option value="Pod C">Pod C</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Day of November</label>
-                    <select
-                      value={scheduleForm.dateDay}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, dateDay: Number(e.target.value) })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    >
-                      {Array.from({ length: 30 }).map((_, idx) => (
-                        <option key={idx + 1} value={idx + 1}>
-                          Nov {idx + 1}, 2024
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Target Time</label>
-                    <input
-                      type="text"
-                      value={scheduleForm.time}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, time: e.target.value })}
-                      placeholder="e.g. 4:30 PM"
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Initial Tag</label>
-                    <input
-                      type="text"
-                      value={scheduleForm.tag}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, tag: e.target.value })}
-                      placeholder="e.g. Final Polish"
-                      className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
-                  <button
-                    type="button"
-                    onClick={() => setIsScheduleModalOpen(false)}
-                    className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm cursor-pointer"
-                  >
-                    Schedule Asset
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Selected Asset Details Modal */}
-        {selectedAssetModal && (
-          <div className="fixed inset-0 w-screen h-screen z-[9999] flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 overflow-y-auto">
-            <div className="bg-[#161F2D] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-[#2A3446]">
-              <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-[#7FA0D6] uppercase font-mono">
-                      {selectedAssetModal.pod} • {selectedAssetModal.client}
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30">
-                      {selectedAssetModal.type}
-                    </span>
-                  </div>
-                  <h3 className="text-base font-black text-white mt-1">{selectedAssetModal.title}</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssetModal(null)}
-                  className="p-1 rounded-lg text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="p-4 bg-[#0B111C] rounded-2xl space-y-2.5 text-xs text-[#F1F5F9]">
-                <div className="flex justify-between">
-                  <span className="font-semibold text-[#97A0B3]">Deliverable Type:</span>
-                  <span className="font-bold text-white">{getTypeBadge(selectedAssetModal.type).label}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-semibold text-[#97A0B3]">Assigned Specialist:</span>
-                  <span className="font-bold text-white">{selectedAssetModal.assignee}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-semibold text-[#97A0B3]">Scheduled Time:</span>
-                  <span className="font-bold text-white">{selectedAssetModal.time}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-semibold text-[#97A0B3]">Pipeline Stage:</span>
-                  <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] border ${selectedAssetModal.tagColor}`}>
-                    {selectedAssetModal.tag}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssetModal(null)}
-                  className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 cursor-pointer transition-colors"
-                >
-                  Close Preview
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
-  );
-}
+export { AdminCalendarPage } from "./AdminCalendarPage";
 
 export { AdminSupportTicketsPage, AdminSupportTicketsPage as AdminSupportPage } from "./AdminSupportTicketsPage";
 export { AdminTicketDetailPage } from "./AdminTicketDetailPage";
@@ -3784,6 +3841,32 @@ export function AdminTeamManagementPage() {
   const [roleCategoryFilter, setRoleCategoryFilter] = useState<string>("all");
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  const { data: queueData } = useQuery({
+    queryKey: ["admin_queue"],
+    queryFn: () => fetchAdminQueue(),
+  });
+
+  useEffect(() => {
+    if (queueData?.staff && queueData.staff.length > 0) {
+      const mapped = queueData.staff.map((s, idx) => ({
+        id: s.user_id || `staff-${idx}`,
+        podId: idx % 3 === 0 ? "pod-a" : idx % 3 === 1 ? "pod-b" : "pod-c",
+        name: String(s.full_name || (s.email ? s.email.split("@")[0] : "Team Member")),
+        role: s.department ? `${s.department.toUpperCase()} Specialist` : "Creative Specialist",
+        category: (s.department === "lead" ? "lead" : "editor") as "editor" | "designer" | "lead" | "videographer" | "photographer",
+        isLead: s.department === "lead",
+        email: s.email || "staff@creo.agency",
+        handle: String(s.email ? `@${s.email.split("@")[0]}` : "@member"),
+        status: (s.on_leave_today ? "On Leave" : s.is_accepting_work ? "Accepting Work" : "Fully Booked") as "Pod Lead" | "Accepting Work" | "Fully Booked" | "On Leave" | "Sprint Ready",
+        statusColor: s.on_leave_today ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200",
+        allocatedPct: Math.min(100, Math.round((s.active_wip / Math.max(1, s.daily_capacity)) * 100)),
+        projectsCount: s.active_wip,
+        capabilities: s.skills && s.skills.length > 0 ? s.skills : ["Creative Design", "Content Operations"],
+      }));
+      setMembersList(mapped);
+    }
+  }, [queueData]);
 
   const [pods, setPods] = useState([
     {
@@ -3818,8 +3901,8 @@ export function AdminTeamManagementPage() {
       pendingReview: 0,
       allocatedHours: 120,
       totalHours: 120,
-      color: "bg-[#0EA5E9]",
-      textColor: "text-[#0EA5E9]",
+      color: "bg-[#7FA0D6]",
+      textColor: "text-[#7FA0D6]",
       pillBg: "bg-sky-50 text-sky-600 border-sky-100",
       squadLoad: 40,
       activeEngagements: 1,
@@ -4209,14 +4292,14 @@ export function AdminTeamManagementPage() {
         activeTab="Team Details"
       />
 
-      <main className="flex-1 px-6 lg:px-10 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6">
+      <main className="flex-1 px-3.5 sm:px-6 lg:px-10 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-4 sm:space-y-6">
         {toast && (
-          <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-2xl flex items-center justify-between shadow-sm animate-fade-in">
+          <div className="p-4 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold rounded-2xl flex items-center justify-between shadow-sm animate-fade-in">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <span>{toast}</span>
             </div>
-            <button onClick={() => setToast(null)} className="text-emerald-600 hover:text-emerald-900 font-bold">
+            <button onClick={() => setToast(null)} className="text-emerald-400 hover:text-emerald-200 font-bold">
               Dismiss
             </button>
           </div>
@@ -4236,74 +4319,89 @@ export function AdminTeamManagementPage() {
               <button
                 type="button"
                 onClick={() => setIsAddMemberOpen(true)}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all shrink-0"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all shrink-0"
               >
                 <Plus className="w-4 h-4" /> Add Team Pod
               </button>
             </div>
 
             {/* 3 KPI Summary Cards matching Screenshot 1 */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Card 1: NO OF PODS */}
-              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
-                    NO OF PODS
-                  </span>
-                  <div className="w-9 h-9 rounded-2xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center">
-                    <Users className="w-5 h-5" />
-                  </div>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black text-white tracking-tight">8 Pods</span>
-                  <span className="text-xs font-semibold text-[#97A0B3]">across 72 members</span>
-                </div>
-                <div className="mt-4 pt-3 border-t border-[#2A3446] text-xs font-bold text-[#7FA0D6] flex items-center gap-1">
-                  <Layers className="w-3.5 h-3.5" /> Pods A – H Active Pods
-                </div>
-              </div>
+            {(() => {
+              const totalPodsCount = pods.length;
+              const totalMembersCount = membersList.length;
+              const avgCapacityPct = Math.round(
+                membersList.reduce((acc, m) => acc + (m.allocatedPct || 0), 0) / (membersList.length || 1)
+              );
+              const activeTasksCount = membersList.reduce((acc, m) => acc + (m.projectsCount || 0), 0);
+              const firstPodLetter = pods[0]?.letter || "A";
+              const lastPodLetter = pods[pods.length - 1]?.letter || String.fromCharCode(65 + Math.max(0, pods.length - 1));
 
-              {/* Card 2: CAPACITY */}
-              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
-                    CAPACITY
-                  </span>
-                  <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <Zap className="w-5 h-5" />
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-6">
+                  {/* Card 1: NO OF PODS */}
+                  <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
+                        NO OF PODS
+                      </span>
+                      <div className="w-9 h-9 rounded-2xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center">
+                        <Users className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-3xl font-black text-white tracking-tight">{totalPodsCount} Pods</span>
+                      <span className="text-xs font-semibold text-[#97A0B3]">across {totalMembersCount} members</span>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-[#2A3446] text-xs font-bold text-[#7FA0D6] flex items-center gap-1">
+                      <Layers className="w-3.5 h-3.5" /> Pods {firstPodLetter} – {lastPodLetter} Active Pods
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black text-white tracking-tight">88%</span>
-                  <span className="text-xs font-semibold text-[#97A0B3]">optimal bandwidth</span>
-                </div>
-                <div className="mt-4 pt-3 border-t border-[#2A3446] flex items-center gap-2">
-                  <div className="flex-1 bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
-                    <div className="bg-emerald-600 h-full rounded-full w-[88%]" />
-                  </div>
-                  <span className="text-xs font-bold text-emerald-600">Healthy</span>
-                </div>
-              </div>
 
-              {/* Card 3: TASKS TO BE DONE */}
-              <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
-                    TASKS TO BE DONE
-                  </span>
-                  <div className="w-9 h-9 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center">
-                    <CheckSquare className="w-5 h-5" />
+                  {/* Card 2: CAPACITY */}
+                  <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
+                        CAPACITY
+                      </span>
+                      <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                        <Zap className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-3xl font-black text-white tracking-tight">{avgCapacityPct}%</span>
+                      <span className="text-xs font-semibold text-[#97A0B3]">optimal bandwidth</span>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-[#2A3446] flex items-center gap-2">
+                      <div className="flex-1 bg-[#161F2D] rounded-full h-2 overflow-hidden">
+                        <div className="bg-emerald-600 h-full rounded-full" style={{ width: `${avgCapacityPct}%` }} />
+                      </div>
+                      <span className="text-xs font-bold text-emerald-600">
+                        {avgCapacityPct > 90 ? "High Load" : "Healthy"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: TASKS TO BE DONE */}
+                  <div className="kpi-card bg-[#161F2D] rounded-3xl p-6 border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[10px] font-extrabold text-[#97A0B3] uppercase tracking-wider">
+                        TASKS TO BE DONE
+                      </span>
+                      <div className="w-9 h-9 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center">
+                        <CheckSquare className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-3xl font-black text-white tracking-tight">{activeTasksCount}</span>
+                      <span className="text-xs font-semibold text-[#97A0B3]">in review/progress</span>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-[#2A3446] text-xs text-[#97A0B3] flex items-center gap-1 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> All squad tasks live on track
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black text-white tracking-tight">28</span>
-                  <span className="text-xs font-semibold text-[#97A0B3]">in review/progress</span>
-                </div>
-                <div className="mt-4 pt-3 border-t border-[#2A3446] text-xs text-[#97A0B3] flex items-center gap-1 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-[#97A0B3]" /> 142 milestones closed ahead of target
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Team Pods Section Header */}
             <div className="flex items-center justify-between pt-2">
@@ -4317,7 +4415,7 @@ export function AdminTeamManagementPage() {
             </div>
 
             {/* Pod Cards Grid matching Screenshot 1 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-6">
               {pods.map((pod) => (
                 <div
                   key={pod.id}
@@ -4332,7 +4430,7 @@ export function AdminTeamManagementPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-bold text-base text-white">{pod.name}</h4>
-                          <span className="px-2 py-0.5 rounded-full bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold">
+                          <span className="px-2 py-0.5 rounded-full bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold">
                             Sprint Pod
                           </span>
                         </div>
@@ -4372,7 +4470,7 @@ export function AdminTeamManagementPage() {
                       <span>Sprint Velocity</span>
                       <span className="font-bold text-white">{pod.velocityPct}% on track</span>
                     </div>
-                    <div className="w-full bg-[#1F2C3F] rounded-full h-2.5 overflow-hidden">
+                    <div className="w-full bg-[#161F2D] rounded-full h-2.5 overflow-hidden">
                       <div className={`h-full rounded-full ${pod.color}`} style={{ width: `${pod.velocityPct}%` }} />
                     </div>
                     <div className="flex justify-between text-[11px] text-[#97A0B3] font-medium pt-0.5">
@@ -4408,7 +4506,7 @@ export function AdminTeamManagementPage() {
           <div className="space-y-6">
             {/* Top Breadcrumb & Action Controls */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#97A0B3]">
+              <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-bold text-[#97A0B3] flex-wrap">
                 <button
                   type="button"
                   onClick={() => setActivePodId(null)}
@@ -4434,7 +4532,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setIsAddMemberOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                  className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer transition-all"
                 >
                   + Add Team Member
                 </button>
@@ -4495,7 +4593,7 @@ export function AdminTeamManagementPage() {
             <div className="bg-[#161F2D] rounded-2xl border border-[#2A3446] p-4 shadow-sm space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {/* Filter Pills matching Screenshot 2 */}
-                <div className="flex flex-wrap items-center gap-1.5 bg-[#1F2C3F] p-1 rounded-xl text-xs font-bold">
+                <div className="flex flex-wrap items-center gap-1.5 bg-[#161F2D] p-1 rounded-xl text-xs font-bold">
                   {[
                     { key: "all", label: `All Members (${membersList.filter((m) => !activePodId || m.podId === activePodId).length})` },
                     { key: "lead", label: "Leads" },
@@ -4512,7 +4610,7 @@ export function AdminTeamManagementPage() {
                       onClick={() => setRoleCategoryFilter(tab.key)}
                       className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                         roleCategoryFilter === tab.key
-                          ? "bg-[#2563EB] text-white shadow-xs"
+                          ? "bg-[#7FA0D6] text-white shadow-xs"
                           : "text-[#F1F5F9] hover:text-white"
                       }`}
                     >
@@ -4609,7 +4707,7 @@ export function AdminTeamManagementPage() {
                         {member.capabilities.map((cap) => (
                           <span
                             key={cap}
-                            className="px-2.5 py-1 rounded-lg bg-[#1F2C3F] text-[#F1F5F9] text-[10px] font-bold border border-[#2A3446]/60"
+                            className="px-2.5 py-1 rounded-lg bg-[#161F2D] text-[#F1F5F9] text-[10px] font-bold border border-[#2A3446]/60"
                           >
                             {cap}
                           </span>
@@ -4629,7 +4727,7 @@ export function AdminTeamManagementPage() {
                           {member.allocatedPct}% {member.allocatedPct >= 90 ? "Booked" : "Allocated"}
                         </span>
                       </div>
-                      <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
+                      <div className="w-full bg-[#161F2D] rounded-full h-2 overflow-hidden">
                         <div
                           className={`h-full rounded-full ${
                             member.allocatedPct >= 90 ? "bg-rose-500" : member.allocatedPct >= 70 ? "bg-blue-600" : "bg-emerald-500"
@@ -4692,7 +4790,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setAssignModalMember(null)}
-                  className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                  className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <X className="size-4" />
                 </button>
@@ -4741,7 +4839,7 @@ export function AdminTeamManagementPage() {
                         key={preset}
                         type="button"
                         onClick={() => setAssignForm({ ...assignForm, taskTitle: preset })}
-                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#1F2C3F] hover:bg-slate-200 text-[#F1F5F9] transition-colors cursor-pointer"
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#161F2D] hover:bg-slate-200 text-[#F1F5F9] transition-colors cursor-pointer"
                       >
                         + {preset}
                       </button>
@@ -4749,24 +4847,24 @@ export function AdminTeamManagementPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Client Account</label>
-                    <select
+                    <NativeSelect
                       value={assignForm.client}
                       onChange={(e) => setAssignForm({ ...assignForm, client: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium text-white bg-[#161F2D]"
                     >
-                      <option value="Ryze">Ryze (Starter Growth)</option>
-                      <option value="Shanmugaraj">Shanmugaraj (Brand Accelerator)</option>
+                      <option value="Ryze">Ryze (Starter)</option>
+                      <option value="Shanmugaraj">Shanmugaraj (Growth)</option>
                       <option value="Aravindan">Aravindan (Custom Retainer)</option>
                       <option value="Luma">Luma Global (Enterprise)</option>
-                    </select>
+                    </NativeSelect>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Priority Level</label>
-                    <select
+                    <NativeSelect
                       value={assignForm.priority}
                       onChange={(e) => setAssignForm({ ...assignForm, priority: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs font-medium text-white bg-[#161F2D]"
@@ -4775,11 +4873,11 @@ export function AdminTeamManagementPage() {
                       <option value="High">⚡ High (Sprint Priority)</option>
                       <option value="Medium">Standard Medium</option>
                       <option value="Normal">Normal Priority</option>
-                    </select>
+                    </NativeSelect>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Workload Allocation</label>
                     <div className="grid grid-cols-4 gap-1">
@@ -4791,7 +4889,7 @@ export function AdminTeamManagementPage() {
                           className={`py-1.5 text-center text-xs font-bold rounded-lg border transition-all cursor-pointer ${
                             assignForm.allocationIncrease === pct
                               ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
-                              : "bg-[#0B111C] text-[#F1F5F9] border-[#2A3446] hover:bg-[#1F2C3F]"
+                              : "bg-[#0B111C] text-[#F1F5F9] border-[#2A3446] hover:bg-[#161F2D]"
                           }`}
                         >
                           +{pct}%
@@ -4853,7 +4951,7 @@ export function AdminTeamManagementPage() {
             onClick={() => setScheduleModalMember(null)}
           >
             <div
-              className="relative w-full max-w-2xl rounded-3xl bg-[#161F2D] p-6 sm:p-8 shadow-2xl border border-[#2A3446] flex flex-col space-y-5 max-h-[92vh] overflow-y-auto"
+              className="relative w-full max-w-2xl rounded-3xl bg-[#161F2D] p-5 sm:p-8 shadow-2xl border border-[#2A3446] flex flex-col space-y-5 max-h-[92vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
               role="dialog"
               aria-modal="true"
@@ -4877,7 +4975,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setScheduleModalMember(null)}
-                  className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                  className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <X className="size-4" />
                 </button>
@@ -4943,7 +5041,7 @@ export function AdminTeamManagementPage() {
                           <span className="text-xs font-bold text-white truncate">{proj.name}</span>
                           <span className="text-[10px] font-bold text-[#97A0B3]">({proj.client})</span>
                         </div>
-                        <div className="w-full bg-[#1F2C3F] rounded-full h-1.5 mt-2 overflow-hidden">
+                        <div className="w-full bg-[#161F2D] rounded-full h-1.5 mt-2 overflow-hidden">
                           <div className={`h-full rounded-full ${proj.color}`} style={{ width: `${proj.progress}%` }} />
                         </div>
                       </div>
@@ -4998,7 +5096,7 @@ export function AdminTeamManagementPage() {
             onClick={() => setSuccessPopup(null)}
           >
             <div
-              className="relative w-full max-w-md rounded-3xl bg-[#161F2D] p-6 sm:p-8 shadow-2xl border border-[#2A3446] flex flex-col items-center text-center animate-in zoom-in-95 duration-150"
+              className="relative w-full max-w-md rounded-3xl bg-[#161F2D] p-5 sm:p-8 shadow-2xl border border-[#2A3446] flex flex-col items-center text-center animate-in zoom-in-95 duration-150"
               onClick={(e) => e.stopPropagation()}
               role="dialog"
               aria-modal="true"
@@ -5006,7 +5104,7 @@ export function AdminTeamManagementPage() {
               <button
                 type="button"
                 onClick={() => setSuccessPopup(null)}
-                className="absolute top-4 right-4 size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
+                className="absolute top-4 right-4 size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
                 aria-label="Close modal"
               >
                 <X className="size-4" />
@@ -5065,7 +5163,7 @@ export function AdminTeamManagementPage() {
                 <button
                   type="button"
                   onClick={() => setIsAddMemberOpen(false)}
-                  className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                  className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <X className="size-4" />
                 </button>
@@ -5073,7 +5171,7 @@ export function AdminTeamManagementPage() {
 
               {/* Add Member Form */}
               <form onSubmit={handleCreateTeamMember} className="space-y-3.5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Full Name *</label>
                     <input
@@ -5109,7 +5207,7 @@ export function AdminTeamManagementPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Role Title</label>
                     <input
@@ -5134,10 +5232,10 @@ export function AdminTeamManagementPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Role Track Category</label>
-                    <select
+                    <NativeSelect
                       value={newMemberForm.category}
                       onChange={(e) => {
                         const cat = e.target.value as TeamMember["category"];
@@ -5155,12 +5253,12 @@ export function AdminTeamManagementPage() {
                       <option value="videographer">🎥 Cinematographer & Videographer</option>
                       <option value="photographer">📷 Commercial Photographer</option>
                       <option value="lead">👑 Pod Lead & Strategist</option>
-                    </select>
+                    </NativeSelect>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Assign Sprint Pod</label>
-                    <select
+                    <NativeSelect
                       value={newMemberForm.podId}
                       onChange={(e) => setNewMemberForm({ ...newMemberForm, podId: e.target.value })}
                       className="w-full px-3 py-2.5 rounded-xl border border-[#2A3446] text-xs font-medium text-white bg-[#161F2D]"
@@ -5168,7 +5266,7 @@ export function AdminTeamManagementPage() {
                       <option value="pod-a">Pod A • Enterprise Brand & Design</option>
                       <option value="pod-b">Pod B • Performance & Video</option>
                       <option value="pod-c">Pod C • 3D Motion & VFX</option>
-                    </select>
+                    </NativeSelect>
                   </div>
                 </div>
 
@@ -5218,12 +5316,30 @@ export function AdminLeaveApprovalsPage() {
   const [filterTab, setFilterTab] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
 
-  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+  const { data: dbLeaves = [], refetch } = useQuery({
+    queryKey: ["admin_leave_requests"],
+    queryFn: fetchLeaveRequests,
+  });
 
-  const handleAction = (id: string, action: "approved" | "rejected") => {
-    setLeaveRequests((prev) =>
-      prev.map((lr) => (lr.id === id ? { ...lr, status: action } : lr))
-    );
+  const [localOverrides, setLocalOverrides] = useState<Record<string, "approved" | "rejected">>({});
+
+  const leaveRequests = dbLeaves.map((lr) => ({
+    ...lr,
+    status: localOverrides[lr.id] || lr.status,
+  }));
+
+  const handleAction = async (id: string, action: "approved" | "rejected") => {
+    setLocalOverrides((prev) => ({ ...prev, [id]: action }));
+    try {
+      if (action === "approved") {
+        await approveLeaveRequest(id);
+      } else {
+        await rejectLeaveRequest(id);
+      }
+      refetch();
+    } catch {
+      // Keep optimistic UI
+    }
     setToast(`Leave request ${action} successfully.`);
     setTimeout(() => setToast(null), 3000);
   };
@@ -5233,12 +5349,12 @@ export function AdminLeaveApprovalsPage() {
   );
 
   const onLeaveCount = leaveRequests.filter((l) => l.status === "approved").length;
-  const inOfficeCount = 9 - onLeaveCount;
+  const inOfficeCount = Math.max(0, 9 - onLeaveCount);
 
   return (
     <div data-surface="ops" className="w-full min-h-screen font-sans bg-[#0B111C] flex flex-col">
       <AdminTopHeader activeTab="Team Details" />
-      <main className="flex-1 px-6 lg:px-8 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-8">
+      <main className="flex-1 px-3.5 sm:px-6 lg:px-8 pt-4 pb-24 sm:pb-16 max-w-[1500px] w-full mx-auto space-y-8">
         {toast && (
           <div className="p-4 bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-xs font-bold rounded-2xl flex items-center justify-between shadow-xl backdrop-blur-md animate-fade-in">
             <div className="flex items-center gap-2">
@@ -5256,14 +5372,14 @@ export function AdminLeaveApprovalsPage() {
           <div className="flex items-center gap-3">
             <Link
               to="/admin/team"
-              className="px-3.5 py-2 rounded-xl bg-[#1F2C3F] hover:bg-slate-200 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="px-3.5 py-2 rounded-xl bg-[#161F2D] hover:bg-slate-200 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
             >
               <UserCog className="w-4 h-4 text-[#97A0B3]" /> Team Roster
             </Link>
             <button
               type="button"
               onClick={() => setIsApplyModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#2B7BC4] hover:bg-[#1A5EA8] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-[#7FA0D6] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Plus className="w-4 h-4" /> Apply for Leave
             </button>
@@ -5271,7 +5387,7 @@ export function AdminLeaveApprovalsPage() {
         </div>
 
         {/* 2 Top KPI Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-6">
           <div className="bg-[#161F2D] rounded-3xl p-6 border border-[#2A3446] shadow-[0_4px_20px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-bold text-[#97A0B3] uppercase tracking-wider">
@@ -5316,7 +5432,7 @@ export function AdminLeaveApprovalsPage() {
         {/* Requests Table */}
         <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] shadow-sm overflow-hidden">
           <div className="p-4 border-b border-[#2A3446] flex items-center justify-between bg-[#0B111C]/50">
-            <div className="flex items-center gap-1.5 bg-[#1F2C3F] p-1 rounded-xl text-xs">
+            <div className="flex items-center gap-1.5 bg-[#161F2D] p-1 rounded-xl text-xs">
               {(["all", "pending", "approved", "rejected"] as const).map((tab) => (
                 <button
                   key={tab}
@@ -5335,10 +5451,10 @@ export function AdminLeaveApprovalsPage() {
           <table className="w-full text-left text-xs text-white">
             <thead className="bg-[#0B111C] border-b border-[#2A3446] text-[11px] font-bold uppercase tracking-wider text-[#97A0B3]">
               <tr>
-                <th className="px-5 py-3.5">Specialist</th>
-                <th className="px-5 py-3.5">Dates</th>
-                <th className="px-5 py-3.5">Reason</th>
-                <th className="px-5 py-3.5">Status</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3.5">Specialist</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3.5">Dates</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3.5">Reason</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3.5">Status</th>
                 <th className="px-5 py-3.5 text-right">Action</th>
               </tr>
             </thead>
@@ -5352,16 +5468,15 @@ export function AdminLeaveApprovalsPage() {
               ) : (
                 filteredRequests.map((lr) => (
                 <tr key={lr.id} className="hover:bg-[#0B111C]/60">
-                  <td className="px-5 py-4">
-                    <div className="font-bold text-white">{lr.name}</div>
-                    <div className="text-[11px] text-[#97A0B3]">{lr.department} • {lr.pod}</div>
+                  <td className="px-3 sm:px-5 py-3 sm:py-4">
+                    <div className="font-bold text-white">{lr.user_name || (lr as any).name || "Team Member"}</div>
+                    <div className="text-[11px] text-[#97A0B3]">{lr.user_role || (lr as any).department || "Specialist"}</div>
                   </td>
                   <td className="px-5 py-4 font-mono text-[11px]">
-                    <div>{lr.startDate} to {lr.endDate}</div>
-                    <span className="text-[#97A0B3] font-sans">({lr.days} days)</span>
+                    <div>{lr.start_date || (lr as any).startDate} to {lr.end_date || (lr as any).endDate}</div>
                   </td>
                   <td className="px-5 py-4 text-[#F1F5F9] max-w-xs">{lr.reason}</td>
-                  <td className="px-5 py-4">
+                  <td className="px-3 sm:px-5 py-3 sm:py-4">
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                         lr.status === "approved"
@@ -5424,7 +5539,7 @@ export function AdminLeaveApprovalsPage() {
                 }}
                 className="space-y-3"
               >
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Start Date</label>
                     <input type="date" required className="w-full px-3 py-2 rounded-xl border border-[#2A3446] text-xs" />
@@ -5440,7 +5555,7 @@ export function AdminLeaveApprovalsPage() {
                 </div>
                 <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
                   <button type="button" onClick={() => setIsApplyModalOpen(false)} className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#F1F5F9] hover:bg-[#0B111C]">Cancel</button>
-                  <button type="submit" className="px-4 py-2 rounded-xl bg-[#2B7BC4] text-xs font-bold text-white hover:bg-[#1A5EA8]">Submit</button>
+                  <button type="submit" className="px-4 py-2 rounded-xl bg-[#7FA0D6] text-xs font-bold text-white hover:bg-[#7FA0D6]">Submit</button>
                 </div>
               </form>
             </div>
@@ -5472,24 +5587,31 @@ export interface TransactionItem {
 
 export interface PlanNegotiationItem {
   id: string;
+  clientId?: string | null;
   clientName: string;
   clientLogo: string;
-  currentPlan: string;
-  proposedPlan: string;
-  originalPrice: number;
-  proposedPrice: number;
-  discountPct: number;
-  notes: string;
-  requestedAt: string;
+  clientEmail?: string;
+  targetTopic: string;
+  proposedOffer: string | null;
+  phoneNumber: string;
+  preferredTime: string;
+  notes: string | null;
+  requestedAt: string | null;
   status: "Pending Review" | "Accepted" | "Declined" | "Counter Offered";
-  counterPrice?: number;
-  declineReason?: string;
+  counterPrice?: number | null;
+  agreedAmount?: number | null;
+  counterNote?: string | null;
+  declineReason?: string | null;
+  reelQuota?: number | null;
+  posterQuota?: number | null;
+  storyQuota?: number | null;
 }
 
 export function AdminRevenuePage() {
   const [filter, setFilter] = useState<"all" | "paid" | "pending" | "overdue">("all");
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  const [revenueLayout, setRevenueLayout] = useState<"split" | "enlarged">("enlarged");
 
   // Modals
   const [selectedReceipt, setSelectedReceipt] = useState<TransactionItem | null>(null);
@@ -5501,14 +5623,60 @@ export function AdminRevenuePage() {
   const [newInvAmount, setNewInvAmount] = useState("");
   const [newInvMethod, setNewInvMethod] = useState("Stripe ACH");
 
-  // Transactions Data (Clean baseline: 0 mock entries)
-  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  // Transactions Data (In real app, fetch from backend)
+  const { data: serverTransactions } = useQuery({
+    queryKey: ["admin_transactions"],
+    queryFn: () => fetchAdminTransactions(),
+    refetchInterval: 60000,
+  });
 
-  const totalMrr = transactions.reduce((acc, t) => acc + (t.status === "Paid" ? t.amount : 0), 0);
+  const [localTransactions, setLocalTransactions] = useState<TransactionItem[]>([]);
+
+  const mappedServer = (serverTransactions || []).map((t: any, idx: number) => {
+    // Determine badge class dynamically based on status
+    const status = t.status || "Pending";
+    let badgeClass = "bg-slate-500/20 text-slate-400 border border-slate-500/30 font-black";
+    if (status === "Paid") badgeClass = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-black";
+    else if (status === "Overdue" || status === "Refunded/Cancelled") badgeClass = "bg-rose-500/20 text-rose-400 border border-rose-500/30 font-black";
+    else if (status === "Pending") badgeClass = "bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold";
+
+    // Dynamic avatar color
+    const colors = ["bg-blue-600", "bg-emerald-600", "bg-purple-600", "bg-amber-600", "bg-[#7FA0D6]"];
+    const avatarBg = `${colors[idx % colors.length]} text-white font-black`;
+    
+    return {
+      ...t,
+      badgeClass,
+      avatarBg,
+      clientInitials: (t.client || "").split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2),
+    };
+  });
+
+  const transactions = [...localTransactions, ...mappedServer];
+
+
+  // Fetch real KPI data for MRR
+  const { data: kpis } = useQuery({
+    queryKey: ["admin_kpis"],
+    queryFn: () => fetchAdminKPIs("30d"),
+    refetchInterval: 60000,
+  });
+
+  // Fetch real Revenue Trend
+  const { data: trendData } = useQuery({
+    queryKey: ["admin_revenue_trend", "quarter"],
+    queryFn: () => fetchRevenueTrend("quarter"),
+    refetchInterval: 60000,
+  });
+
+  const totalMrr = kpis?.mrr_minor ? kpis.mrr_minor / 100 : 0;
   const totalCollected = totalMrr;
   const projectedArr = totalMrr * 12;
 
-  // Chart Trend Data (Monthly Trend)
+  // Chart Trend Data (Quarterly Trend)
+  const chartData = (trendData?.points && trendData.points.length > 0)
+    ? trendData.points.map(p => ({ name: p.label, revenue: p.value }))
+    : [{ name: "Current", revenue: totalMrr * 100 }];
 
   // Actions: Create Invoice
   const handleCreateInvoiceSubmit = (e: React.FormEvent) => {
@@ -5528,7 +5696,7 @@ export function AdminRevenuePage() {
       avatarBg: "bg-[#7FA0D6]/20 text-blue-800",
     };
 
-    setTransactions((prev) => [newTx, ...prev]);
+    setLocalTransactions((prev) => [newTx, ...prev]);
     setToast(`Invoice ${newTx.id} created for ${newInvClient} (₹${newTx.amount.toLocaleString('en-IN')})!`);
     setIsCreateInvoiceOpen(false);
     setNewInvClient("");
@@ -5573,14 +5741,14 @@ export function AdminRevenuePage() {
     <div data-surface="ops" className="w-full min-h-screen font-sans bg-[#0B111C] flex flex-col">
       <AdminTopHeader title="Revenue Engine" activeTab="Revenue" />
 
-      <main className="flex-1 px-6 lg:px-10 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-8">
+      <main className="flex-1 px-3.5 sm:px-6 lg:px-10 pt-4 pb-16 max-w-[1500px] w-full mx-auto space-y-6 sm:space-y-8">
         {toast && (
-          <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-2xl flex items-center justify-between shadow-sm animate-fade-in">
+          <div className="p-4 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold rounded-2xl flex items-center justify-between shadow-sm animate-fade-in">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <span>{toast}</span>
             </div>
-            <button onClick={() => setToast(null)} className="text-emerald-600 hover:text-emerald-900 font-bold">
+            <button onClick={() => setToast(null)} className="text-emerald-400 hover:text-emerald-200 font-bold">
               Dismiss
             </button>
           </div>
@@ -5591,13 +5759,41 @@ export function AdminRevenuePage() {
         ───────────────────────────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               Live Cash Flow & Retainers
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {/* View Mode Toggle: Full Width vs Split View */}
+            <div className="flex items-center p-1 bg-[#161F2D] border border-[#2A3446] rounded-xl text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setRevenueLayout("enlarged")}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                  revenueLayout === "enlarged"
+                    ? "bg-[#7FA0D6] text-white shadow-xs font-black"
+                    : "text-[#97A0B3] hover:text-white"
+                }`}
+                title="Full-width view: spacious layout showing all row details with zero horizontal scrolling"
+              >
+                <Maximize2 className="w-3.5 h-3.5" /> Full Width (No Scroll)
+              </button>
+              <button
+                type="button"
+                onClick={() => setRevenueLayout("split")}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                  revenueLayout === "split"
+                    ? "bg-[#7FA0D6] text-white shadow-xs font-black"
+                    : "text-[#97A0B3] hover:text-white"
+                }`}
+                title="Side-by-side: Compact split view"
+              >
+                <Columns2 className="w-3.5 h-3.5" /> Split View
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={handleExportCSV}
@@ -5609,7 +5805,7 @@ export function AdminRevenuePage() {
             <button
               type="button"
               onClick={() => setIsCreateInvoiceOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+              className="px-4 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all"
             >
               <Plus className="w-4 h-4" /> Create Invoice
             </button>
@@ -5619,7 +5815,7 @@ export function AdminRevenuePage() {
         {/* ─────────────────────────────────────────────────────────────────────────────
             TOP METRIC CARDS (Matching Image 1)
         ───────────────────────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-6">
           {/* Metric 1: Total Revenue (MRR) */}
           <div className="bg-[#161F2D] rounded-3xl p-6 lg:p-7 border border-[#2A3446] shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between">
             <div className="space-y-2">
@@ -5664,55 +5860,49 @@ export function AdminRevenuePage() {
         </div>
 
         {/* ─────────────────────────────────────────────────────────────────────────────
-            CHARTS & TIER BREAKDOWN GRID
+            MAIN SECTION: REVENUE GROWTH GRAPH & TRANSACTION HISTORY
+            (Supports dynamic Split View or Full-Width Enlarged Graph)
         ───────────────────────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Revenue Growth & Trajectory (2 Cols - Bar Chart matching Dashboard) */}
-          <div className="lg:col-span-2 bg-[#161F2D] rounded-3xl p-6 lg:p-8 border border-[#2A3446] shadow-xl space-y-6 flex flex-col justify-between">
+        <div className={revenueLayout === "split" ? "grid grid-cols-1 xl:grid-cols-2 gap-3.5 sm:gap-6 items-stretch" : "space-y-6"}>
+          {/* Revenue Growth & Trajectory Card */}
+          <div className={`bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-xl flex flex-col justify-between ${
+            revenueLayout === "split" ? "p-6 lg:p-7 space-y-6" : "p-6 lg:p-8 space-y-6"
+          }`}>
             <div>
-              <div className="flex items-start justify-between mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
                 <div>
                   <h3 className="text-lg font-bold text-white tracking-tight">Revenue Growth & Trajectory</h3>
                   <p className="text-xs text-[#97A0B3]">Live cash flow across retainers & client billing</p>
                 </div>
 
-                <div className="flex items-center gap-4 text-xs font-bold">
+                <div className="flex flex-wrap items-center gap-3 text-xs font-bold">
                   <span className="flex items-center gap-1.5 text-[#7FA0D6]">
                     <span className="w-2.5 h-2.5 rounded-full bg-[#7FA0D6]" /> Actual Inflow
                   </span>
                   <span className="flex items-center gap-1.5 text-[#97A0B3]">
                     <span className="w-2.5 h-2.5 rounded-full bg-[#2A3446]" /> Target Baseline
                   </span>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-[#7FA0D6] text-white shadow-md ml-1" title="Monthly Recurring Revenue">
+                    ₹{totalMrr > 0 ? totalMrr.toLocaleString('en-IN') : "0"} Current MRR
+                  </span>
                 </div>
               </div>
 
-              {/* Peak Marker Badge */}
-              <div className="flex justify-end mb-2">
-                <span className="px-3 py-1 rounded-full text-[11px] font-black bg-[#2563EB] text-white shadow-md">
-                  ₹{totalMrr > 0 ? totalMrr.toLocaleString('en-IN') : "24,80,000"} Current MRR
-                </span>
-              </div>
-
-              {/* Recharts Bar Chart (Matching Dashboard Bar Graph) */}
-              <div className="w-full h-64 bg-[#0B111C]/60 rounded-2xl p-4 border border-[#2A3446]/60">
+              {/* Recharts Bar Chart (Responsive Height & Width) */}
+              <div className={`w-full bg-[#0B111C]/60 rounded-2xl p-4 border border-[#2A3446]/60 ${
+                revenueLayout === "enlarged" ? "h-80 sm:h-88" : "h-72"
+              }`}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={[
-                      { name: "May", revenue: 14500000 },
-                      { name: "Jun", revenue: 18200000 },
-                      { name: "Jul", revenue: 16800000 },
-                      { name: "Aug", revenue: 21500000 },
-                      { name: "Sep", revenue: 19400000 },
-                      { name: "Oct", revenue: 24800000 },
-                    ]}
-                    margin={{ top: 10, right: 10, left: -15, bottom: 0 }}
+                    data={chartData}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                     barCategoryGap="20%"
                   >
                     <defs>
                       <linearGradient id="revenueBarGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#BCCCE6" stopOpacity={1} />
                         <stop offset="45%" stopColor="#7FA0D6" stopOpacity={0.85} />
-                        <stop offset="100%" stopColor="#354B6E" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#2A3446" stopOpacity={0.35} />
                       </linearGradient>
                       <linearGradient id="revenueBarGradPeak" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#FFFFFF" stopOpacity={1} />
@@ -5732,13 +5922,17 @@ export function AdminRevenuePage() {
                       tick={{ fontSize: 10, fill: "#97A0B3" }}
                       axisLine={false}
                       tickLine={false}
-                      tickFormatter={(v: number) =>
-                        v >= 10000000
-                          ? `₹${(v / 10000000).toFixed(1)}Cr`
-                          : v >= 100000
-                          ? `₹${(v / 100000).toFixed(0)}L`
-                          : `₹${v}`
-                      }
+                      width={38}
+                      tickFormatter={(v: number) => {
+                        const val = v / 100;
+                        return val >= 10000000
+                          ? `₹${(val / 10000000).toFixed(1)}Cr`
+                          : val >= 100000
+                          ? `₹${(val / 100000).toFixed(0)}L`
+                          : val >= 1000
+                          ? `₹${(val / 1000).toFixed(0)}K`
+                          : `₹${val}`;
+                      }}
                     />
                     <Tooltip
                       formatter={(val: any) => [`₹${(Number(val) / 100).toLocaleString('en-IN')}`, "Revenue"]}
@@ -5747,21 +5941,17 @@ export function AdminRevenuePage() {
                       labelStyle={{ color: "#97A0B3", fontSize: "11px", fontWeight: "bold" }}
                       cursor={false}
                     />
-                    <Bar dataKey="revenue" radius={[8, 8, 3, 3]} maxBarSize={28}>
-                      {[
-                        { name: "May", revenue: 14500000 },
-                        { name: "Jun", revenue: 18200000 },
-                        { name: "Jul", revenue: 16800000 },
-                        { name: "Aug", revenue: 21500000 },
-                        { name: "Sep", revenue: 19400000 },
-                        { name: "Oct", revenue: 24800000 },
-                      ].map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={entry.revenue === 24800000 ? "url(#revenueBarGradPeak)" : "url(#revenueBarGrad)"}
-                          className="transition-all duration-200 hover:brightness-125 cursor-pointer"
-                        />
-                      ))}
+                    <Bar dataKey="revenue" radius={[8, 8, 3, 3]} maxBarSize={revenueLayout === "enlarged" ? 44 : 32}>
+                      {chartData.map((entry, index) => {
+                        const maxVal = Math.max(...chartData.map((d) => d.revenue));
+                        return (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={entry.revenue === maxVal ? "url(#revenueBarGradPeak)" : "url(#revenueBarGrad)"}
+                            className="transition-all duration-200 hover:brightness-125 cursor-pointer"
+                          />
+                        );
+                      })}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -5769,245 +5959,241 @@ export function AdminRevenuePage() {
             </div>
 
             {/* Bottom Metrics Bar */}
-            <div className="pt-4 border-t border-[#2A3446] grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
-              <div className="bg-[#0B111C] p-3 rounded-2xl border border-[#2A3446]">
+            <div className="pt-4 border-t border-[#2A3446] grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-center">
+              <div className="bg-[#0B111C] p-2.5 sm:p-3 rounded-2xl border border-[#2A3446]">
                 <span className="text-[10px] font-bold text-[#97A0B3] uppercase">Invoiced</span>
-                <div className="text-sm font-black text-white">₹{totalMrr > 0 ? totalMrr.toLocaleString('en-IN') : "24,80,000"}</div>
+                <div className="text-sm font-black text-white">₹{totalMrr > 0 ? totalMrr.toLocaleString('en-IN') : "0"}</div>
               </div>
-              <div className="bg-[#0B111C] p-3 rounded-2xl border border-[#2A3446]">
+              <div className="bg-[#0B111C] p-2.5 sm:p-3 rounded-2xl border border-[#2A3446]">
                 <span className="text-[10px] font-bold text-[#97A0B3] uppercase">Direct UPI / Wire</span>
-                <div className="text-sm font-black text-white">₹{totalCollected > 0 ? totalCollected.toLocaleString('en-IN') : "14,50,000"}</div>
+                <div className="text-sm font-black text-white">₹{totalCollected > 0 ? totalCollected.toLocaleString('en-IN') : "0"}</div>
               </div>
-              <div className="bg-[#0B111C] p-3 rounded-2xl border border-[#2A3446]">
+              <div className="bg-[#0B111C] p-2.5 sm:p-3 rounded-2xl border border-[#2A3446]">
                 <span className="text-[10px] font-bold text-[#97A0B3] uppercase">Cards / Razorpay</span>
-                <div className="text-sm font-black text-white">₹{totalCollected > 0 ? totalCollected.toLocaleString('en-IN') : "10,30,000"}</div>
+                <div className="text-sm font-black text-white">₹{totalCollected > 0 ? (totalCollected * 0).toLocaleString('en-IN') : "0"}</div>
               </div>
-              <div className="bg-[#0B111C] p-3 rounded-2xl border border-[#2A3446]">
+              <div className="bg-[#0B111C] p-2.5 sm:p-3 rounded-2xl border border-[#2A3446]">
                 <span className="text-[10px] font-bold text-[#97A0B3] uppercase">Disputed / Refunded</span>
                 <div className="text-sm font-black text-emerald-400">₹0</div>
               </div>
             </div>
           </div>
 
-          {/* Plan & Tier Distribution (1 Col - Dark Theme Aligned) */}
-          <div className="bg-[#161F2D] rounded-3xl p-6 lg:p-8 border border-[#2A3446] shadow-xl space-y-6 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-4">
+          {/* Recent Transactions Card (Transaction History) */}
+          <div className={`bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-xl flex flex-col justify-between ${
+            revenueLayout === "split" ? "p-6 lg:p-7 space-y-4" : "p-6 lg:p-8 space-y-6"
+          }`}>
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h3 className="text-lg font-bold text-white tracking-tight">Plan & Tier Distribution</h3>
-                  <p className="text-xs text-[#97A0B3]">Active monthly retainers by package tier</p>
-                </div>
-                <button
-                  type="button"
-                  title="Refresh Tiers"
-                  onClick={() => {
-                    setToast("Plan tier metrics refreshed.");
-                    setTimeout(() => setToast(null), 2500);
-                  }}
-                  className="p-2 rounded-xl hover:bg-[#1F2C3F] text-[#97A0B3] hover:text-[#F1F5F9] cursor-pointer transition-colors"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Tiers List (Dark Ops Color Theme) */}
-              <div className="space-y-4">
-                {/* Package 1 */}
-                <div className="space-y-2 p-3.5 bg-[#0B111C] rounded-2xl border border-[#2A3446]">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="flex items-center gap-2 text-white">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#7FA0D6]" /> Package 1 (Enterprise Domination)
-                    </span>
-                    <span className="text-white font-black">₹95,000 <span className="text-[10px] font-normal text-[#97A0B3]">/ mo</span></span>
-                  </div>
-                  <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
-                    <div className="bg-[#7FA0D6] h-full rounded-full w-[46.8%]" />
-                  </div>
-                  <div className="flex justify-between text-[11px] text-[#97A0B3] font-semibold">
-                    <span>2 Retainer Accounts</span>
-                    <span className="text-[#7FA0D6] font-bold">46.8% of MRR</span>
-                  </div>
+                  <h3 className="text-xl font-black text-white tracking-tight">Recent Transactions</h3>
+                  <p className="text-xs text-[#97A0B3]">Client billing roster & payment settlements</p>
                 </div>
 
-                {/* Package 2 */}
-                <div className="space-y-2 p-3.5 bg-[#0B111C] rounded-2xl border border-[#2A3446]">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="flex items-center gap-2 text-white">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#BCCCE6]" /> Package 2 (Brand Accelerator)
-                    </span>
-                    <span className="text-white font-black">₹50,000 <span className="text-[10px] font-normal text-[#97A0B3]">/ mo</span></span>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {/* Search */}
+                  <div className="relative min-w-[200px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#97A0B3]" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search client or invoice..."
+                      className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-[#2A3446] bg-[#0B111C] text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
                   </div>
-                  <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
-                    <div className="bg-[#BCCCE6] h-full rounded-full w-[36.7%]" />
+
+                  {/* Status Filter Pills */}
+                  <div className="flex items-center gap-1 bg-[#0B111C] p-1 rounded-xl text-xs font-bold border border-[#2A3446]">
+                    {(["all", "paid", "pending", "overdue"] as const).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setFilter(st)}
+                        className={`px-2.5 py-1 rounded-lg capitalize transition-all cursor-pointer text-[11px] ${
+                          filter === st ? "bg-[#161F2D] text-white shadow-xs font-black" : "text-[#97A0B3] hover:text-white"
+                        }`}
+                      >
+                        {st}
+                      </button>
+                    ))}
                   </div>
-                  <div className="flex justify-between text-[11px] text-[#97A0B3] font-semibold">
-                    <span>3 Retainer Accounts</span>
-                    <span className="text-[#BCCCE6] font-bold">36.7% of MRR</span>
-                  </div>
-                </div>
 
-                {/* Package 3 */}
-                <div className="space-y-2 p-3.5 bg-[#0B111C] rounded-2xl border border-[#2A3446]">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="flex items-center gap-2 text-white">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#D8BF9B]" /> Package 3 (Starter Growth)
-                    </span>
-                    <span className="text-white font-black">₹25,000 <span className="text-[10px] font-normal text-[#97A0B3]">/ mo</span></span>
-                  </div>
-                  <div className="w-full bg-[#1F2C3F] rounded-full h-2 overflow-hidden">
-                    <div className="bg-[#D8BF9B] h-full rounded-full w-[16.5%]" />
-                  </div>
-                  <div className="flex justify-between text-[11px] text-[#97A0B3] font-semibold">
-                    <span>2 Retainer Accounts</span>
-                    <span className="text-[#D8BF9B] font-bold">16.5% of MRR</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Sub-card: Add-ons & Overages */}
-            <div className="p-4 bg-[#0B111C] rounded-2xl border border-[#2A3446] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30 flex items-center justify-center font-bold shrink-0">
-                  <Layers className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-white">Add-ons & Overages</h4>
-                  <p className="text-[11px] text-[#97A0B3] font-medium">3 active add-on asset packages</p>
-                </div>
-              </div>
-              <span className="text-base font-black text-[#7FA0D6]">+₹45,000</span>
-            </div>
-          </div>
-        </div>
-
-
-        {/* ─────────────────────────────────────────────────────────────────────────────
-            RECENT TRANSACTIONS ROSTER TABLE (Matching Image 2)
-        ───────────────────────────────────────────────────────────────────────────── */}
-        <div className="bg-[#161F2D] rounded-3xl border border-[#2A3446] shadow-[0_4px_30px_rgba(0,0,0,0.04)] p-6 lg:p-8 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <h3 className="text-xl font-black text-white tracking-tight">Recent Transactions</h3>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Search */}
-              <div className="relative min-w-[240px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#97A0B3]" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search client or invoice..."
-                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-[#2A3446] text-xs text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              {/* Status Filter Pills */}
-              <div className="flex items-center gap-1 bg-[#1F2C3F] p-1 rounded-xl text-xs font-bold">
-                {(["all", "paid", "pending", "overdue"] as const).map((st) => (
+                  {/* Export CSV Button */}
                   <button
-                    key={st}
                     type="button"
-                    onClick={() => setFilter(st)}
-                    className={`px-3 py-1.5 rounded-lg capitalize transition-all cursor-pointer ${
-                      filter === st ? "bg-[#161F2D] text-white shadow-xs font-black" : "text-[#97A0B3] hover:text-white"
-                    }`}
+                    onClick={handleExportCSV}
+                    className="px-3 py-1.5 rounded-xl bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-[#7FA0D6]/30 transition-colors"
                   >
-                    {st}
+                    <Download className="w-3.5 h-3.5" /> CSV
                   </button>
-                ))}
+                </div>
               </div>
 
-              {/* Export CSV Button matching Image 2 */}
-              <button
-                type="button"
-                onClick={handleExportCSV}
-                className="px-3.5 py-2 rounded-xl bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-[#7FA0D6]/30 transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" /> Export CSV
-              </button>
+              {/* Transactions Table: Complete row visible with zero horizontal scrolling */}
+              <div className={`rounded-2xl border border-[#2A3446] bg-[#0B111C]/40 ${
+                revenueLayout === "split" ? "max-h-[380px] overflow-y-auto overflow-x-hidden" : "overflow-hidden"
+              }`}>
+                <table className="w-full text-left text-xs text-white table-auto">
+                  <thead className="bg-[#0B111C] border-b border-[#2A3446] text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-[#97A0B3] sticky top-0 z-10">
+                    {revenueLayout === "split" ? (
+                      <tr>
+                        <th className="px-2.5 py-3 w-[36%]">CLIENT & SCOPE</th>
+                        <th className="px-2 py-3 w-[24%]">INVOICE & METHOD</th>
+                        <th className="px-2 py-3 w-[16%] text-right">AMOUNT</th>
+                        <th className="px-2 py-3 w-[14%] text-center">STATUS</th>
+                        <th className="px-2 py-3 w-[10%] text-right pr-3">ACTION</th>
+                      </tr>
+                    ) : (
+                      <tr>
+                        <th className="px-4 py-3">CLIENT & SCOPE</th>
+                        <th className="px-4 py-3">INVOICE #</th>
+                        <th className="px-4 py-3">SETTLED DATE</th>
+                        <th className="px-4 py-3">AMOUNT</th>
+                        <th className="px-4 py-3">PAYMENT METHOD</th>
+                        <th className="px-4 py-3 text-center">STATUS</th>
+                        <th className="px-4 py-3 text-right pr-4">ACTIONS</th>
+                      </tr>
+                    )}
+                  </thead>
+                  <tbody className="divide-y divide-[#2A3446]/40 font-medium bg-[#161F2D]/50">
+                    {filteredTx.length === 0 ? (
+                      <tr>
+                        <td colSpan={revenueLayout === "split" ? 5 : 7} className="px-5 py-8 text-center text-[#97A0B3] text-xs font-medium">
+                          No transactions recorded yet
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredTx.map((tx) => (
+                        <tr key={tx.id} className="hover:bg-[#0B111C]/70 transition-colors">
+                          {revenueLayout === "split" ? (
+                            <>
+                              {/* Col 1: Client & Scope */}
+                              <td className="px-2.5 py-3">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className={`w-7 h-7 rounded-lg ${tx.avatarBg} font-black text-[11px] flex items-center justify-center shrink-0`}>
+                                    {tx.clientInitials}
+                                  </div>
+                                  <div className="min-w-0 truncate">
+                                    <div className="font-bold text-xs text-white truncate" title={tx.client}>{tx.client}</div>
+                                    <div className="text-[10px] text-[#97A0B3] truncate" title={tx.scope}>{tx.scope}</div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Col 2: Invoice # & Method */}
+                              <td className="px-2 py-3">
+                                <div className="font-mono font-bold text-[#F1F5F9] text-[11px]">{tx.id}</div>
+                                <div className="text-[10px] text-[#97A0B3] truncate">{tx.method}</div>
+                              </td>
+
+                              {/* Col 3: Amount */}
+                              <td className="px-2 py-3 font-black text-xs text-white text-right whitespace-nowrap">
+                                ₹{tx.amount.toLocaleString('en-IN')}
+                              </td>
+
+                              {/* Col 4: Status */}
+                              <td className="px-2 py-3 text-center">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${tx.badgeClass}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tx.status === "Paid" ? "bg-emerald-500" : "bg-[#7FA0D6]"}`} />
+                                  {tx.status}
+                                </span>
+                              </td>
+
+                              {/* Col 5: Action */}
+                              <td className="px-2 py-3 text-right pr-3 whitespace-nowrap">
+                                {tx.status === "Paid" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedReceipt(tx)}
+                                    className="text-[#7FA0D6] font-bold hover:underline inline-flex items-center gap-0.5 cursor-pointer text-xs"
+                                  >
+                                    Receipt <ArrowUpRight className="w-3.5 h-3.5" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSendReminder(tx)}
+                                    className="px-2 py-1 rounded-lg bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Play className="w-2.5 h-2.5 fill-current" /> Remind
+                                  </button>
+                                )}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              {/* Full Width Row: All 7 Columns completely visible */}
+                              <td className="px-4 py-3.5">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-8 h-8 rounded-xl ${tx.avatarBg} font-black text-xs flex items-center justify-center shrink-0`}>
+                                    {tx.clientInitials}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-xs text-white">{tx.client}</div>
+                                    <div className="text-[11px] text-[#97A0B3]">{tx.scope}</div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              <td className="px-4 py-3.5 font-mono font-bold text-[#F1F5F9] text-xs">
+                                {tx.id}
+                              </td>
+
+                              <td className="px-4 py-3.5 text-xs text-[#97A0B3] font-medium">
+                                {tx.date}
+                              </td>
+
+                              <td className="px-4 py-3.5 font-black text-sm text-white whitespace-nowrap">
+                                ₹{tx.amount.toLocaleString('en-IN')}
+                              </td>
+
+                              <td className="px-4 py-3.5 text-[#F1F5F9] font-medium text-xs">
+                                <span className="px-2.5 py-1 rounded-lg bg-[#0B111C] border border-[#2A3446] text-[#F1F5F9] inline-block">
+                                  {tx.method}
+                                </span>
+                              </td>
+
+                              <td className="px-4 py-3.5 text-center">
+                                <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border inline-flex items-center gap-1.5 ${tx.badgeClass}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tx.status === "Paid" ? "bg-emerald-500" : "bg-[#7FA0D6]"}`} />
+                                  {tx.status}
+                                </span>
+                              </td>
+
+                              <td className="px-4 py-3.5 text-right pr-4">
+                                {tx.status === "Paid" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedReceipt(tx)}
+                                    className="px-3 py-1.5 rounded-xl border border-[#7FA0D6]/30 bg-[#7FA0D6]/10 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] font-bold inline-flex items-center gap-1 cursor-pointer text-xs transition-colors"
+                                  >
+                                    View Receipt <ArrowUpRight className="w-3.5 h-3.5" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSendReminder(tx)}
+                                    className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 font-bold text-xs inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                  >
+                                    <Play className="w-3 h-3 fill-current" /> Send Reminder
+                                  </button>
+                                )}
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
 
-          {/* Table matching Image 2 */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-white">
-              <thead className="bg-[#0B111C] border-b border-[#2A3446] text-[11px] font-extrabold uppercase tracking-wider text-[#97A0B3]">
-                <tr>
-                  <th className="px-5 py-4">CLIENT & SCOPE</th>
-                  <th className="px-5 py-4">INVOICE #</th>
-                  <th className="px-5 py-4">AMOUNT</th>
-                  <th className="px-5 py-4">PAYMENT METHOD</th>
-                  <th className="px-5 py-4">STATUS</th>
-                  <th className="px-5 py-4 text-right">ACTIONS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 font-medium">
-                {filteredTx.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-8 text-center text-[#97A0B3] text-xs font-medium">
-                      No transactions recorded yet
-                    </td>
-                  </tr>
-                ) : (
-                  filteredTx.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-[#0B111C]/70 transition-colors">
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-xl ${tx.avatarBg} font-black text-xs flex items-center justify-center shrink-0`}>
-                          {tx.clientInitials}
-                        </div>
-                        <div>
-                          <div className="font-bold text-sm text-white">{tx.client}</div>
-                          <div className="text-[11px] text-[#97A0B3]">{tx.scope}</div>
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-5 py-4 font-mono font-bold text-[#F1F5F9]">{tx.id}</td>
-
-                    <td className="px-5 py-4 font-black text-sm text-white">
-                      ₹{tx.amount.toLocaleString('en-IN')}
-                    </td>
-
-                    <td className="px-5 py-4 text-[#F1F5F9] font-medium">{tx.method}</td>
-
-                    <td className="px-5 py-4">
-                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border flex items-center gap-1.5 w-fit ${tx.badgeClass}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${tx.status === "Paid" ? "bg-emerald-500" : "bg-[#7FA0D6]/150"}`} />
-                        {tx.status} ({tx.date})
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-4 text-right">
-                      {tx.status === "Paid" ? (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedReceipt(tx)}
-                          className="text-[#7FA0D6] font-bold hover:underline inline-flex items-center gap-0.5 cursor-pointer text-xs"
-                        >
-                          Receipt <ArrowUpRight className="w-3.5 h-3.5" />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleSendReminder(tx)}
-                          className="px-3 py-1.5 rounded-lg bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/20 text-[#7FA0D6] font-bold text-xs inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <Play className="w-3 h-3 fill-current" /> Remind
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Table Footer */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-[#2A3446] text-xs text-[#97A0B3] font-medium">
-            <span>Showing {filteredTx.length} of {transactions.length} transactions</span>
+            {/* Table Footer */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[#2A3446] text-xs text-[#97A0B3] font-medium">
+              <span>Showing {filteredTx.length} of {transactions.length} transactions</span>
+            </div>
           </div>
         </div>
 
@@ -6052,7 +6238,7 @@ export function AdminRevenuePage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                 <div>
                   <label className="block font-bold text-[#F1F5F9] mb-1">Amount (₹ INR)</label>
                   <input
@@ -6066,7 +6252,7 @@ export function AdminRevenuePage() {
                 </div>
                 <div>
                   <label className="block font-bold text-[#F1F5F9] mb-1">Payment Method</label>
-                  <select
+                  <NativeSelect
                     value={newInvMethod}
                     onChange={(e) => setNewInvMethod(e.target.value)}
                     className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs font-medium"
@@ -6075,7 +6261,7 @@ export function AdminRevenuePage() {
                     <option value="Bank Wire">Bank Wire</option>
                     <option value="Invoice Net 15">Invoice Net 15</option>
                     <option value="Credit / Debit Card">Credit / Debit Card</option>
-                  </select>
+                  </NativeSelect>
                 </div>
               </div>
 
@@ -6089,7 +6275,7 @@ export function AdminRevenuePage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-[#2563EB] text-white font-bold hover:bg-blue-700 shadow-sm"
+                  className="px-4 py-2 rounded-xl bg-[#7FA0D6] text-white font-bold hover:bg-blue-700 shadow-sm"
                 >
                   Generate Invoice
                 </button>
@@ -6171,7 +6357,7 @@ export function AdminRevenuePage() {
                   window.print();
                   setSelectedReceipt(null);
                 }}
-                className="flex-1 py-2.5 rounded-xl bg-[#2563EB] text-white font-bold text-xs hover:bg-blue-700 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-[#7FA0D6] text-white font-bold text-xs hover:bg-blue-700 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Download className="w-4 h-4" /> Download PDF
               </button>
@@ -6187,6 +6373,9 @@ export function AdminRevenuePage() {
 // 9. ADMIN PLANS & PRICING TIERS PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 export function AdminPlansPage() {
+  const [searchParams] = useSearchParams();
+  const queryNegId = searchParams.get("negId") || searchParams.get("id");
+  const queryClientId = searchParams.get("clientId");
   const [toast, setToast] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterTab, setFilterTab] = useState<"all" | "pending" | "accepted" | "counter" | "declined">("all");
@@ -6196,10 +6385,10 @@ export function AdminPlansPage() {
     {
       id: "starter",
       name: "starter",
-      display_name: "Starter Growth",
+      display_name: "Starter",
       price_monthly: 25000,
       currency: "INR",
-      subscribers: 0,
+      subscribers: 1,
       features: [
         "8 Static Posters / Month",
         "4 Short Video Reels / Month",
@@ -6210,7 +6399,7 @@ export function AdminPlansPage() {
     {
       id: "growth",
       name: "growth",
-      display_name: "Brand Accelerator",
+      display_name: "Growth",
       price_monthly: 50000,
       currency: "INR",
       subscribers: 0,
@@ -6225,10 +6414,10 @@ export function AdminPlansPage() {
     {
       id: "scale",
       name: "scale",
-      display_name: "Enterprise Domination",
-      price_monthly: 95000,
+      display_name: "Scale",
+      price_monthly: 120000,
       currency: "INR",
-      subscribers: 0,
+      subscribers: 1,
       features: [
         "30 Static Posters / Month",
         "16 High-Production Video Reels",
@@ -6239,31 +6428,185 @@ export function AdminPlansPage() {
     },
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchPlansSummary().then(data => {
+      if (cancelled || !data || !data.plans) return;
+      setPlans(prev => prev.map(p => {
+        // "scale" is the 3rd plan (enterprise)
+        const livePlan = data.plans.find((lp: PlanSummaryItem) => lp.name === p.name || lp.id === p.name);
+        if (livePlan) {
+          return {
+            ...p,
+            price_monthly: livePlan.monthly_price || livePlan.price_minor / 100,
+            subscribers: livePlan.subscriber_count,
+            display_name: livePlan.display_name
+          };
+        }
+        return p;
+      }));
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, []);
+
   // Modals State
   const [editingPlan, setEditingPlan] = useState<typeof plans[0] | null>(null);
   const [editPriceInput, setEditPriceInput] = useState("");
   const [editFeaturesInput, setEditFeaturesInput] = useState("");
 
   const [isNewProposalOpen, setIsNewProposalOpen] = useState(false);
+  const [acceptModalItem, setAcceptModalItem] = useState<PlanNegotiationItem | null>(null);
   const [counterModalItem, setCounterModalItem] = useState<PlanNegotiationItem | null>(null);
   const [declineModalItem, setDeclineModalItem] = useState<PlanNegotiationItem | null>(null);
 
   // Form Inputs
+  const [acceptPriceInput, setAcceptPriceInput] = useState("");
+  const [acceptReelsInput, setAcceptReelsInput] = useState("8");
+  const [acceptPostersInput, setAcceptPostersInput] = useState("12");
+  const [acceptStoriesInput, setAcceptStoriesInput] = useState("15");
+  const [acceptNotesInput, setAcceptNotesInput] = useState("");
+  const [isSubmittingAccept, setIsSubmittingAccept] = useState(false);
+
   const [counterPriceInput, setCounterPriceInput] = useState("");
+  const [counterReelsInput, setCounterReelsInput] = useState("8");
+  const [counterPostersInput, setCounterPostersInput] = useState("12");
+  const [counterStoriesInput, setCounterStoriesInput] = useState("15");
   const [counterNoteInput, setCounterNoteInput] = useState("");
+  const [isSubmittingCounter, setIsSubmittingCounter] = useState(false);
   const [declineReasonInput, setDeclineReasonInput] = useState("");
 
   const [newPropClient, setNewPropClient] = useState("");
-  const [newPropCurrentPlan, setNewPropCurrentPlan] = useState("Starter Growth (₹25,000/mo)");
-  const [newPropTargetPlan, setNewPropTargetPlan] = useState("Enterprise Domination Custom Scope");
+  const [newPropCurrentPlan, setNewPropCurrentPlan] = useState("Starter (₹25,000/mo)");
+  const [newPropTargetPlan, setNewPropTargetPlan] = useState("Scale Custom Scope");
   const [newPropStandardRate, setNewPropStandardRate] = useState("95000");
   const [newPropProposedRate, setNewPropProposedRate] = useState("85000");
   const [newPropNotes, setNewPropNotes] = useState("");
 
-  // Client Plan Negotiations List (0 Mock Data - Real client contract proposals appear here)
   const [negotiations, setNegotiations] = useState<PlanNegotiationItem[]>([]);
 
-  // Active Deals Pipeline (0 Mock Data - Real commercial pipeline deals appear here)
+  // Fetch negotiations from backend on mount
+  useEffect(() => {
+    let cancelled = false;
+    fetchPlanNegotiations()
+      .then((data: PlanNegotiationApiItem[]) => {
+        if (cancelled) return;
+        if (data && data.length > 0) {
+          const mapped: PlanNegotiationItem[] = data.map((n) => ({
+            id: n.id,
+            clientId: n.clientId,
+            clientName: n.clientName,
+            clientLogo: n.clientLogo,
+            clientEmail: n.clientEmail,
+            targetTopic: n.targetTopic,
+            proposedOffer: n.proposedOffer,
+            phoneNumber: n.phoneNumber,
+            preferredTime: n.preferredTime,
+            notes: n.notes,
+            requestedAt: n.requestedAt,
+            status: n.status,
+            counterPrice: n.counterPrice,
+            agreedAmount: n.agreedAmount,
+            reelQuota: n.reelQuota || 8,
+            posterQuota: n.posterQuota || 12,
+            storyQuota: n.storyQuota || 15,
+            counterNote: n.counterNote,
+            declineReason: n.declineReason,
+          }));
+          setNegotiations(mapped);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch negotiations:", err);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Actions: OPEN Accept Client Plan Negotiation Modal
+  const handleOpenAcceptModal = (item: PlanNegotiationItem) => {
+    setAcceptModalItem(item);
+    const digits = (item.proposedOffer || "").replace(/[^\d.]/g, "");
+    const parsed = parseFloat(digits);
+    const basePrice = item.counterPrice || (parsed && !isNaN(parsed) ? parsed : 35000);
+    setAcceptPriceInput(String(basePrice));
+    setAcceptReelsInput(String(item.reelQuota || 8));
+    setAcceptPostersInput(String(item.posterQuota || 12));
+    setAcceptStoriesInput(String(item.storyQuota || 15));
+    setAcceptNotesInput(item.counterNote || `Custom negotiated retainer approved for ${item.clientName}. Scope terms confirmed.`);
+  };
+
+  // Actions: OPEN Counter Offer Negotiation Modal
+  const handleOpenCounterModal = (item: PlanNegotiationItem) => {
+    setCounterModalItem(item);
+    const digits = (item.proposedOffer || "").replace(/[^\d.]/g, "");
+    const parsed = parseFloat(digits);
+    const basePrice = item.counterPrice || (parsed && !isNaN(parsed) ? parsed : 40000);
+    setCounterPriceInput(String(basePrice));
+    setCounterReelsInput(String(item.reelQuota || 8));
+    setCounterPostersInput(String(item.posterQuota || 12));
+    setCounterStoriesInput(String(item.storyQuota || 15));
+    setCounterNoteInput(item.counterNote || `We can offer ₹${basePrice.toLocaleString('en-IN')}/mo with a revised custom deliverable scope.`);
+  };
+
+  // Auto-focus negotiation from URL query params (e.g. from notification deep-link)
+  useEffect(() => {
+    if ((queryNegId || queryClientId) && negotiations.length > 0) {
+      const match = negotiations.find(
+        (n) =>
+          (queryNegId && (n.id === queryNegId || String(n.id).includes(queryNegId))) ||
+          (queryClientId && (n.clientId === queryClientId || (n.clientEmail && n.clientEmail.toLowerCase() === queryClientId.toLowerCase())))
+      );
+      if (match) {
+        setFilterTab("all");
+        if (match.status === "Pending Review") {
+          handleOpenAcceptModal(match);
+        }
+      }
+    }
+  }, [queryNegId, queryClientId, negotiations]);
+
+  // Actions: CONFIRM Accept Client Plan Negotiation
+  const handleConfirmAccept = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!acceptModalItem) return;
+    const target = acceptModalItem;
+    const agreedPrice = parseFloat(acceptPriceInput) || 35000;
+    const reelQuota = parseInt(acceptReelsInput, 10) || 8;
+    const posterQuota = parseInt(acceptPostersInput, 10) || 12;
+    const storyQuota = parseInt(acceptStoriesInput, 10) || 15;
+
+    setIsSubmittingAccept(true);
+    try {
+      await updatePlanNegotiation(target.id, "accept", {
+        agreed_price: agreedPrice,
+        agreed_amount: agreedPrice,
+        reel_quota: reelQuota,
+        poster_quota: posterQuota,
+        story_quota: storyQuota,
+        counter_note: acceptNotesInput,
+      });
+
+      setNegotiations((prev) =>
+        prev.map((n) =>
+          n.id === target.id
+            ? { ...n, status: "Accepted", counterPrice: agreedPrice, counterNote: acceptNotesInput }
+            : n
+        )
+      );
+
+      setToast(
+        `Plan Negotiation ACCEPTED for ${target.clientName} at ₹${agreedPrice.toLocaleString('en-IN')}/mo! Custom plan assigned exclusively to this client.`
+      );
+      setAcceptModalItem(null);
+    } catch (err) {
+      console.error("Failed to approve negotiation:", err);
+      setToast(`Error accepting negotiation: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setIsSubmittingAccept(false);
+      setTimeout(() => setToast(null), 5000);
+    }
+  };
+
+  // Active Sales & Retainer Pipeline Deals
   const [deals, setDeals] = useState<
     Array<{
       id: string;
@@ -6279,78 +6622,118 @@ export function AdminPlansPage() {
     }>
   >([]);
 
-  // Actions: ACCEPT Client Plan Negotiation
-  const handleAcceptNegotiation = (item: PlanNegotiationItem) => {
-    setNegotiations((prev) =>
-      prev.map((n) => (n.id === item.id ? { ...n, status: "Accepted" } : n))
-    );
-    setToast(`Plan Negotiation ACCEPTED for ${item.clientName}! Retainer activated at ₹${item.proposedPrice.toLocaleString('en-IN')}/mo.`);
-    setTimeout(() => setToast(null), 4000);
-  };
-
   // Actions: DECLINE Client Plan Negotiation
-  const handleConfirmDecline = (e: React.FormEvent) => {
+  const handleConfirmDecline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!declineModalItem) return;
+    const target = declineModalItem;
 
     setNegotiations((prev) =>
       prev.map((n) =>
-        n.id === declineModalItem.id
+        n.id === target.id
           ? { ...n, status: "Declined", declineReason: declineReasonInput || "Price outside allowable margin." }
           : n
       )
     );
-    setToast(`Plan Negotiation DECLINED for ${declineModalItem.clientName}. Notification sent.`);
+    setToast(`Plan Negotiation DECLINED for ${target.clientName}. Notification sent.`);
     setDeclineModalItem(null);
     setDeclineReasonInput("");
+
+    try {
+      await updatePlanNegotiation(target.id, "decline", {
+        decline_reason: declineReasonInput || "Price outside allowable margin.",
+      });
+    } catch (err) {
+      console.warn("Backend decline notice:", err);
+    }
     setTimeout(() => setToast(null), 4000);
   };
 
   // Actions: COUNTER-OFFER Client Plan Negotiation
-  const handleConfirmCounter = (e: React.FormEvent) => {
+  const handleConfirmCounter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!counterModalItem || !counterPriceInput) return;
+    const target = counterModalItem;
+    const price = parseFloat(counterPriceInput) || 40000;
+    const reelQuota = parseInt(counterReelsInput, 10) || 8;
+    const posterQuota = parseInt(counterPostersInput, 10) || 12;
+    const storyQuota = parseInt(counterStoriesInput, 10) || 15;
 
-    const price = parseFloat(counterPriceInput);
-    setNegotiations((prev) =>
-      prev.map((n) =>
-        n.id === counterModalItem.id
-          ? { ...n, status: "Counter Offered", counterPrice: price }
-          : n
-      )
-    );
-    setToast(`Counter offer of ₹${price.toLocaleString('en-IN')}/mo submitted to ${counterModalItem.clientName}.`);
-    setCounterModalItem(null);
-    setCounterPriceInput("");
-    setCounterNoteInput("");
-    setTimeout(() => setToast(null), 4000);
+    setIsSubmittingCounter(true);
+    try {
+      await updatePlanNegotiation(target.id, "counter", {
+        counter_price: price,
+        counter_note: counterNoteInput || undefined,
+        reel_quota: reelQuota,
+        poster_quota: posterQuota,
+        story_quota: storyQuota,
+      });
+
+      setNegotiations((prev) =>
+        prev.map((n) =>
+          n.id === target.id
+            ? {
+                ...n,
+                status: "Counter Offered",
+                counterPrice: price,
+                agreedAmount: price,
+                reelQuota,
+                posterQuota,
+                storyQuota,
+                counterNote: counterNoteInput,
+              }
+            : n
+        )
+      );
+      setToast(
+        `Counter offer of ₹${price.toLocaleString('en-IN')}/mo (${reelQuota} Reels, ${posterQuota} Posts, ${storyQuota} Stories) submitted to ${target.clientName}. Custom plan updated in client onboarding.`
+      );
+      setCounterModalItem(null);
+      setCounterPriceInput("");
+      setCounterNoteInput("");
+    } catch (err) {
+      console.error("Failed to submit counter offer:", err);
+      setToast(`Error submitting counter offer: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setIsSubmittingCounter(false);
+      setTimeout(() => setToast(null), 5000);
+    }
   };
 
   // Actions: Create New Proposal Submit
-  const handleCreateProposalSubmit = (e: React.FormEvent) => {
+  const handleCreateProposalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPropClient || !newPropProposedRate) return;
 
-    const orig = parseFloat(newPropStandardRate) || 95000;
     const prop = parseFloat(newPropProposedRate) || 85000;
-    const disc = Math.max(0, Math.round(((orig - prop) / orig) * 100 * 10) / 10);
 
-    const newNeg: PlanNegotiationItem = {
-      id: `neg-${Math.floor(100 + Math.random() * 900)}`,
-      clientName: newPropClient,
-      clientLogo: newPropClient.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
-      currentPlan: newPropCurrentPlan,
-      proposedPlan: newPropTargetPlan,
-      originalPrice: orig,
-      proposedPrice: prop,
-      discountPct: disc,
-      notes: newPropNotes || "Custom enterprise proposal initiated by sales lead.",
-      requestedAt: "Just now",
-      status: "Pending Review",
-    };
+    try {
+      const res = await createPlanNegotiation({
+        client_name: newPropClient,
+        target_topic: `${newPropCurrentPlan} → ${newPropTargetPlan}`,
+        proposed_offer: `₹${prop.toLocaleString('en-IN')}/mo`,
+        notes: newPropNotes || "Custom enterprise proposal initiated by sales lead.",
+      });
 
-    setNegotiations((prev) => [newNeg, ...prev]);
-    setToast(`Custom retainer proposal initiated for ${newPropClient} (₹${prop.toLocaleString('en-IN')}/mo)!`);
+      const newNeg: PlanNegotiationItem = {
+        id: res.id || `neg-${Math.floor(100 + Math.random() * 900)}`,
+        clientName: newPropClient,
+        clientLogo: newPropClient.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
+        targetTopic: `${newPropCurrentPlan} → ${newPropTargetPlan}`,
+        proposedOffer: `₹${prop.toLocaleString('en-IN')}/mo`,
+        phoneNumber: "—",
+        preferredTime: "—",
+        notes: newPropNotes || "Custom enterprise proposal initiated by sales lead.",
+        requestedAt: new Date().toISOString(),
+        status: "Pending Review",
+      };
+
+      setNegotiations((prev) => [newNeg, ...prev]);
+      setToast(`Custom retainer proposal initiated for ${newPropClient} (₹${prop.toLocaleString('en-IN')}/mo)!`);
+    } catch (err) {
+      setToast(`Failed to create proposal: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+
     setIsNewProposalOpen(false);
     setNewPropClient("");
     setNewPropNotes("");
@@ -6427,7 +6810,7 @@ export function AdminPlansPage() {
   };
 
   // Actions: Save Edit Tier Terms
-  const handleSaveTierTerms = (e: React.FormEvent) => {
+  const handleSaveTierTerms = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPlan) return;
 
@@ -6436,6 +6819,19 @@ export function AdminPlansPage() {
       .split("\n")
       .map((f) => f.trim())
       .filter(Boolean);
+
+    try {
+      await request(`/api/v1/admin/plans/${editingPlan.name}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          monthly_price: newPrice,
+          price_minor: newPrice * 100, // Sync minor price too!
+        }),
+      });
+    } catch (err) {
+      console.error("Failed to sync plan update to live backend", err);
+      // We will still update local state for fast UI feedback
+    }
 
     setPlans((prev) =>
       prev.map((p) =>
@@ -6459,8 +6855,8 @@ export function AdminPlansPage() {
     const matchesSearch =
       !search.trim() ||
       item.clientName.toLowerCase().includes(search.toLowerCase()) ||
-      item.proposedPlan.toLowerCase().includes(search.toLowerCase()) ||
-      item.notes.toLowerCase().includes(search.toLowerCase());
+      item.targetTopic.toLowerCase().includes(search.toLowerCase()) ||
+      (item.notes || "").toLowerCase().includes(search.toLowerCase());
 
     const matchesTab =
       filterTab === "all"
@@ -6499,7 +6895,7 @@ export function AdminPlansPage() {
             TOP 4 COMMERCIAL & PLAN KPI CARDS
         ───────────────────────────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">ACTIVE RETAINERS</span>
               <div className="w-7 h-7 rounded-xl bg-[#7FA0D6]/15 text-[#7FA0D6] flex items-center justify-center font-bold">
@@ -6512,7 +6908,7 @@ export function AdminPlansPage() {
             <p className="text-xs text-[#7FA0D6] font-bold">MRR: ₹{totalRetainerRevenue.toLocaleString("en-IN")}</p>
           </div>
 
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">PENDING NEGOTIATIONS</span>
               <div className="w-7 h-7 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
@@ -6523,18 +6919,22 @@ export function AdminPlansPage() {
             <p className="text-xs text-amber-600 font-bold">Requires executive review</p>
           </div>
 
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">AVG RETAINER VALUE</span>
               <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-sm">
                 ₹
               </div>
             </div>
-            <div className="text-3xl font-black text-white">₹50,000/mo</div>
+            <div className="text-3xl font-black text-white">
+              ₹{(plans.reduce((acc, p) => acc + p.subscribers, 0) > 0 
+                ? Math.round(totalRetainerRevenue / plans.reduce((acc, p) => acc + p.subscribers, 0))
+                : 72500).toLocaleString("en-IN")}/mo
+            </div>
             <p className="text-xs text-emerald-600 font-bold">High LTV retention</p>
           </div>
 
-          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#1E3A8A] hover:border-[#60A5FA] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
+          <div className="kpi-card p-6 bg-[#161F2D] rounded-3xl border-2 border-[#161F2D] hover:border-[#BCCCE6] transition-all shadow-[0_2px_15px_rgba(0,0,0,0.03)] space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black text-[#97A0B3] uppercase tracking-wider">WIN / CLOSING RATE</span>
               <div className="w-7 h-7 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
@@ -6559,7 +6959,7 @@ export function AdminPlansPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-6">
             {plans.map((plan) => (
               <div
                 key={plan.id}
@@ -6592,7 +6992,7 @@ export function AdminPlansPage() {
                     setEditPriceInput(String(plan.price_monthly));
                     setEditFeaturesInput(plan.features.join("\n"));
                   }}
-                  className="w-full py-2.5 rounded-xl bg-[#161F2D] hover:bg-[#1F2C3F] text-white text-xs font-bold border border-[#2A3446] transition-colors cursor-pointer shadow-2xs"
+                  className="w-full py-2.5 rounded-xl bg-[#161F2D] hover:bg-[#161F2D] text-white text-xs font-bold border border-[#2A3446] transition-colors cursor-pointer shadow-2xs"
                 >
                   Edit Tier Terms
                 </button>
@@ -6632,7 +7032,7 @@ export function AdminPlansPage() {
 
           {/* Search and Tabs */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#2A3446] pb-4">
-            <div className="flex items-center gap-1 bg-[#1F2C3F] p-1 rounded-xl text-xs font-bold text-[#F1F5F9] overflow-x-auto">
+            <div className="flex items-center gap-1 bg-[#161F2D] p-1 rounded-xl text-xs font-bold text-[#F1F5F9] overflow-x-auto">
               {[
                 { id: "all", label: "All Negotiations" },
                 { id: "pending", label: `Pending Review (${pendingCount})` },
@@ -6674,97 +7074,151 @@ export function AdminPlansPage() {
                 <p className="text-xs font-bold">No plan negotiations found in this filter.</p>
               </div>
             ) : (
-              filteredNegotiations.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-5 rounded-2xl border border-[#2A3446] bg-[#0B111C]/50 hover:bg-[#161F2D] hover:border-[#2A3446] transition-all shadow-2xs space-y-4"
-                >
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    {/* Client Info */}
-                    <div className="flex items-center gap-3.5">
-                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-black text-sm flex items-center justify-center shadow-md shrink-0">
-                        {item.clientLogo}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-bold text-sm text-white">{item.clientName}</h4>
-                          <span className="text-[10px] text-[#97A0B3] font-semibold">{item.requestedAt}</span>
+              filteredNegotiations.map((item) => {
+                const isHighlighted = Boolean(
+                  (queryNegId && (item.id === queryNegId || String(item.id).includes(queryNegId))) ||
+                  (queryClientId && item.clientId && item.clientId.toLowerCase() === queryClientId.toLowerCase()) ||
+                  (queryClientId && item.clientEmail && item.clientEmail.toLowerCase() === queryClientId.toLowerCase())
+                );
+
+                return (
+                  <div
+                    key={item.id}
+                    id={`neg-${item.id}`}
+                    className={`p-5 rounded-2xl border transition-all shadow-2xs space-y-4 ${
+                      isHighlighted
+                        ? "border-[#7FA0D6] bg-[#7FA0D6]/10 ring-2 ring-[#7FA0D6] shadow-lg shadow-blue-500/10"
+                        : "border-[#2A3446] bg-[#0B111C]/50 hover:bg-[#161F2D] hover:border-[#2A3446]"
+                    }`}
+                  >
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      {/* Client Info */}
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-black text-sm flex items-center justify-center shadow-md shrink-0">
+                          {item.clientLogo}
                         </div>
-                        <p className="text-xs text-[#F1F5F9] font-medium">{item.currentPlan}</p>
-                      </div>
-                    </div>
-
-                    {/* Pricing Comparison */}
-                    <div className="flex items-center gap-4 bg-[#161F2D] p-3 rounded-xl border border-[#2A3446]">
-                      <div className="text-right">
-                        <span className="text-[10px] text-[#97A0B3] uppercase block font-bold">Standard Rate</span>
-                        <span className="text-xs line-through text-[#97A0B3] font-bold">₹{item.originalPrice.toLocaleString("en-IN")}/mo</span>
-                      </div>
-                      <span className="text-gray-300 font-light">&rarr;</span>
-                      <div>
-                        <span className="text-[10px] text-[#7FA0D6] uppercase block font-bold">Proposed Rate</span>
-                        <span className="text-sm font-black text-emerald-600">₹{item.proposedPrice.toLocaleString("en-IN")}/mo</span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        {item.discountPct}% Off
-                      </span>
-                    </div>
-
-                    {/* Status & Actions */}
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-extrabold uppercase ${
-                          item.status === "Accepted"
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : item.status === "Declined"
-                            ? "bg-rose-50 text-rose-700 border border-rose-200"
-                            : item.status === "Counter Offered"
-                            ? "bg-purple-50 text-purple-700 border border-purple-200"
-                            : "bg-amber-50 text-amber-700 border border-amber-200"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-
-                      {/* Functional ACCEPT, DECLINE, and COUNTER buttons */}
-                      {item.status === "Pending Review" && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleAcceptNegotiation(item)}
-                            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 cursor-pointer transition-colors"
-                          >
-                            <Check className="w-4 h-4" /> ACCEPT
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeclineModalItem(item)}
-                            className="px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 flex items-center gap-1.5 cursor-pointer transition-colors"
-                          >
-                            <X className="w-4 h-4" /> DECLINE
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCounterModalItem(item);
-                              setCounterPriceInput(String(item.proposedPrice + 4000));
-                            }}
-                            className="px-3 py-2 rounded-xl bg-[#1F2C3F] hover:bg-gray-200 text-white font-bold text-xs cursor-pointer"
-                          >
-                            Counter
-                          </button>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-sm text-white">{item.clientName}</h4>
+                            <span className="text-[10px] text-[#97A0B3] font-semibold">{item.requestedAt}</span>
+                            {isHighlighted && (
+                              <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-[#7FA0D6] border border-blue-500/30 text-[9px] font-black uppercase">
+                                Selected Target
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-[#F1F5F9] font-medium">{item.targetTopic}</p>
+                          {item.clientEmail && <p className="text-[10px] text-[#97A0B3]">{item.clientEmail}</p>}
                         </div>
-                      )}
-                    </div>
+                      </div>
+
+                      {/* Negotiation Details */}
+                      <div className="flex items-center gap-4 bg-[#161F2D] p-3 rounded-xl border border-[#2A3446] flex-wrap">
+                        {item.proposedOffer && (
+                          <div>
+                            <span className="text-[10px] text-[#7FA0D6] uppercase block font-bold">Client Offer</span>
+                            <span className="text-sm font-black text-emerald-400">{item.proposedOffer}</span>
+                          </div>
+                        )}
+                        {item.status === "Accepted" && (
+                          <div>
+                            <span className="text-[10px] text-emerald-400 uppercase block font-bold">Agreed Retainer</span>
+                            <span className="text-sm font-black text-emerald-300">
+                              ₹{(item.counterPrice || item.agreedAmount || 0).toLocaleString('en-IN')}/mo
+                            </span>
+                          </div>
+                        )}
+                        {item.status === "Counter Offered" && (
+                          <div>
+                            <span className="text-[10px] text-purple-400 uppercase block font-bold">Counter Offer</span>
+                            <span className="text-sm font-black text-purple-300">
+                              ₹{(item.counterPrice || 0).toLocaleString('en-IN')}/mo
+                            </span>
+                          </div>
+                        )}
+                        {(item.status === "Accepted" || item.status === "Counter Offered") && (
+                          <div>
+                            <span className="text-[10px] text-[#7FA0D6] uppercase block font-bold">Deliverables Quota</span>
+                            <span className="text-xs font-bold text-white">
+                              {item.reelQuota || 8} Reels • {item.posterQuota || 12} Posts • {item.storyQuota || 15} Stories
+                            </span>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-[10px] text-[#97A0B3] uppercase block font-bold">Contact</span>
+                          <span className="text-xs font-bold text-white">{item.phoneNumber}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-[#97A0B3] uppercase block font-bold">Preferred Time</span>
+                          <span className="text-xs font-bold text-white">{item.preferredTime}</span>
+                        </div>
+                      </div>
+
+                      {/* Status & Actions */}
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span
+                          className={`px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+                            item.status === "Accepted"
+                              ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                              : item.status === "Declined"
+                              ? "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                              : item.status === "Counter Offered"
+                              ? "bg-purple-500/15 text-purple-400 border border-purple-500/30"
+                              : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                          }`}
+                        >
+                          {item.status === "Pending Review" && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
+                          {item.status}
+                        </span>
+
+                        {/* Functional ACCEPT, DECLINE, and COUNTER buttons */}
+                        {item.status === "Pending Review" ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAcceptModal(item)}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" /> ACCEPT
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeclineModalItem(item)}
+                              className="px-4 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 font-bold text-xs border border-rose-500/30 flex items-center gap-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                            >
+                              <X className="w-3.5 h-3.5 stroke-[3]" /> DECLINE
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCounterModal(item)}
+                              className="px-4 py-2 rounded-xl bg-[#7FA0D6]/15 hover:bg-[#7FA0D6]/25 text-[#7FA0D6] hover:text-white font-bold text-xs border border-[#7FA0D6]/30 flex items-center gap-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                            >
+                              <SlidersHorizontal className="w-3.5 h-3.5" /> Counter
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAcceptModal(item)}
+                              className="px-3 py-1.5 rounded-xl border border-[#2A3446] bg-[#0B111C] hover:border-[#7FA0D6] text-[11px] font-bold text-[#BCCCE6] hover:text-white cursor-pointer transition-all"
+                            >
+                              Edit Scope / Quotas
+                            </button>
+                          </div>
+                        )}
+                      </div>
                   </div>
 
                   {/* Scope Notes */}
-                  <div className="p-3 bg-[#161F2D] rounded-xl text-xs text-[#F1F5F9] border border-[#2A3446] font-medium">
-                    <strong className="text-white font-bold">Client Requested Terms:</strong> "{item.notes}"
-                  </div>
+                  {item.notes && (
+                    <div className="p-3 bg-[#161F2D] rounded-xl text-xs text-[#F1F5F9] border border-[#2A3446] font-medium">
+                      <strong className="text-white font-bold">Client Notes:</strong> "{item.notes}"
+                    </div>
+                  )}
                 </div>
-              ))
-            )}
+              );
+            }))}
           </div>
         </div>
 
@@ -6782,7 +7236,7 @@ export function AdminPlansPage() {
             </span>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto -mx-1 sm:mx-0">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-[#2A3446] text-[10px] font-black uppercase text-[#97A0B3] tracking-wider">
@@ -6827,7 +7281,7 @@ export function AdminPlansPage() {
                         <button
                           type="button"
                           onClick={() => handleOpenManageDeal(d)}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#1F2C3F] hover:bg-blue-600 hover:text-white text-white font-bold text-xs cursor-pointer shadow-2xs transition-all active:scale-95"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#161F2D] hover:bg-blue-600 hover:text-white text-white font-bold text-xs cursor-pointer shadow-2xs transition-all active:scale-95"
                         >
                           Manage
                         </button>
@@ -6840,6 +7294,161 @@ export function AdminPlansPage() {
           </div>
         </div>
       </main>
+
+      {/* ─────────────────────────────────────────────────────────────────────────────
+          MODAL: ACCEPT CLIENT PLAN NEGOTIATION & CONFIGURE PER-CLIENT RETAINER
+      ───────────────────────────────────────────────────────────────────────────── */}
+      {acceptModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-lg rounded-3xl bg-[#161F2D] p-6 sm:p-7 shadow-2xl space-y-5 border border-[#2A3446] max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 font-black text-sm flex items-center justify-center">
+                  <Check className="w-5 h-5 stroke-[3]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Accept Retainer Negotiation</h3>
+                  <p className="text-[11px] text-[#97A0B3]">Lock in negotiated price strictly for {acceptModalItem.clientName}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAcceptModalItem(null)}
+                className="p-1.5 text-[#97A0B3] hover:text-white rounded-lg hover:bg-[#0B111C]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Negotiation Overview Card */}
+            <div className="p-4 rounded-2xl bg-[#0B111C] border border-[#2A3446] space-y-2.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-[#97A0B3] font-medium">Client Account:</span>
+                <span className="font-bold text-white">{acceptModalItem.clientName} ({acceptModalItem.clientEmail || "—"})</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[#97A0B3] font-medium">Scope Topic:</span>
+                <span className="font-bold text-[#7FA0D6]">{acceptModalItem.targetTopic}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[#97A0B3] font-medium">Client Proposed Budget:</span>
+                <span className="font-black text-emerald-400 text-sm">{acceptModalItem.proposedOffer || "—"}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[#97A0B3] font-medium">Contact / Slot:</span>
+                <span className="font-medium text-[#F1F5F9]">{acceptModalItem.phoneNumber} • {acceptModalItem.preferredTime}</span>
+              </div>
+              {acceptModalItem.notes && (
+                <div className="pt-2 border-t border-[#2A3446] text-[#97A0B3]">
+                  <strong className="text-[#F1F5F9]">Client Note:</strong> "{acceptModalItem.notes}"
+                </div>
+              )}
+            </div>
+
+            {/* ISOLATION GUARANTEE CALLOUT */}
+            <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-black uppercase text-[10px] tracking-wider text-emerald-400">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Client Price Isolation Guarantee
+              </div>
+              <p className="text-[11px] text-[#F1F5F9] leading-relaxed">
+                This negotiated price will update <strong>ONLY for {acceptModalItem.clientName}</strong>. Standard agency tiers (Starter ₹25k, Growth ₹50k, Scale ₹1.2L) and all other client retainers remain completely unchanged.
+              </p>
+            </div>
+
+            <form onSubmit={handleConfirmAccept} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-white mb-1">
+                  Agreed Monthly Retainer (₹ INR / month) <span className="text-emerald-400">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white font-bold text-sm">₹</span>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={acceptPriceInput}
+                    onChange={(e) => setAcceptPriceInput(e.target.value)}
+                    className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    placeholder="e.g. 35000"
+                  />
+                </div>
+              </div>
+
+              {/* Deliverable Quota Inputs */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block font-bold text-[#97A0B3] mb-1 text-[11px]">Reels / mo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={acceptReelsInput}
+                    onChange={(e) => setAcceptReelsInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-[#97A0B3] mb-1 text-[11px]">Posters / mo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={acceptPostersInput}
+                    onChange={(e) => setAcceptPostersInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-[#97A0B3] mb-1 text-[11px]">Stories / mo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={acceptStoriesInput}
+                    onChange={(e) => setAcceptStoriesInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-[#F1F5F9] mb-1">
+                  Agreement Notes / Scope Terms
+                </label>
+                <textarea
+                  rows={2}
+                  value={acceptNotesInput}
+                  onChange={(e) => setAcceptNotesInput(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white text-xs resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  placeholder="e.g. Approved custom retainer. Valid for 12 months."
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-[#2A3446]">
+                <button
+                  type="button"
+                  onClick={() => setAcceptModalItem(null)}
+                  disabled={isSubmittingAccept}
+                  className="px-4 py-2.5 rounded-xl border border-[#2A3446] font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingAccept}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 flex items-center gap-2 cursor-pointer transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                >
+                  {isSubmittingAccept ? (
+                    <span>Applying Retainer...</span>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4 stroke-[3]" />
+                      Confirm & Assign Retainer (₹{Number(acceptPriceInput || 0).toLocaleString('en-IN')})
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ─────────────────────────────────────────────────────────────────────────────
           MODAL: EDIT TIER TERMS
@@ -6946,35 +7555,95 @@ export function AdminPlansPage() {
               </button>
             </div>
 
-            <form onSubmit={handleConfirmCounter} className="space-y-3 text-xs">
+            {/* ISOLATION GUARANTEE CALLOUT */}
+            <div className="p-3.5 rounded-2xl bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-black uppercase text-[10px] tracking-wider text-purple-400">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Client Counter Scope Guarantee
+              </div>
+              <p className="text-[11px] text-[#F1F5F9] leading-relaxed">
+                This counter proposal will update <strong>ONLY for {counterModalItem.clientName}</strong> in their client onboarding. Standard agency tiers remain completely unchanged.
+              </p>
+            </div>
+
+            <form onSubmit={handleConfirmCounter} className="space-y-4 text-xs">
               <div>
-                <label className="block font-bold text-[#F1F5F9] mb-1">Counter Proposed Rate (₹ INR / mo)</label>
-                <input
-                  type="number"
-                  required
-                  value={counterPriceInput}
-                  onChange={(e) => setCounterPriceInput(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                />
+                <label className="block font-bold text-white mb-1">
+                  Counter Proposed Rate (₹ INR / mo) <span className="text-purple-400">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white font-bold text-sm">₹</span>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={counterPriceInput}
+                    onChange={(e) => setCounterPriceInput(e.target.value)}
+                    className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+                    placeholder="e.g. 40000"
+                  />
+                </div>
+              </div>
+
+              {/* Deliverable Quota Inputs */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block font-bold text-[#97A0B3] mb-1 text-[11px]">Reels / mo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={counterReelsInput}
+                    onChange={(e) => setCounterReelsInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-[#97A0B3] mb-1 text-[11px]">Posters / mo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={counterPostersInput}
+                    onChange={(e) => setCounterPostersInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-[#97A0B3] mb-1 text-[11px]">Stories / mo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={counterStoriesInput}
+                    onChange={(e) => setCounterStoriesInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block font-bold text-[#F1F5F9] mb-1">Counter Offer Notes / Scope Terms</label>
                 <textarea
-                  rows={3}
-                  placeholder="e.g. We can offer ₹85,000/mo with 12-month commitment."
+                  rows={2}
+                  placeholder="e.g. We can offer ₹40,000/mo with custom deliverable package."
                   value={counterNoteInput}
                   onChange={(e) => setCounterNoteInput(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] text-xs resize-none focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                  className="w-full px-3.5 py-2 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white text-xs resize-none focus:outline-none focus:ring-2 focus:ring-purple-500/40"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3446]">
-                <button type="button" onClick={() => setCounterModalItem(null)} className="px-4 py-2 rounded-xl border border-[#2A3446] font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer">
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-[#2A3446]">
+                <button
+                  type="button"
+                  onClick={() => setCounterModalItem(null)}
+                  disabled={isSubmittingCounter}
+                  className="px-4 py-2.5 rounded-xl border border-[#2A3446] font-bold text-[#F1F5F9] hover:bg-[#0B111C] cursor-pointer"
+                >
                   Cancel
                 </button>
-                <button type="submit" className="px-4 py-2 rounded-xl bg-purple-600 text-white font-bold hover:bg-purple-700 cursor-pointer">
-                  Submit Counter
+                <button
+                  type="submit"
+                  disabled={isSubmittingCounter}
+                  className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs shadow-lg shadow-purple-600/30 flex items-center gap-2 cursor-pointer transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                >
+                  {isSubmittingCounter ? "Submitting Counter..." : `Submit Counter Offer (₹${Number(counterPriceInput || 0).toLocaleString('en-IN')})`}
                 </button>
               </div>
             </form>
@@ -7029,7 +7698,7 @@ export function AdminPlansPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                 <div>
                   <label className="block font-bold text-[#F1F5F9] mb-1">Standard Rate (₹/mo)</label>
                   <input
@@ -7113,14 +7782,14 @@ export function AdminPlansPage() {
                   setManageDealModal(null);
                   setManageMode("edit");
                 }}
-                className="size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] flex items-center justify-center transition-colors cursor-pointer"
               >
                 <X className="size-4" />
               </button>
             </div>
 
             {/* Quick Action Navigation Bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 p-1.5 bg-[#1F2C3F]/80 rounded-2xl">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 p-1.5 bg-[#161F2D]/80 rounded-2xl">
               <button
                 type="button"
                 onClick={() => setManageMode("edit")}
@@ -7220,7 +7889,7 @@ export function AdminPlansPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Refund Amount (₹ INR)</label>
                     <input
@@ -7235,7 +7904,7 @@ export function AdminPlansPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Refund Method</label>
-                    <select
+                    <NativeSelect
                       value={refundMethodInput}
                       onChange={(e) => setRefundMethodInput(e.target.value)}
                       className="w-full px-3 py-2.5 rounded-xl border border-[#2A3446] text-xs font-medium text-white bg-[#161F2D]"
@@ -7243,13 +7912,13 @@ export function AdminPlansPage() {
                       <option value="Original Payment Gateway (Stripe ACH / Card)">Original Payment Gateway (Stripe / ACH)</option>
                       <option value="Direct Bank Wire / IMPS / RTGS">Direct Bank Transfer (IMPS / RTGS)</option>
                       <option value="Internal Account Service Credit">Internal Account Service Credit</option>
-                    </select>
+                    </NativeSelect>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-[#F1F5F9] mb-1">Reason for Refund</label>
-                  <select
+                  <NativeSelect
                     value={refundReasonInput}
                     onChange={(e) => setRefundReasonInput(e.target.value)}
                     className="w-full px-3 py-2.5 rounded-xl border border-[#2A3446] text-xs font-medium text-white bg-[#161F2D]"
@@ -7258,7 +7927,7 @@ export function AdminPlansPage() {
                     <option value="SLA Non-Compliance / Delivery Disruption">SLA Non-Compliance / Delivery Disruption</option>
                     <option value="Duplicate or Overcharge Billing Adjustment">Duplicate or Overcharge Billing Adjustment</option>
                     <option value="Executive Discretionary Credit">Executive Discretionary Credit</option>
-                  </select>
+                  </NativeSelect>
                 </div>
 
                 <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#2A3446]">
@@ -7291,7 +7960,7 @@ export function AdminPlansPage() {
           onClick={() => setDealSuccessModal(null)}
         >
           <div
-            className="relative w-full max-w-md rounded-3xl bg-[#161F2D] p-6 sm:p-8 shadow-2xl border border-[#2A3446] flex flex-col items-center text-center animate-in zoom-in-95 duration-150"
+            className="relative w-full max-w-md rounded-3xl bg-[#161F2D] p-5 sm:p-8 shadow-2xl border border-[#2A3446] flex flex-col items-center text-center animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -7299,7 +7968,7 @@ export function AdminPlansPage() {
             <button
               type="button"
               onClick={() => setDealSuccessModal(null)}
-              className="absolute top-4 right-4 size-8 rounded-full bg-[#1F2C3F] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
+              className="absolute top-4 right-4 size-8 rounded-full bg-[#161F2D] hover:bg-slate-200 text-[#97A0B3] hover:text-[#F1F5F9] flex items-center justify-center transition-colors cursor-pointer"
               aria-label="Close modal"
             >
               <X className="size-4" />

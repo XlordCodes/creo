@@ -1,5 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
-import { motion } from "motion/react";
+import { NativeSelect } from "../../ui/NativeSelect";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type AllocationStatus, PodAllocationModal } from "./PodAllocationModal";
+import { useSearchParams } from "react-router";
+import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Sparkles,
@@ -20,17 +23,414 @@ import {
   CheckCircle2,
   Check,
   RefreshCw,
+  Search,
+  Pipette,
+  X,
 } from "lucide-react";
 
 import {
+  type QuestionnaireState,
   fetchQuestionnaireState,
   saveQuestionnaireSection,
-  queueBrandDNAGeneration,
+  saveQuestionnaireSections,
   completeOnboarding,
 } from "../../lib/onboarding-api";
 import type { AssignedTeamMember } from "../../types/api";
+interface PaletteColor {
+  name: string;
+  hex: string;
+  category: "Core & Tech" | "Vibrant & Pop" | "Luxury & Gold" | "Fresh & Nature" | "Warm & Earth" | "Neutrals";
+}
+
+const CURATED_PALETTE: PaletteColor[] = [
+  // Core & Tech
+  { name: "Creo Nebula Blue", hex: "#7FA0D6", category: "Core & Tech" },
+  { name: "Deep Space Navy", hex: "#0D2137", category: "Core & Tech" },
+  { name: "Electric Indigo", hex: "#6366F1", category: "Core & Tech" },
+  { name: "Cobalt Blue", hex: "#2563EB", category: "Core & Tech" },
+  { name: "Royal Sapphire", hex: "#1D4ED8", category: "Core & Tech" },
+  { name: "Cyber Cyan", hex: "#06B6D4", category: "Core & Tech" },
+  { name: "Sky Glaze", hex: "#38BDF8", category: "Core & Tech" },
+  { name: "Deep Violet", hex: "#7C3AED", category: "Core & Tech" },
+  { name: "Hyper Purple", hex: "#8B5CF6", category: "Core & Tech" },
+
+  // Vibrant & Pop
+  { name: "Crimson Rose", hex: "#E11D48", category: "Vibrant & Pop" },
+  { name: "Electric Coral", hex: "#F43F5E", category: "Vibrant & Pop" },
+  { name: "Sunset Orange", hex: "#F97316", category: "Vibrant & Pop" },
+  { name: "Amber Blaze", hex: "#F59E0B", category: "Vibrant & Pop" },
+  { name: "Neon Lime", hex: "#84CC16", category: "Vibrant & Pop" },
+  { name: "Fuchsia Punch", hex: "#D946EF", category: "Vibrant & Pop" },
+  { name: "Hot Magenta", hex: "#EC4899", category: "Vibrant & Pop" },
+  { name: "Bright Vermilion", hex: "#EF4444", category: "Vibrant & Pop" },
+
+  // Luxury & Gold
+  { name: "Champagne Gold", hex: "#D4AF37", category: "Luxury & Gold" },
+  { name: "Desert Sand", hex: "#D8BF9B", category: "Luxury & Gold" },
+  { name: "Warm Ochre", hex: "#C59B27", category: "Luxury & Gold" },
+  { name: "Rose Quartz", hex: "#E0A899", category: "Luxury & Gold" },
+  { name: "Rich Bronze", hex: "#8C6239", category: "Luxury & Gold" },
+  { name: "Imperial Burgundy", hex: "#4C1D24", category: "Luxury & Gold" },
+  { name: "Tuscan Terracotta", hex: "#C86446", category: "Luxury & Gold" },
+
+  // Fresh & Nature
+  { name: "Emerald Prime", hex: "#10B981", category: "Fresh & Nature" },
+  { name: "Forest Pine", hex: "#047857", category: "Fresh & Nature" },
+  { name: "Deep Teal", hex: "#0D9488", category: "Fresh & Nature" },
+  { name: "Mint Crisp", hex: "#34D399", category: "Fresh & Nature" },
+  { name: "Sage Mist", hex: "#84A98C", category: "Fresh & Nature" },
+  { name: "Olive Green", hex: "#65A30D", category: "Fresh & Nature" },
+  { name: "Seafoam Cyan", hex: "#2DD4BF", category: "Fresh & Nature" },
+
+  // Warm & Earth
+  { name: "Raw Terracotta", hex: "#9A3412", category: "Warm & Earth" },
+  { name: "Clay Brown", hex: "#78350F", category: "Warm & Earth" },
+  { name: "Caramel Toffee", hex: "#B45309", category: "Warm & Earth" },
+  { name: "Apricot Peach", hex: "#FB923C", category: "Warm & Earth" },
+  { name: "Warm Almond", hex: "#E5D4C0", category: "Warm & Earth" },
+  { name: "Mustard Spice", hex: "#D97706", category: "Warm & Earth" },
+
+  // Neutrals & Monochrome
+  { name: "Pure Snow White", hex: "#FFFFFF", category: "Neutrals" },
+  { name: "Off White / Chalk", hex: "#F8FAFC", category: "Neutrals" },
+  { name: "Light Slate", hex: "#E2E8F0", category: "Neutrals" },
+  { name: "Cool Grey", hex: "#94A3B8", category: "Neutrals" },
+  { name: "Muted Steel", hex: "#64748B", category: "Neutrals" },
+  { name: "Graphite Charcoal", hex: "#334155", category: "Neutrals" },
+  { name: "Dark Slate Navy", hex: "#1E293B", category: "Neutrals" },
+  { name: "Creo Deep Dark", hex: "#161F2D", category: "Neutrals" },
+  { name: "Midnight Obsidian", hex: "#0B111C", category: "Neutrals" },
+  { name: "Pitch Black", hex: "#000000", category: "Neutrals" },
+];
+
+interface PalettePopoverProps {
+  currentHex?: string;
+  title?: string;
+  onSelect: (hex: string) => void;
+  onClose: () => void;
+}
+
+function PalettePopover({
+  currentHex = "#7FA0D6",
+  title = "Brand Palette & Color Search",
+  onSelect,
+  onClose,
+}: PalettePopoverProps) {
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState<string>("All");
+  const [enteredHex, setEnteredHex] = useState(currentHex);
+
+  useEffect(() => {
+    setEnteredHex(currentHex || "#7FA0D6");
+  }, [currentHex]);
+
+  const categories = [
+    "All",
+    "Core & Tech",
+    "Vibrant & Pop",
+    "Luxury & Gold",
+    "Fresh & Nature",
+    "Warm & Earth",
+    "Neutrals",
+  ];
+
+  // Filter palette based on search query and category
+  const filteredPalette = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return CURATED_PALETTE.filter((item) => {
+      const matchesCat = category === "All" || item.category === category;
+      if (!matchesCat) return false;
+      if (!q) return true;
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.hex.toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q)
+      );
+    });
+  }, [search, category]);
+
+  // Check if search query itself is a valid hex code
+  const searchAsHex = useMemo(() => {
+    const clean = search.trim();
+    if (!clean) return null;
+    const withHash = clean.startsWith("#") ? clean : `#${clean}`;
+    if (/^#[0-9A-Fa-f]{6}$/.test(withHash) || /^#[0-9A-Fa-f]{3}$/.test(withHash)) {
+      return withHash.toUpperCase();
+    }
+    return null;
+  }, [search]);
+
+  const handleApplyHex = (val: string) => {
+    let clean = val.trim();
+    if (!clean.startsWith("#")) clean = `#${clean}`;
+    if (/^#[0-9A-Fa-f]{3,8}$/.test(clean)) {
+      onSelect(clean.toUpperCase());
+      setEnteredHex(clean.toUpperCase());
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute z-50 mt-2 top-full left-0 sm:left-auto sm:right-0 bg-[#0B111C] p-3.5 rounded-2xl border border-[#2A3446] shadow-2xl space-y-3 w-[330px] sm:w-[370px] max-w-[92vw]">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[#2A3446] pb-2">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-white uppercase tracking-wider">
+            <Palette className="w-3.5 h-3.5 text-[#7FA0D6]" />
+            <span>{title}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[#97A0B3] hover:text-white p-1 rounded-md cursor-pointer transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Direct Color Entry Row */}
+        <div className="bg-[#161F2D] p-2.5 rounded-xl border border-[#2A3446] space-y-2">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-[#97A0B3]">
+            <span>Enter Custom Hex or Pick Color:</span>
+            <span className="font-mono text-white text-xs">{enteredHex || currentHex}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Native Color Picker button */}
+            <label className="relative cursor-pointer group shrink-0">
+              <input
+                type="color"
+                value={(enteredHex || currentHex).startsWith("#") ? (enteredHex || currentHex) : "#0D2137"}
+                onChange={(e) => {
+                  const val = e.target.value.toUpperCase();
+                  setEnteredHex(val);
+                  onSelect(val);
+                }}
+                className="absolute inset-0 opacity-0 w-8 h-8 cursor-pointer"
+              />
+              <div
+                className="w-8 h-8 rounded-lg border border-white/20 shadow-inner flex items-center justify-center transition-transform group-hover:scale-105"
+                style={{ backgroundColor: enteredHex || currentHex }}
+                title="Click for full spectrum color wheel"
+              >
+                <Pipette className="w-3.5 h-3.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]" />
+              </div>
+            </label>
+
+            {/* Hex input */}
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={enteredHex}
+                onChange={(e) => {
+                  setEnteredHex(e.target.value);
+                  if (/^#?[0-9A-Fa-f]{6}$/.test(e.target.value.trim())) {
+                    handleApplyHex(e.target.value);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleApplyHex(enteredHex);
+                  }
+                }}
+                placeholder="#7FA0D6"
+                className="w-full bg-[#0B111C] border border-[#2A3446] text-white text-xs px-2.5 py-1.5 rounded-lg font-mono uppercase focus:outline-none focus:border-[#7FA0D6]"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleApplyHex(enteredHex)}
+              className="px-2.5 py-1.5 bg-[#7FA0D6] hover:bg-[#9BB7E2] text-[#0B111C] text-xs font-bold rounded-lg cursor-pointer transition-colors shrink-0"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+
+        {/* Search Input in that Palette */}
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-[#97A0B3] absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search colors in palette (e.g. blue, gold, #F43F5E)..."
+            className="w-full pl-8 pr-7 py-1.5 text-xs bg-[#161F2D] border border-[#2A3446] text-white rounded-xl placeholder-[#97A0B3] focus:outline-none focus:border-[#7FA0D6]"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#97A0B3] hover:text-white"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        {/* Category Filter Pills */}
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 text-[10px]">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setCategory(cat)}
+              className={`px-2 py-0.5 rounded-lg whitespace-nowrap font-medium transition-colors cursor-pointer ${
+                category === cat
+                  ? "bg-[#7FA0D6] text-[#0B111C]"
+                  : "bg-[#161F2D] text-[#97A0B3] hover:text-white hover:bg-[#2A3446]"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        {/* If search query is a custom hex code, offer direct apply card */}
+        {searchAsHex && (
+          <div
+            onClick={() => {
+              onSelect(searchAsHex);
+              setEnteredHex(searchAsHex);
+            }}
+            className="flex items-center justify-between p-2 rounded-xl bg-[#161F2D] border border-[#7FA0D6]/40 hover:border-[#7FA0D6] cursor-pointer transition-all"
+          >
+            <div className="flex items-center gap-2">
+              <div
+                className="w-5 h-5 rounded-full border border-white/20 shadow-sm"
+                style={{ backgroundColor: searchAsHex }}
+              />
+              <span className="text-xs font-bold text-white">Use Custom Hex: {searchAsHex}</span>
+            </div>
+            <span className="text-[10px] text-[#7FA0D6] font-semibold">Select ➔</span>
+          </div>
+        )}
+
+        {/* Scrollable Palette Colors Grid */}
+        <div className="max-h-48 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+          {filteredPalette.length === 0 && !searchAsHex ? (
+            <div className="text-center py-6 text-xs text-[#97A0B3]">
+              No palette colors match "{search}". Try another term or enter a custom hex code above.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-1.5">
+              {filteredPalette.map((item) => {
+                const isSelected = (currentHex || "").toUpperCase() === item.hex.toUpperCase();
+                return (
+                  <button
+                    key={item.hex + item.name}
+                    type="button"
+                    onClick={() => {
+                      onSelect(item.hex);
+                      setEnteredHex(item.hex);
+                    }}
+                    className={`flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-[#7FA0D6]/20 border-[#7FA0D6] text-white"
+                        : "bg-[#161F2D]/70 border-[#2A3446] text-[#BCCCE6] hover:bg-[#161F2D] hover:border-[#7FA0D6]/50"
+                    }`}
+                  >
+                    <div
+                      className="w-5 h-5 rounded-lg border border-white/20 shadow-sm shrink-0 flex items-center justify-center"
+                      style={{ backgroundColor: item.hex }}
+                    >
+                      {isSelected && <Check className="w-3 h-3 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium truncate leading-tight text-white">{item.name}</p>
+                      <p className="text-[9px] font-mono text-[#97A0B3] uppercase leading-tight">{item.hex}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Quick Brand Presets row */}
+        <div className="pt-2 border-t border-[#2A3446]">
+          <div className="flex items-center justify-between mb-1.5 text-[10px] text-[#97A0B3]">
+            <span>Quick Presets:</span>
+            <span>7 popular tones</span>
+          </div>
+          <div className="flex items-center justify-between gap-1">
+            {["#0D2137", "#7FA0D6", "#161F2D", "#F8FAFC", "#D8BF9B", "#E11D48", "#10B981"].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => {
+                  onSelect(preset);
+                  setEnteredHex(preset);
+                }}
+                className="w-6 h-6 rounded-lg border border-white/20 transition-transform hover:scale-110 active:scale-95 shadow-sm"
+                style={{ backgroundColor: preset }}
+                title={preset}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function AdvancedColorPicker({ color, onChange }: { color: string; onChange: (hex: string) => void }) {
+  const currentHex = color || "#0D2137";
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative flex items-center">
+      <div
+        className="w-8 h-8 rounded-lg cursor-pointer border border-[#2A3446] shadow-sm relative z-10 transition-transform hover:scale-105 active:scale-95"
+        style={{ backgroundColor: currentHex }}
+        onClick={() => setOpen(!open)}
+        title="Click to open color palette and search"
+      />
+      {open && (
+        <PalettePopover
+          currentHex={currentHex}
+          title="Edit Brand Color"
+          onSelect={(hex) => {
+            onChange(hex);
+          }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddColorPaletteButton({ onAddColor }: { onAddColor: (hex: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="px-3.5 py-2 border border-dashed border-[#2A3446] hover:border-[#7FA0D6] rounded-xl text-xs font-bold text-[#7FA0D6] hover:text-[#BCCCE6] flex items-center gap-1.5 cursor-pointer transition-all hover:bg-[#161F2D] active:scale-95 shadow-sm"
+      >
+        <Plus className="w-3.5 h-3.5" /> Add Color
+      </button>
+
+      {open && (
+        <PalettePopover
+          currentHex="#7FA0D6"
+          title="Pick Color to Add"
+          onSelect={(hex) => {
+            onAddColor(hex);
+            setOpen(false);
+          }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
 
 interface StageQuestionnaireProps {
+  isActive?: boolean;
   userId: string;
   initialSection?: SectionKey;
   onComplete: (assignedTeam?: AssignedTeamMember[]) => void;
@@ -161,55 +561,512 @@ const CTA_DESTINATION_OPTIONS = [
   { value: "no_destination_awareness_only", label: "No Destination (Awareness Only)" },
 ];
 
-function generateTonePreview(humour: number, formality: number, respectfulness: number, energy: number): string {
-  let opener = "We are pleased to introduce our newest collection.";
-  if (formality > 6 && humour > 6) {
-    opener = "Okay don't panic, but our latest drop just landed and it's ridiculously good.";
-  } else if (formality > 6) {
-    opener = "Hey everyone! Our new release is officially live and ready for you.";
-  } else if (humour > 6) {
-    opener = "We promised ourselves we wouldn't hype this up, but honestly? Just look at it.";
-  } else if (formality < 4 && humour < 4) {
-    opener = "We are privileged to announce the immediate release of our verified collection.";
+function generateTonePreview(
+  humour: number,
+  formality: number,
+  respectfulness: number,
+  energy: number,
+  voiceWords: string[] = [],
+  antiVoiceWords: string[] = []
+): string {
+  const words = (voiceWords || []).map((w) => w.toLowerCase().trim());
+  const anti = (antiVoiceWords || []).map((w) => w.toLowerCase().trim());
+
+  const wordMap: Record<string, { opener: string; middle: string; closer: string }> = {
+    bold: {
+      opener: humour > 6
+        ? "We promised ourselves we wouldn't show off, but when you craft something this bold? You don't whisper."
+        : formality < 4
+        ? "Make no mistake: our latest breakthrough is here, built without hesitation or apology."
+        : "Make no mistake: we didn't come to play small. This is pure, unapologetic impact.",
+      middle: "Forged with razor-sharp conviction, raw power, and an unyielding refusal to compromise.",
+      closer: energy > 6
+        ? "Take your stand right now — the old rules no longer apply!"
+        : "Own the outcome. Settle for nothing less.",
+    },
+    premium: {
+      opener: formality < 4
+        ? "We are privileged to present an extraordinary collection of bespoke distinction."
+        : "Where masterclass artistry meets effortless luxury: welcome to something truly bespoke.",
+      middle: "Meticulously finished with hand-selected materials, quiet elegance, and peerless attention to nuance.",
+      closer: energy > 6
+        ? "Experience world-class distinction right now — elevate your standard to the pinnacle it deserves!"
+        : "An enduring testament to subtle luxury and flawless refinement.",
+    },
+    warm: {
+      opener: humour > 6
+        ? "Like catching up with an old friend who brought the best treats: we made this specially for you."
+        : "Welcome to something crafted with genuine heart, open arms, and deep intention.",
+      middle: "Thoughtfully created to bring comforting ease, heartfelt connection, and dependable daily delight.",
+      closer: energy > 6
+        ? "Come on in — let's share in something wonderful together today!"
+        : "We are truly honored to share this with you. Welcome home.",
+    },
+    witty: {
+      opener: formality < 4
+        ? "We must observe, with appropriate discretion: this drop is rather scandalously clever."
+        : "We tried keeping a straight face about this drop, but honestly? It's ridiculously good.",
+      middle: "Clever enough to do all the heavy lifting, sharp enough to keep you grinning the whole time.",
+      closer: energy > 6
+        ? "Go ahead, take all the credit — your secret is safe with us!"
+        : "Plot twist: it actually delivers on every single promise.",
+    },
+    calm: {
+      opener: "A breath of tranquil clarity in an otherwise loud, chaotic world.",
+      middle: "Engineered for peaceful dependability, effortless poise, and soothing, long-term harmony.",
+      closer: "Breathe easy. Everything is taken care of with quiet precision.",
+    },
+    authoritative: {
+      opener: "The definitive benchmark in modern execution, validated by industry leaders worldwide.",
+      middle: "Built on rigorous empirical evidence, masterclass methodology, and zero margin for error.",
+      closer: energy > 6
+        ? "Command your domain with verified excellence — start leading the future now!"
+        : "The definitive standard for decision-makers who accept only verified outcomes.",
+    },
+    playful: {
+      opener: "Who said serious results can't be an absolute blast? Say hello to your newest obsession!",
+      middle: "Bursting with vibrant energy, bright ideas, and delightfully unexpected smiles at every step.",
+      closer: "Jump right in — let's turn the everyday grind into pure celebration!",
+    },
+    minimal: {
+      opener: "Essential form. Zero clutter.",
+      middle: "Stripped of every milligram of excess noise so only pure, unadulterated purpose remains.",
+      closer: "Clean. Timeless. Effective.",
+    },
+    friendly: {
+      opener: "Hey there! We are thrilled to share our latest creation with you.",
+      middle: "Made with genuine smiles, approachable simplicity, and a helping hand ready at every turn.",
+      closer: "Reach out anytime — we're always right here in your corner!",
+    },
+    direct: {
+      opener: "Straight to the point: here is what matters and why it works.",
+      middle: "We eliminated the runaround and engineered the exact high-impact outcome you need.",
+      closer: "No fluff. No delays. Get straight to work.",
+    },
+    aspirational: {
+      opener: "Designed for who you are becoming, not just where you currently stand.",
+      middle: "Igniting monumental momentum and elevating your highest ambitions into tangible reality.",
+      closer: "Step into tomorrow. Build the legacy you were meant for.",
+    },
+    technical: {
+      opener: "Architected with sub-millisecond precision, robust fault tolerance, and deterministic throughput.",
+      middle: "Calibrated to exceed stringent engineering specifications across all mission-critical workloads.",
+      closer: "Deploy with absolute confidence and verified operational integrity.",
+    },
+    nurturing: {
+      opener: "We meet you right where you are, with deep empathy and thoughtful care.",
+      middle: "Gently designed to support, sustain, and cultivate your growth through every milestone.",
+      closer: "You're never alone on this path — we're right beside you, every step of the way.",
+    },
+    rebellious: {
+      opener: "Tear up the standard handbook. We threw it out the window.",
+      middle: "Raw, unapologetic disruption built specifically for those who refuse to fit into neat little boxes.",
+      closer: "Rules were meant to be broken. Welcome to the other side.",
+    },
+    trustworthy: {
+      opener: "Founded on ironclad integrity, complete transparency, and steadfast dependability.",
+      middle: "Tested without compromise, built without shortcuts, and proven to perform when it matters most.",
+      closer: "Count on us to always deliver on our word — without exception.",
+    },
+    energetic: {
+      opener: "Ignite your momentum with electrifying, high-voltage speed!",
+      middle: "Powered by relentless drive and unstoppable horsepower that propels you lightyears ahead!",
+      closer: "Turn the dial to eleven and feel the surge right now!",
+    },
+  };
+
+  let opener = "";
+  let middle = "";
+  let closer = "";
+
+  if (words.length > 0) {
+    const firstWord = words[0];
+    const secondWord = words[1];
+    const thirdWord = words[2];
+    const primary = firstWord ? wordMap[firstWord] : undefined;
+    const secondary = secondWord ? wordMap[secondWord] : undefined;
+    const tertiary = thirdWord ? wordMap[thirdWord] : undefined;
+
+    if (primary) {
+      opener = primary.opener;
+      middle = secondary ? secondary.middle : primary.middle;
+      closer = tertiary ? tertiary.closer : (secondary ? secondary.closer : primary.closer);
+
+      // Signature multi-word blended combos
+      if (words.includes("bold") && words.includes("premium")) {
+        opener = "Uncompromising luxury meets fearless conviction: welcome to our finest creation yet.";
+        middle = "Forged with bespoke artistry, hand-selected materials, and razor-sharp performance.";
+        closer = "For those who demand the pinnacle and settle for nothing less — step into world-class distinction.";
+      } else if (words.includes("warm") && words.includes("premium")) {
+        opener = "Welcome to something truly rare: heartfelt hospitality met with bespoke refinement.";
+        middle = "Designed with gracious care for those who appreciate quiet, enduring luxury.";
+        closer = "An invitation to experience understated elegance, crafted warmly just for you.";
+      } else if (words.includes("witty") && words.includes("bold")) {
+        opener = "They told us not to brag. We decided not to listen. Behold our latest drop.";
+        middle = "Engineered with shameless audacity, razor-sharp intellect, and pure craft.";
+        closer = "Go ahead, make your competition sweat — check it out right now.";
+      } else if (words.includes("minimal") && words.includes("direct")) {
+        opener = "No fluff. No excuses. Pure utility.";
+        middle = "Stripped of every distraction to deliver immediate, verified results.";
+        closer = "Simple. Honest. Ready when you are.";
+      } else if (words.includes("rebellious") && words.includes("energetic")) {
+        opener = "Forget the rules and hit the gas! High-octane disruption has arrived.";
+        middle = "Built to shatter the status quo with relentless speed and unapologetic power.";
+        closer = "Jump in right now — the old way is officially over!";
+      } else if (words.includes("warm") && words.includes("friendly")) {
+        opener = "Hey! Come on in — we're so genuinely excited to show you what we've made.";
+        middle = "Crafted with open arms, thoughtful details, and a welcoming smile at every turn.";
+        closer = "We're always right here to help — let's build something wonderful together!";
+      } else if (words.includes("calm") && words.includes("trustworthy")) {
+        opener = "A quiet sanctuary of dependable craftsmanship, founded on steadfast transparency.";
+        middle = "Engineered for peaceful certainty, enduring reliability, and effortless peace of mind.";
+        closer = "Breathe easy knowing you're in safe, verified hands.";
+      }
+    }
   }
 
-  let middle = "Formulated for reliable, high-standard daily performance.";
-  if (energy > 7) {
-    middle = "Built with relentless speed, uncompromising power, and pure craft!";
-  } else if (energy < 4) {
-    middle = "Quietly engineered for understated, long-term dependability.";
+  // Base fallback if no words or words not in map
+  if (!opener) {
+    opener = "We are pleased to introduce our newest collection.";
+    if (formality > 6 && humour > 6) {
+      opener = "Okay don't panic, but our latest drop just landed and it's ridiculously good.";
+    } else if (formality > 6) {
+      opener = "Hey everyone! Our new release is officially live and ready for you.";
+    } else if (humour > 6) {
+      opener = "We promised ourselves we wouldn't hype this up, but honestly? Just look at it.";
+    } else if (formality < 4 && humour < 4) {
+      opener = "We are privileged to announce the immediate release of our verified collection.";
+    }
   }
 
-  let closer = "Available now via the link.";
-  if (respectfulness > 7) {
-    closer = "Rules were made to be bent. Grab yours before everyone else catches on.";
-  } else if (respectfulness < 3) {
-    closer = "We remain at your service and invite your esteemed feedback.";
-  } else if (energy > 6) {
-    closer = "Check it out right now — let's build something extraordinary together!";
+  if (!middle) {
+    middle = "Formulated for reliable, high-standard daily performance.";
+    if (energy > 7) {
+      middle = "Built with relentless speed, uncompromising power, and pure craft!";
+    } else if (energy < 4) {
+      middle = "Quietly engineered for understated, long-term dependability.";
+    }
   }
 
-  return `"${opener} ${middle} ${closer}"`;
+  if (!closer) {
+    closer = "Available now via the link.";
+    if (respectfulness > 7) {
+      closer = "Rules were made to be bent. Grab yours before everyone else catches on.";
+    } else if (respectfulness < 3) {
+      closer = "We remain at your service and invite your esteemed feedback.";
+    } else if (energy > 6) {
+      closer = "Check it out right now — let's build something extraordinary together!";
+    }
+  }
+
+  // Modulate punctuation and accents if energy or humour is high
+  if (words.length > 0) {
+    if (energy > 8 && !closer.endsWith("!")) {
+      closer = closer.replace(/\.$/, "") + "!";
+    }
+    if (humour > 7 && !opener.startsWith("Honestly?") && !opener.startsWith("We promised")) {
+      opener = "Honestly? " + opener;
+    }
+  }
+
+  // Append anti-tone constraints if selected
+  const antiNotes: string[] = [];
+  if (anti.includes("salesy")) antiNotes.push("Zero hype, no pushy sales pitches");
+  if (anti.includes("corporate")) antiNotes.push("Zero corporate jargon");
+  if (anti.includes("preachy")) antiNotes.push("No unsolicited preaching");
+  if (anti.includes("gimmicky")) antiNotes.push("Zero cheap gimmicks");
+  if (anti.includes("desperate")) antiNotes.push("No fake urgency");
+  if (anti.includes("cutesy")) antiNotes.push("No childish sugarcoating");
+
+  let guardrailSuffix = "";
+  if (antiNotes.length > 0) {
+    guardrailSuffix = ` [Constraint: ${antiNotes.slice(0, 2).join("; ")}.]`;
+  }
+
+  return `"${opener} ${middle} ${closer}"${guardrailSuffix}`;
 }
 
-export function StageQuestionnaire({ userId, initialSection, onComplete }: StageQuestionnaireProps) {
-  const [activeSection, setActiveSection] = useState<SectionKey>(initialSection || "a");
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-  const [isSynthesizing, setIsSynthesizing] = useState(false);
-  const [coreUnlocked, setCoreUnlocked] = useState(false);
-  const [completedSections, setCompletedSections] = useState<Set<SectionKey>>(new Set());
+interface VisualPreviewData {
+  headline: string;
+  creativeDirective: string;
+  designPillars: string[];
+  executionCues: {
+    typography: string;
+    layout: string;
+    lighting: string;
+    motion: string;
+  };
+}
+
+function generateVisualDirectionPreview(
+  directions: string[] = [],
+  _colours: Array<{ hex: string; label: string }> = [],
+  font: string = ""
+): VisualPreviewData {
+  const selected = directions || [];
+
+  if (selected.length === 0) {
+    return {
+      headline: "Awaiting Visual Direction",
+      creativeDirective:
+        "Select up to 3 visual styles below (e.g. Clean & Minimalist, Bold Graphic, Luxury Elegance) to synthesize how our creative directors and animators will craft your brand's visual identity.",
+      designPillars: ["Flexible Grid", "Custom Color Harmony", "Adaptive Styling"],
+      executionCues: {
+        typography: font ? `Font: ${font}` : "Modern Balanced Sans",
+        layout: "Standard Responsive Grid",
+        lighting: "Neutral Commercial",
+        motion: "Smooth Standard Transitions",
+      },
+    };
+  }
+
+  // Signature Triple & Dual Combos
+  if (selected.includes("clean_minimal") && selected.includes("bold_graphic") && selected.includes("luxury_restrained")) {
+    return {
+      headline: "Haute Minimalism: Bold Scale, Pure Space & Luxury Restraint",
+      creativeDirective:
+        "A compelling synthesis of opposites: heavy, commanding typography grounded in vast Swiss negative space, punctuated by restrained luxury detailing and immaculate architectural composition.",
+      designPillars: ["Expansive Negative Space", "High Contrast Typographic Anchors", "Subtle Refined Accents"],
+      executionCues: {
+        typography: font ? `${font} (High Contrast Weights)` : "Architectural Monospace & High-Contrast Sans",
+        layout: "Rigid Asymmetric Swiss Grid with generous margins",
+        lighting: "High-key directional with razor-sharp shadow falloff",
+        motion: "Slow, deliberate camera tracks and precise geometric cuts",
+      },
+    };
+  }
+
+  if (selected.includes("clean_minimal") && selected.includes("luxury_restrained")) {
+    return {
+      headline: "Understated Elegance & Architectural Clarity",
+      creativeDirective:
+        "Bespoke minimalism where every pixel breathes. Distilled typographic elegance, quiet neutral palettes, and refined proportions that convey effortless prestige without ostentation.",
+      designPillars: ["Breathable Margins", "Subtle Warm Accents", "Bespoke Kerning & Proportions"],
+      executionCues: {
+        typography: font || "Refined Editorial Serif & Clean Geometric Sans",
+        layout: "Minimalist Gallery Grid with generous breathing room",
+        lighting: "Soft diffuse studio illumination with subtle natural highlights",
+        motion: "Gentle ease-in-out floats and seamless editorial dissolves",
+      },
+    };
+  }
+
+  if (selected.includes("bold_graphic") && selected.includes("cinematic_moody")) {
+    return {
+      headline: "Dramatic Noir & High-Impact Graphic Punch",
+      creativeDirective:
+        "Deep cinematic shadows pierced by high-contrast graphic elements and punchy typography. Atmospheric depth and raw graphic authority command full viewer attention.",
+      designPillars: ["Anamorphic Shadow Depth", "Saturated Graphic Highlights", "Heavy Typographic Blocks"],
+      executionCues: {
+        typography: font || "Condensed Heavyweight Grotesk",
+        layout: "Full-bleed widescreen frames with overlapping graphic overlays",
+        lighting: "Moody low-key with focused rim lighting and rich blacks",
+        motion: "Dynamic kinetic speed ramps with deep parallax depth",
+      },
+    };
+  }
+
+  if (selected.includes("bright_playful") && selected.includes("bold_graphic")) {
+    return {
+      headline: "High-Voltage Graphic Pop & Vibrant Energy",
+      creativeDirective:
+        "Electrifying visual rhythm bursting with bold typographic scales, saturated color clashes, and buoyant kinetic micro-animations engineered to immediately stop thumbs on social feeds.",
+      designPillars: ["Punchy Contrast Ratios", "Elastic Kinetic Curves", "Vibrant Accent Pops"],
+      executionCues: {
+        typography: font || "Expressive Rounded Sans & Bold Display Weights",
+        layout: "Dynamic modular collage with unexpected sticker badges",
+        lighting: "Vibrant high-key daylight with saturated bounce",
+        motion: "Spring-physics pops, snappy zooms, and energetic cuts",
+      },
+    };
+  }
+
+  if (selected.includes("warm_editorial") && selected.includes("documentary_raw")) {
+    return {
+      headline: "Authentic Human Warmth & Candid Documentary Soul",
+      creativeDirective:
+        "Unvarnished, candid storytelling illuminated by golden-hour sunlight and analog texture. Intimate close-ups, genuine interactions, and honest behind-the-scenes presence.",
+      designPillars: ["Analog Film Grain", "Natural Golden Ambient Light", "Unstaged Human Moments"],
+      executionCues: {
+        typography: font || "Humanist Sans & Warm Vintage Serif",
+        layout: "Organic scrapbook & editorial journal layouts",
+        lighting: "Warm golden-hour daylight with natural lens flares",
+        motion: "Handheld camera drift with organic natural pacing",
+      },
+    };
+  }
+
+  if (selected.includes("cinematic_moody") && selected.includes("luxury_restrained")) {
+    return {
+      headline: "Atmospheric Luxury & Filmic Distinction",
+      creativeDirective:
+        "Velvety blacks, cinematic depth-of-field, and bespoke typographic detailing. Evoking the world of high-end cinema and luxury fashion editorial campaigns.",
+      designPillars: ["Chiaroscuro Contrast", "Filmic 2.39:1 Framing", "Bespoke Quiet Opulence"],
+      executionCues: {
+        typography: font || "High-End Modern Editorial Serif",
+        layout: "Cinematic letterbox framing with restrained typography",
+        lighting: "Volumetric mood lighting with soft highlights",
+        motion: "Slow, sweeping gimbal glides and lingering hero holds",
+      },
+    };
+  }
+
+  const traitMap: Record<string, { label: string; text: string; cue: string }> = {
+    clean_minimal: {
+      label: "Minimalist Space",
+      text: "generous negative space and disciplined Swiss grid alignment",
+      cue: "uncluttered clean layouts",
+    },
+    bold_graphic: {
+      label: "Bold Graphics",
+      text: "heavy kinetic typography and razor-sharp contrast anchors",
+      cue: "punchy visual hierarchy",
+    },
+    warm_editorial: {
+      label: "Warm Editorial",
+      text: "golden-hour warmth, analog filmic textures, and candid intimacy",
+      cue: "editorial photojournalism",
+    },
+    cinematic_moody: {
+      label: "Cinematic Mood",
+      text: "atmospheric low-key shadows and rich widescreen color grading",
+      cue: "dramatic film lighting",
+    },
+    bright_playful: {
+      label: "Playful Pop",
+      text: "vibrant saturated color pops and buoyant elastic motion curves",
+      cue: "energetic lively motion",
+    },
+    luxury_restrained: {
+      label: "Restrained Luxury",
+      text: "bespoke understated proportions and quiet luxury craftsmanship",
+      cue: "subtle prestige detailing",
+    },
+    documentary_raw: {
+      label: "Raw Authenticity",
+      text: "handheld kinetic honesty, natural available lighting, and unfiltered reality",
+      cue: "honest candid capture",
+    },
+    retro_nostalgic: {
+      label: "Retro Nostalgia",
+      text: "subtle vintage halation, 35mm grain emulation, and mid-century warmth",
+      cue: "analog retro warmth",
+    },
+  };
+
+  const activeTraits = selected
+    .map((s) => traitMap[s])
+    .filter((t): t is { label: string; text: string; cue: string } => Boolean(t));
+  const titleWords = activeTraits.map((t) => t.label).join(" × ");
+  const textSummary = activeTraits.map((t) => t.text).join(", balanced with ");
+  const cues = activeTraits.map((t) => t.cue).join(" · ");
+
+  return {
+    headline: titleWords,
+    creativeDirective: `Crafted around ${textSummary}. Engineered to give your brand an unmistakable visual identity that cuts through feed noise.`,
+    designPillars: activeTraits.map((t) => t.label),
+    executionCues: {
+      typography: font ? `Primary Font: ${font}` : "Curated Custom Typography",
+      layout: cues,
+      lighting: selected.includes("cinematic_moody") ? "Low-key Dramatic" : "Polished High-standard",
+      motion: selected.includes("bright_playful") ? "Dynamic & Spring-based" : "Smooth & Measured",
+    },
+  };
+}
+
+export function StageQuestionnaire({ userId, initialSection, onComplete, isActive = true }: StageQuestionnaireProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const validSections: SectionKey[] = ["a", "b", "c", "d", "e", "f", "g"];
+
+  const getSavedSection = (): SectionKey | null => {
+    // 1. URL search parameters (window.location.search first, then React Router searchParams)
+    if (typeof window !== "undefined") {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlSec = urlParams.get("section")?.toLowerCase();
+        if (urlSec && (validSections as string[]).includes(urlSec)) {
+          return urlSec as SectionKey;
+        }
+      } catch {}
+    }
+    const param = searchParams.get("section")?.toLowerCase();
+    if (param && (validSections as string[]).includes(param)) {
+      return param as SectionKey;
+    }
+
+    // 2. Storage fallback (sessionStorage first, then localStorage)
+    if (typeof window !== "undefined") {
+      try {
+        const uId = userId || "";
+        const sessionVal = (
+          (uId && sessionStorage.getItem(`creo_active_section_${uId}`)) ||
+          sessionStorage.getItem("creo_active_section")
+        )?.toLowerCase();
+        if (sessionVal && (validSections as string[]).includes(sessionVal)) {
+          return sessionVal as SectionKey;
+        }
+
+        const localVal = (
+          (uId && localStorage.getItem(`creo_active_section_${uId}`)) ||
+          localStorage.getItem("creo_active_section")
+        )?.toLowerCase();
+        if (localVal && (validSections as string[]).includes(localVal)) {
+          return localVal as SectionKey;
+        }
+      } catch {}
+    }
+
+    // 3. Initial section prop
+    if (initialSection && validSections.includes(initialSection)) {
+      return initialSection;
+    }
+
+    return null;
+  };
+
+  const [activeSection, setActiveSection] = useState<SectionKey>(() => getSavedSection() || "a");
   const [dataInitialized, setDataInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!activeSection || !isActive || !dataInitialized) return;
+    try {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("creo_active_section", activeSection);
+        localStorage.setItem("creo_active_section", activeSection);
+        if (userId) {
+          sessionStorage.setItem(`creo_active_section_${userId}`, activeSection);
+          localStorage.setItem(`creo_active_section_${userId}`, activeSection);
+        }
+      }
+    } catch {}
+
+    setSearchParams(
+      (prev) => {
+        if (prev.get("section") === activeSection) return prev;
+        const next = new URLSearchParams(prev);
+        next.set("section", activeSection);
+        return next;
+      },
+      { replace: true }
+    );
+  }, [activeSection, userId, setSearchParams, isActive, dataInitialized]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [autosaveAttempt, setAutosaveAttempt] = useState(0);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [completedSections, setCompletedSections] = useState<Set<SectionKey>>(new Set());
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [validationBanner, setValidationBanner] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [failedSection, setFailedSection] = useState<SectionKey | null>(null);
-  const [synthPhase, setSynthPhase] = useState<string>("Synthesizing Brand DNA…");
+  const synthPhase = "Allocating your creative pod…";
+  const [allocOpen, setAllocOpen] = useState(false);
+  const [allocStatus, setAllocStatus] = useState<AllocationStatus>("working");
+  const [allocError, setAllocError] = useState<string | null>(null);
+  const allocatedTeamRef = useRef<AssignedTeamMember[] | undefined>(undefined);
 
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // JSON of what the server last acknowledged per section; unchanged sections are never re-sent
   const lastSavedRef = useRef<Partial<Record<SectionKey, string>>>({});
-  const serverSectionsRef = useRef<Set<SectionKey>>(new Set());
   const baselineTakenRef = useRef(false);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const formTopRef = useRef<HTMLDivElement | null>(null);
@@ -249,7 +1106,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
 
   const [secD, setSecD] = useState({
     brand_guidelines: "none",
-    colours: [{ hex: "#0D2137", label: "primary" }, { hex: "#2B7BC4", label: "accent" }],
+    colours: [{ hex: "#0B111C", label: "primary" }, { hex: "#7FA0D6", label: "accent" }],
     fonts: "",
     logo_files: [],
     photography_product_shots: [],
@@ -287,92 +1144,71 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   });
 
   // Load existing questionnaire state
+  const queryClient = useQueryClient();
   const { data: qState, isLoading } = useQuery({
     queryKey: ["questionnaire-state", userId],
     queryFn: () => fetchQuestionnaireState(userId),
+    staleTime: 10 * 60_000,
   });
 
   useEffect(() => {
-    if (qState) {
+    if (qState && !dataInitialized) {
       const completed = new Set<SectionKey>();
-      const allKeys: SectionKey[] = ["a", "b", "c", "d", "e", "f", "g"];
-      serverSectionsRef.current = new Set(
-        allKeys.filter((k) => {
-          const section = qState[`section_${k}` as keyof typeof qState];
-          return Boolean(section && typeof section === "object" && Object.keys(section).length > 0);
-        }),
-      );
 
       if (qState.section_a && Object.keys(qState.section_a).length > 0) {
         setSecA((prev) => ({ ...prev, ...qState.section_a }));
-        if (qState.section_a.brand_name) completed.add("a");
+
       }
       if (qState.section_b && Object.keys(qState.section_b).length > 0) {
         setSecB((prev) => ({ ...prev, ...qState.section_b }));
-        if (qState.section_b.ideal_customer) completed.add("b");
+
       }
       if (qState.section_c && Object.keys(qState.section_c).length > 0) {
         setSecC((prev) => ({ ...prev, ...qState.section_c }));
-        if (qState.section_c.voice_words?.length) completed.add("c");
+
       }
       if (qState.section_d && Object.keys(qState.section_d).length > 0) {
         setSecD((prev) => ({ ...prev, ...qState.section_d }));
-        if (qState.section_d.visual_direction?.length) completed.add("d");
+
       }
       if (qState.section_e && Object.keys(qState.section_e).length > 0) {
         setSecE((prev) => ({ ...prev, ...qState.section_e }));
-        if (qState.section_e.shoot_city) completed.add("e");
+
       }
       if (qState.section_f && Object.keys(qState.section_f).length > 0) {
         setSecF((prev) => ({ ...prev, ...qState.section_f }));
-        completed.add("f");
+        if (qState.section_f.what_failed || qState.section_f.best_posts?.some((post: any) => post.post_url?.trim()) || qState.section_f.worst_posts?.some((post: any) => post.post_url?.trim())) completed.add("f");
       }
       if (qState.section_g && Object.keys(qState.section_g).length > 0) {
         setSecG((prev) => ({ ...prev, ...qState.section_g }));
-        completed.add("g");
+        if (Object.values(qState.section_g).some(value => typeof value === "string" && value.trim())) completed.add("g");
       }
 
+      // Drafts are not completed sections. Apply the same validation used by Continue
+      // before trusting a saved URL, browser storage, or the server resume hint.
+      for (const section of SECTIONS.filter(section => section.isCore)) {
+        const restored = { ...getCurrentSectionData(section.key), ...qState[`section_${section.key}`] };
+        if (validateCurrentSection(section.key, restored).valid) completed.add(section.key);
+      }
       setCompletedSections(completed);
-
-      const isCoreDone = Boolean(
-        qState.core_completed ||
-        (qState.section_a?.brand_name &&
-         qState.section_b?.ideal_customer &&
-         qState.section_c?.voice_words?.length &&
-         qState.section_d?.visual_direction?.length &&
-         qState.section_e?.shoot_city)
-      );
-
-      if (isCoreDone) {
-        setCoreUnlocked(true);
-      }
-
-      // Resume at first incomplete section if core is not completed
-      const validSections: SectionKey[] = ["a", "b", "c", "d", "e", "f", "g"];
+      const firstIncomplete = SECTIONS.find(section => section.isCore && !completed.has(section.key))?.key;
       const effectiveInitial = initialSection && validSections.includes(initialSection) ? initialSection : null;
 
-      const a = qState.section_a;
-      const b = qState.section_b;
-      const c = qState.section_c;
-      const d = qState.section_d;
-      const e = qState.section_e;
+      if (!dataInitialized) {
+        const savedSec = getSavedSection();
+        const serverLast = (qState as any)?.last_active_section as SectionKey | undefined;
+        const validServerLast = serverLast && validSections.includes(serverLast) ? serverLast : null;
+        const preferredSec = savedSec || validServerLast || effectiveInitial;
 
-      const firstIncomplete: SectionKey =
-        (!a || !a.brand_name) ? "a" :
-        (!b || !b.ideal_customer) ? "b" :
-        (!c || !c.voice_words?.length) ? "c" :
-        (!d || !d.visual_direction?.length) ? "d" :
-        (!e || !e.shoot_city) ? "e" : "a";
-
-      if (!isCoreDone) {
-        // Enforce completing mandatory core sections first
-        setActiveSection(firstIncomplete);
-      } else if (effectiveInitial) {
-        setActiveSection(effectiveInitial);
-      } else {
-        setActiveSection("a");
+        const preferredIndex = SECTIONS.findIndex(section => section.key === preferredSec);
+        const incompleteIndex = SECTIONS.findIndex(section => section.key === firstIncomplete);
+        if (firstIncomplete && preferredIndex > incompleteIndex) {
+          setActiveSection(firstIncomplete);
+        } else {
+          setActiveSection(preferredSec || firstIncomplete || "a");
+        }
+        setDataInitialized(true);
       }
-      setDataInitialized(true);
     }
   }, [qState, initialSection]);
 
@@ -389,11 +1225,11 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     }
   };
 
-  // Once restored answers are in state, treat the sections the server already has as saved
+  // Establish the restored baseline so untouched defaults are not submitted as edits.
   useEffect(() => {
     if (!dataInitialized || baselineTakenRef.current) return;
     baselineTakenRef.current = true;
-    for (const key of serverSectionsRef.current) {
+    for (const { key } of SECTIONS) {
       lastSavedRef.current[key] = JSON.stringify(getCurrentSectionData(key));
     }
   }, [dataInitialized]);
@@ -412,7 +1248,17 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
       if (lastSavedRef.current[secKey] === serialized) return;
       const res = await saveQuestionnaireSection(userId, secKey, data);
       lastSavedRef.current[secKey] = serialized;
-      if (res.core_completed) setCoreUnlocked(true);
+      // Returning from another route should restore the latest acknowledged save,
+      // rather than the snapshot fetched before the client edited their answers.
+      queryClient.setQueryData<QuestionnaireState>(["questionnaire-state", userId], (previous) =>
+        previous ? {
+          ...previous,
+          [`section_${secKey}`]: data,
+          core_completed: res.core_completed,
+          extended_completed: res.extended_completed,
+          version: res.version,
+        } : previous,
+      );
     };
     const queued = saveQueueRef.current.then(run, run);
     saveQueueRef.current = queued.catch(() => {});
@@ -421,21 +1267,33 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
 
   // Debounced autosave — only sends a request when the active section actually changed
   useEffect(() => {
-    if (!dataInitialized || isSaving) return;
+    if (!dataInitialized || isSaving || isSynthesizing) return;
 
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
 
-    autosaveTimerRef.current = setTimeout(() => {
-      if (!isSectionDirty(activeSection)) return;
-      persistSection(activeSection).catch((err) => console.warn("Autosave notification:", err));
-    }, 1500);
+    autosaveTimerRef.current = setTimeout(async () => {
+      const dirtySections = SECTIONS.filter(({ key }) => isSectionDirty(key));
+      if (!dirtySections.length) return;
+      const results = await Promise.allSettled(dirtySections.map(({ key }) => persistSection(key)));
+      const failedIndex = results.findIndex(result => result.status === "rejected");
+      const failed = dirtySections[failedIndex];
+      if (failed) {
+        setFailedSection(failed.key);
+        setApiError("Your latest answers haven't reached the server yet. We'll retry automatically; please keep this page open.");
+        setAutosaveAttempt(attempt => attempt + 1);
+      } else {
+        setApiError(null);
+        setFailedSection(null);
+        setAutosaveAttempt(0);
+      }
+    }, Math.min(1500 * 2 ** Math.min(autosaveAttempt, 5), 30_000));
 
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [activeSection, secA, secB, secC, secD, secE, secF, secG, dataInitialized, isSaving, userId]);
+  }, [activeSection, secA, secB, secC, secD, secE, secF, secG, dataInitialized, isSaving, isSynthesizing, userId, autosaveAttempt]);
 
   // Clear errors when changing field or section
   const clearFieldError = (fieldName: string) => {
@@ -450,7 +1308,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   };
 
   // Section Client-Side Validation Rules
-  const validateCurrentSection = (secKey: SectionKey): { valid: boolean; errors: Record<string, string>; firstKey?: string } => {
+  const validateCurrentSection = (secKey: SectionKey, data: Record<string, any> = getCurrentSectionData(secKey)): { valid: boolean; errors: Record<string, string>; firstKey?: string } => {
     const errors: Record<string, string> = {};
     let firstKey: string | undefined;
 
@@ -460,71 +1318,71 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     };
 
     if (secKey === "a") {
-      if (!secA.brand_name || secA.brand_name.trim().length < 2) {
+      if (!data.brand_name || data.brand_name.trim().length < 2) {
         addErr("brand_name", "Please enter your brand name (at least 2 characters).");
       }
-      const igHandle = secA.instagram_handle.trim();
+      const igHandle = (data.instagram_handle || "").trim();
       const igRegex = /^@?[a-zA-Z0-9._]{1,30}$/;
       if (!igHandle || !igRegex.test(igHandle)) {
         addErr("instagram_handle", "Please enter a valid Instagram handle (e.g. @yourbrand).");
       }
-      if (!secA.one_liner || secA.one_liner.trim().length < 10) {
+      if (!data.one_liner || data.one_liner.trim().length < 10) {
         addErr("one_liner", "Please describe what your brand does in one concise sentence (min 10 characters).");
       }
-      if (!secA.category) {
+      if (!data.category) {
         addErr("category", "Please select a primary category.");
       }
-      if (!secA.primary_goal) {
+      if (!data.primary_goal) {
         addErr("primary_goal", "Please select the single outcome that matters most.");
       }
-      const firstProdName = secA.products?.[0]?.name?.trim();
+      const firstProdName = data.products?.[0]?.name?.trim();
       if (!firstProdName) {
         addErr("products", "Please enter at least one primary product or service offering.");
       }
     } else if (secKey === "b") {
-      if (!secB.ideal_customer || secB.ideal_customer.trim().length < 10) {
+      if (!data.ideal_customer || data.ideal_customer.trim().length < 10) {
         addErr("ideal_customer", "Please describe your ideal customer profile (min 10 characters).");
       }
-      if (!secB.problem || secB.problem.trim().length < 10) {
+      if (!data.problem || data.problem.trim().length < 10) {
         addErr("problem", "Please describe the core friction point or problem you solve.");
       }
-      if (!secB.why_chosen || secB.why_chosen.trim().length < 10) {
+      if (!data.why_chosen || data.why_chosen.trim().length < 10) {
         addErr("why_chosen", "Please explain why customers choose you over alternatives.");
       }
-      if (!secB.languages || secB.languages.length === 0) {
+      if (!data.languages || data.languages.length === 0) {
         addErr("languages", "Please select at least one primary audience language.");
       }
-      if (!secB.caption_script) {
+      if (!data.caption_script) {
         addErr("caption_script", "Please select a caption and script format.");
       }
     } else if (secKey === "c") {
-      if (!secC.voice_words || secC.voice_words.length < 2) {
+      if (!data.voice_words || data.voice_words.length < 2) {
         addErr("voice_words", "Please select at least 2 words that describe your brand voice.");
       }
-      if (!secC.anti_voice_words || secC.anti_voice_words.length < 1) {
+      if (!data.anti_voice_words || data.anti_voice_words.length < 1) {
         addErr("anti_voice_words", "Please select at least 1 word your brand voice must NEVER be.");
       }
     } else if (secKey === "d") {
-      if (!secD.brand_guidelines) {
+      if (!data.brand_guidelines) {
         addErr("brand_guidelines", "Please indicate if you have existing brand guidelines.");
       }
-      if (!secD.colours || secD.colours.length === 0) {
+      if (!data.colours || data.colours.length === 0) {
         addErr("colours", "Please provide at least one brand colour.");
       }
-      if (!secD.visual_direction || secD.visual_direction.length === 0) {
+      if (!data.visual_direction || data.visual_direction.length === 0) {
         addErr("visual_direction", "Please select at least 1 visual direction style.");
       }
     } else if (secKey === "e") {
-      if (!secE.on_camera || secE.on_camera.length === 0) {
+      if (!data.on_camera || data.on_camera.length === 0) {
         addErr("on_camera", "Please select at least one option for who can appear on camera.");
       }
-      if (!secE.shoot_locations || secE.shoot_locations.length === 0) {
+      if (!data.shoot_locations || data.shoot_locations.length === 0) {
         addErr("shoot_locations", "Please select at least one shoot location.");
       }
-      if (!secE.shoot_city || secE.shoot_city.trim().length < 2) {
+      if (!data.shoot_city || data.shoot_city.trim().length < 2) {
         addErr("shoot_city", "Please enter the city for physical shoots.");
       }
-      if (!secE.cta_destination) {
+      if (!data.cta_destination) {
         addErr("cta_destination", "Please select a CTA destination.");
       }
     }
@@ -537,15 +1395,40 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     };
   };
 
+  const coreUnlocked = dataInitialized && SECTIONS.filter(section => section.isCore)
+    .every(section => validateCurrentSection(section.key).valid);
+  const canOpenSection = (targetKey: SectionKey) => dataInitialized && SECTIONS
+    .slice(0, SECTIONS.findIndex(section => section.key === targetKey))
+    .filter(section => section.isCore)
+    .every(section => validateCurrentSection(section.key).valid);
+
   // Tone preview calculation
   const liveSentencePreview = useMemo(() => {
     return generateTonePreview(
-      Number(secC.humour || 0),
-      Number(secC.formality || 0),
-      Number(secC.respectfulness || 0),
-      Number(secC.energy || 0)
+      Number(secC.humour ?? 5),
+      Number(secC.formality ?? 5),
+      Number(secC.respectfulness ?? 5),
+      Number(secC.energy ?? 5),
+      secC.voice_words || [],
+      secC.anti_voice_words || []
     );
-  }, [secC.humour, secC.formality, secC.respectfulness, secC.energy]);
+  }, [
+    secC.humour,
+    secC.formality,
+    secC.respectfulness,
+    secC.energy,
+    secC.voice_words,
+    secC.anti_voice_words,
+  ]);
+
+  // Visual direction preview calculation
+  const visualPreview = useMemo(() => {
+    return generateVisualDirectionPreview(
+      secD.visual_direction || [],
+      secD.colours || [],
+      secD.fonts || ""
+    );
+  }, [secD.visual_direction, secD.colours, secD.fonts]);
 
   // Handle Save & Continue with strict validation, background async saving, and section progression
   const handleNextSection = async () => {
@@ -597,13 +1480,12 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     setFailedSection(null);
     try {
       await persistSection(secKey);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 1200);
+      setAutosaveAttempt(0);
     } catch (err) {
       console.error("Save & Continue API failure:", err);
       setFailedSection(secKey);
       setApiError(
-        `We couldn't save Section ${secKey.toUpperCase()} yet. Your answers are kept on this page — click Retry, or they'll be saved when you finish.`,
+        `We couldn't save Section ${secKey.toUpperCase()} yet. Your answers are kept on this page and will retry automatically.`,
       );
     } finally {
       setIsSaving(false);
@@ -623,24 +1505,19 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
   };
 
   const handleSelectSectionTab = (targetKey: SectionKey) => {
-    // Sections F & G require core sections (A-E) to be completed first
-    if ((targetKey === "f" || targetKey === "g") && !coreUnlocked) {
-      setValidationBanner("Please complete mandatory Sections A–E before proceeding to optional creative enrichment.");
-      return;
-    }
-
-    const targetIdx = SECTIONS.findIndex((s) => s.key === targetKey);
-    const currentIdx = SECTIONS.findIndex((s) => s.key === activeSection);
-
-    if (targetIdx <= currentIdx || completedSections.has(targetKey) || coreUnlocked) {
+    if (canOpenSection(targetKey)) {
       setFieldErrors({});
       setValidationBanner(null);
       setApiError(null);
+      if (isSectionDirty(activeSection)) {
+        void saveSectionInBackground(activeSection);
+      }
       setActiveSection(targetKey);
       formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
       // Trying to jump ahead into an unfinished mandatory section
-      setValidationBanner(`Please complete Section ${activeSection.toUpperCase()} before jumping forward.`);
+      const missing = SECTIONS.find(section => section.isCore && !validateCurrentSection(section.key).valid);
+      setValidationBanner(`Please complete Section ${missing?.key.toUpperCase() || "A"} before jumping forward.`);
     }
   };
 
@@ -673,6 +1550,9 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     setIsSynthesizing(true);
     setApiError(null);
     setValidationBanner(null);
+    setAllocError(null);
+    setAllocStatus("working");
+    setAllocOpen(true);
 
     // Cancel pending debounce timer
     if (autosaveTimerRef.current) {
@@ -680,97 +1560,73 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
     }
 
     try {
-      // 2. Persist any section the server hasn't acknowledged yet (usually none — autosave
-      // already sent them). Sequential on purpose: each save re-evaluates core completion.
-      setSynthPhase("Saving your answers…");
+      // Finish pending autosaves, then acknowledge all seven sections in one request.
+      // This also prevents an older autosave from overwriting the final snapshot.
+      await saveQueueRef.current;
       const allSections: SectionKey[] = ["a", "b", "c", "d", "e", "f", "g"];
-      for (const sec of allSections) {
-        const isCore = sec !== "f" && sec !== "g";
-        if ((isCore || sec === activeSection) && isSectionDirty(sec)) {
-          await persistSection(sec);
-        }
-      }
+      const snapshot = Object.fromEntries(allSections.map(key => [key, getCurrentSectionData(key)]));
+      const saved = await saveQuestionnaireSections(userId, snapshot, activeSection);
+      queryClient.setQueryData(["questionnaire-state", userId], {
+        ...qState, ...saved, last_active_section: activeSection,
+        ...Object.fromEntries(allSections.map(key => [`section_${key}`, snapshot[key]])),
+      });
+      for (const key of allSections) lastSavedRef.current[key] = JSON.stringify(snapshot[key]);
 
-      // 3. Trigger Brand DNA synthesis pipeline
-      setSynthPhase("Synthesizing Brand DNA…");
-      await queueBrandDNAGeneration(userId);
-
-      // 4. Complete onboarding and allocate creative pod
-      setSynthPhase("Assigning your creative pod…");
+      // 3. Allocate the pod and generate the workspace. This call is fast: the Gemini
+      // summary of sections A–G and the team brief are produced on the server afterwards
+      // and delivered to the team lead and specialists, not to the client.
       const completeRes = await completeOnboarding(userId);
-      onComplete(completeRes.assigned_team);
+      allocatedTeamRef.current = completeRes.assigned_team;
+      setAllocStatus("success");
     } catch (err: unknown) {
       console.error("Failed to complete onboarding", err);
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes("Sections A-E")) {
-        setActiveSection("a");
-        setValidationBanner("Please review and submit Sections A–E before finalizing Brand DNA.");
-      } else {
-        setApiError(errMsg || "Synthesis pipeline encountered an issue. Please retry.");
-      }
-    } finally {
       setIsSynthesizing(false);
+      if (errMsg.includes("Sections A-E")) {
+        setAllocOpen(false);
+        setActiveSection("a");
+        setValidationBanner("Please review and submit Sections A–E before finalizing your workspace.");
+      } else {
+        setAllocError(errMsg || null);
+        setAllocStatus("error");
+      }
     }
   };
 
-  if (isLoading) {
+  const labelFor = (options: { value: string; label: string }[], value: unknown, fallback: string) =>
+    options.find((o) => o.value === value)?.label ?? fallback;
+  const allocationAesthetic = labelFor(
+    VISUAL_DIRECTION_OPTIONS,
+    Array.isArray(secD.visual_direction) ? secD.visual_direction[0] : undefined,
+    "chosen visual",
+  );
+  const allocationOutcome = labelFor(GOAL_OPTIONS, secA.primary_goal, "your primary goal");
+
+  if (isLoading || (qState && !dataInitialized)) {
     return (
       <div className="flex flex-col items-center justify-center p-16 space-y-4">
         <Loader2 className="w-8 h-8 animate-spin text-[#7FA0D6]" />
-        <p className="text-xs text-[#94A3B8] font-medium">Restoring your brand discovery session...</p>
+        <p className="text-xs text-[#97A0B3] font-medium">Restoring your brand discovery session...</p>
       </div>
     );
   }
 
   return (
-    <div ref={formTopRef} className="w-full space-y-6 onboarding-dark-canvas" style={{ colorScheme: "dark" }}>
-      {/* Header Banner */}
-      <div className="bg-[#161F2D] rounded-2xl p-6 sm:p-7 text-white shadow-xl relative overflow-hidden border border-[#2A3446]">
-        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#7FA0D6] mb-1">
-              <Sparkles className="w-4 h-4 text-[#D8BF9B]" />
-              <span>Production Intake & Brand DNA Engine</span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white font-display">
-              Creo Brand Discovery & Production Blueprint
-            </h1>
-            <p className="text-sm text-[#94A3B8] mt-1 max-w-2xl leading-relaxed">
-              Sections A–E configure our editor, designer, and shoot director (~10 min).
-              Sections F–G are optional creative enrichment.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            {coreUnlocked && (
-              <div className="inline-flex items-center gap-1.5 bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-full">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Calendar Ready</span>
-              </div>
-            )}
-            <div className="text-right">
-              <span className="text-xs text-[#94A3B8] font-mono flex items-center gap-1.5">
-                {isSaving ? (
-                  <>
-                    <Loader2 className="size-3 animate-spin text-[#7FA0D6]" />
-                    <span className="text-[#7FA0D6]">Saving...</span>
-                  </>
-                ) : saveSuccess ? (
-                  <>
-                    <Check className="size-3 text-emerald-400" />
-                    <span className="text-emerald-400">Saved ✓</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="size-1.5 rounded-full bg-emerald-400" />
-                    <span>Autosave Ready</span>
-                  </>
-                )}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div ref={formTopRef} className="w-full space-y-4 sm:space-y-5 onboarding-dark-canvas" style={{ colorScheme: "dark" }}>
+      <PodAllocationModal
+        open={allocOpen}
+        status={allocStatus}
+        aesthetic={allocationAesthetic}
+        outcome={allocationOutcome}
+        errorMessage={allocError}
+        onDone={() => {
+          setAllocOpen(false);
+          setIsSynthesizing(false);
+          onComplete(allocatedTeamRef.current);
+        }}
+        onRetry={() => void handleSynthesizeAndFinish()}
+        onClose={() => setAllocOpen(false)}
+      />
 
       {/* Core Discovery Complete Shortcut Banner */}
       {coreUnlocked && (
@@ -788,7 +1644,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
             className="px-4 py-2 bg-[#BCCCE6] text-[#0B111C] hover:bg-white rounded-xl text-xs font-bold transition-all shadow-sm shrink-0 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isSynthesizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
-            <span>Proceed to Creative Pod & Calendar</span>
+            <span>Allocate my creative pod</span>
           </button>
         </div>
       )}
@@ -797,7 +1653,8 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {SECTIONS.map((sec) => {
           const isActive = activeSection === sec.key;
-          const isDone = completedSections.has(sec.key);
+          const isDone = sec.isCore ? dataInitialized && validateCurrentSection(sec.key).valid : completedSections.has(sec.key);
+          const isUnlocked = canOpenSection(sec.key);
           const Icon = sec.icon;
 
           return (
@@ -805,12 +1662,13 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
               key={sec.key}
               type="button"
               onClick={() => handleSelectSectionTab(sec.key)}
-              className={`flex flex-col items-start p-3 rounded-xl border text-left w-full transition-all cursor-pointer select-none ${
+              disabled={!isUnlocked}
+              className={`flex flex-col items-start p-3 rounded-xl border text-left w-full transition-all disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none ${
                 isActive
                   ? "bg-[#161F2D] border-2 border-[#BCCCE6] text-white shadow-lg ring-2 ring-[#BCCCE6]/20"
                   : isDone
-                  ? "bg-[#161F2D]/90 border-[#7FA0D6]/40 text-[#CBD5E1] hover:border-[#7FA0D6]"
-                  : "bg-[#161F2D]/60 border-[#2A3446] text-[#94A3B8] hover:border-[#7FA0D6]/40"
+                  ? "bg-[#161F2D]/90 border-[#7FA0D6]/40 text-[#BCCCE6] hover:border-[#7FA0D6]"
+                  : "bg-[#161F2D]/60 border-[#2A3446] text-[#97A0B3] hover:border-[#7FA0D6]/40"
               }`}
             >
               <div className="flex items-center justify-between w-full mb-1">
@@ -819,7 +1677,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                     ? "bg-[#7FA0D6] text-[#0B111C]"
                     : isDone
                     ? "bg-emerald-950/60 text-emerald-300 border border-emerald-800/60"
-                    : "bg-[#0B111C] text-[#94A3B8] border border-[#2A3446]"
+                    : "bg-[#0B111C] text-[#97A0B3] border border-[#2A3446]"
                 }`}>
                   {isDone ? `✓ ${sec.badge}` : sec.badge}
                 </span>
@@ -834,10 +1692,10 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 )}
               </div>
               <div className="flex items-center gap-1.5 mt-1 w-full min-w-0">
-                <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-[#7FA0D6]" : isDone ? "text-emerald-400" : "text-[#94A3B8]"}`} />
+                <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-[#7FA0D6]" : isDone ? "text-emerald-400" : "text-[#97A0B3]"}`} />
                 <span className="text-xs font-bold truncate">{sec.label}</span>
               </div>
-              <span className="text-[11px] text-[#94A3B8] mt-1 font-medium">~{sec.estMinutes} min</span>
+              <span className="text-[11px] text-[#97A0B3] mt-1 font-medium">~{sec.estMinutes} min</span>
             </button>
           );
         })}
@@ -876,14 +1734,14 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
       )}
 
       {/* Main Section Content Form (Full dark theme, high contrast) */}
-      <div className="bg-[#161F2D] rounded-2xl border border-[#2A3446] p-6 sm:p-8 shadow-xl text-white" style={{ colorScheme: "dark" }}>
+      <div className="bg-[#161F2D] rounded-xl border border-[#2A3446] p-4 sm:p-6 shadow-xl text-white" style={{ colorScheme: "dark" }}>
         
         {/* SECTION A: BRAND IDENTITY */}
         {activeSection === "a" && (
           <div className="space-y-6">
             <div className="border-b border-[#2A3446] pb-4">
               <h2 className="text-lg font-bold text-white">Section A: Brand Identity</h2>
-              <p className="text-xs text-[#94A3B8]">Required · Establishes official naming, social presence, and core category</p>
+              <p className="text-xs text-[#97A0B3]">Required · Establishes official naming, social presence, and core category</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -899,7 +1757,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                     setSecA({ ...secA, brand_name: e.target.value });
                     clearFieldError("brand_name");
                   }}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-[#0B111C] text-sm text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-[#0B111C] text-sm text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                     fieldErrors.brand_name
                       ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                       : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -924,7 +1782,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                     setSecA({ ...secA, instagram_handle: e.target.value });
                     clearFieldError("instagram_handle");
                   }}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-[#0B111C] text-sm text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-[#0B111C] text-sm text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                     fieldErrors.instagram_handle
                       ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                       : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -943,7 +1801,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9]">
                   A3: In one sentence, what does your brand do? <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <span className="text-[11px] text-[#94A3B8] font-mono">
+                <span className="text-[11px] text-[#97A0B3] font-mono">
                   {secA.one_liner?.length || 0}/180
                 </span>
               </div>
@@ -956,7 +1814,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   setSecA({ ...secA, one_liner: e.target.value });
                   clearFieldError("one_liner");
                 }}
-                className={`w-full px-3.5 py-2.5 rounded-xl border bg-[#0B111C] text-sm text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                className={`w-full px-3.5 py-2.5 rounded-xl border bg-[#0B111C] text-sm text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                   fieldErrors.one_liner
                     ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                     : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -974,7 +1832,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   A4: Primary Category <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secA.category}
                   onChange={(e) => {
                     setSecA({ ...secA, category: e.target.value });
@@ -988,7 +1846,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       {c.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 {fieldErrors.category && (
                   <p className="text-xs text-rose-400 mt-1 flex items-center gap-1">
                     <AlertCircle className="size-3.5 shrink-0" /> {fieldErrors.category}
@@ -1000,7 +1858,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   A6: Single Outcome That Matters Most <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secA.primary_goal}
                   onChange={(e) => {
                     setSecA({ ...secA, primary_goal: e.target.value });
@@ -1014,7 +1872,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       {g.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 {fieldErrors.primary_goal && (
                   <p className="text-xs text-rose-400 mt-1 flex items-center gap-1">
                     <AlertCircle className="size-3.5 shrink-0" /> {fieldErrors.primary_goal}
@@ -1042,7 +1900,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                         }
                         clearFieldError("products");
                       }}
-                      className="w-full sm:w-1/3 px-3 py-2 text-xs bg-[#161F2D] text-white rounded-lg border border-[#2A3446] placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                      className="w-full sm:w-1/3 px-3 py-2 text-xs bg-[#161F2D] text-white rounded-lg border border-[#2A3446] placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
                     />
                     <input
                       type="text"
@@ -1055,9 +1913,9 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                           setSecA({ ...secA, products: next });
                         }
                       }}
-                      className="w-full sm:w-1/2 px-3 py-2 text-xs bg-[#161F2D] text-white rounded-lg border border-[#2A3446] placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                      className="w-full sm:w-1/2 px-3 py-2 text-xs bg-[#161F2D] text-white rounded-lg border border-[#2A3446] placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
                     />
-                    <select
+                    <NativeSelect
                       value={prod.price_band}
                       style={{ colorScheme: "dark" }}
                       onChange={(e) => {
@@ -1073,7 +1931,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       <option value="mid">Mid-Tier</option>
                       <option value="premium">Premium</option>
                       <option value="luxury">Luxury</option>
-                    </select>
+                    </NativeSelect>
                     {secA.products.length > 1 && (
                       <button
                         type="button"
@@ -1081,7 +1939,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                           const next = secA.products.filter((_, i) => i !== idx);
                           setSecA({ ...secA, products: next });
                         }}
-                        className="text-[#94A3B8] hover:text-rose-400 p-1.5 transition-colors cursor-pointer"
+                        className="text-[#97A0B3] hover:text-rose-400 p-1.5 transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -1112,7 +1970,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 placeholder="Specific monthly targets, promotional events, or milestones..."
                 value={secA.goal_notes}
                 onChange={(e) => setSecA({ ...secA, goal_notes: e.target.value })}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
               />
             </div>
           </div>
@@ -1123,7 +1981,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
           <div className="space-y-6">
             <div className="border-b border-[#2A3446] pb-4">
               <h2 className="text-lg font-bold text-white">Section B: Audience & Positioning</h2>
-              <p className="text-xs text-[#94A3B8]">Required · Establishes audience archetype, core pain points, and why they buy</p>
+              <p className="text-xs text-[#97A0B3]">Required · Establishes audience archetype, core pain points, and why they buy</p>
             </div>
 
             <div id="field-ideal_customer">
@@ -1138,7 +1996,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   setSecB({ ...secB, ideal_customer: e.target.value });
                   clearFieldError("ideal_customer");
                 }}
-                className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                   fieldErrors.ideal_customer
                     ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                     : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -1164,7 +2022,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                     setSecB({ ...secB, problem: e.target.value });
                     clearFieldError("problem");
                   }}
-                  className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                  className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                     fieldErrors.problem
                       ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                       : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -1189,7 +2047,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                     setSecB({ ...secB, why_chosen: e.target.value });
                     clearFieldError("why_chosen");
                   }}
-                  className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                  className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                     fieldErrors.why_chosen
                       ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                       : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -1218,7 +2076,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 value={secB.objections}
                 onChange={(e) => setSecB({ ...secB, objections: e.target.value })}
                 style={{ colorScheme: "dark" }}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-[#161F2D] border border-[#2A3446] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none transition-all"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-[#161F2D] border border-[#2A3446] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none transition-all"
               />
             </div>
 
@@ -1245,7 +2103,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                         className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
                           isSelected
                             ? "bg-[#7FA0D6] text-[#0B111C] border-[#7FA0D6]"
-                            : "bg-[#0B111C] text-[#CBD5E1] border-[#2A3446] hover:border-[#7FA0D6]/60"
+                            : "bg-[#0B111C] text-[#BCCCE6] border-[#2A3446] hover:border-[#7FA0D6]/60"
                         }`}
                       >
                         {lang.label}
@@ -1264,7 +2122,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   B7: Caption & Script Format <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secB.caption_script}
                   onChange={(e) => {
                     setSecB({ ...secB, caption_script: e.target.value });
@@ -1278,7 +2136,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       {s.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 {fieldErrors.caption_script && (
                   <p className="text-xs text-rose-400 mt-1 flex items-center gap-1">
                     <AlertCircle className="size-3.5 shrink-0" /> {fieldErrors.caption_script}
@@ -1294,20 +2152,61 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
           <div className="space-y-6">
             <div className="border-b border-[#2A3446] pb-4">
               <h2 className="text-lg font-bold text-white">Section C: Voice & Tone Framework</h2>
-              <p className="text-xs text-[#94A3B8]">
+              <p className="text-xs text-[#97A0B3]">
                 Four validated bipolar scales (NN/g) + anti-tone negative constraints (~2 min)
               </p>
             </div>
 
             {/* Live Preview Box */}
-            <div className="bg-[#0B111C] text-white rounded-xl p-4 border border-[#2A3446] shadow-md">
-              <div className="flex items-center gap-1.5 text-xs font-mono text-[#7FA0D6] mb-1 uppercase tracking-wider">
-                <Sliders className="w-3.5 h-3.5" />
-                <span>Live Voice Synthesizer Preview</span>
+            <div className="bg-[#0B111C] text-white rounded-xl p-4.5 border border-[#2A3446] shadow-xl relative overflow-hidden transition-all duration-300 hover:border-[#7FA0D6]/50">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono mb-2.5">
+                <div className="flex items-center gap-2 text-[#7FA0D6] uppercase tracking-wider font-semibold">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#7FA0D6] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#7FA0D6]"></span>
+                  </span>
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Live Voice Synthesizer Preview</span>
+                </div>
+
+                {/* Active Blend indicators */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(secC.voice_words || []).map((w: string) => (
+                    <span
+                      key={w}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#7FA0D6]/20 text-[#7FA0D6] border border-[#7FA0D6]/40 uppercase tracking-wider shadow-[0_0_8px_rgba(127,160,214,0.2)]"
+                    >
+                      ✦ {w}
+                    </span>
+                  ))}
+                  {(secC.anti_voice_words || []).map((w: string) => (
+                    <span
+                      key={w}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-950/50 text-rose-300 border border-rose-800/50 uppercase tracking-wider"
+                    >
+                      🛡️ no {w}
+                    </span>
+                  ))}
+                  {(!secC.voice_words || secC.voice_words.length === 0) && (
+                    <span className="text-[10px] text-[#97A0B3] italic">
+                      Pick voice words below to dynamically synthesize tone
+                    </span>
+                  )}
+                </div>
               </div>
-              <p className="text-sm font-medium italic text-[#CBD5E1] mt-1">
-                {liveSentencePreview}
-              </p>
+
+              <AnimatePresence mode="wait">
+                <motion.p
+                  key={liveSentencePreview}
+                  initial={{ opacity: 0, y: 5, scale: 0.99, filter: "blur(2px)" }}
+                  animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, y: -4, scale: 0.99, filter: "blur(2px)" }}
+                  transition={{ duration: 0.22, ease: "easeOut" }}
+                  className="text-sm sm:text-base font-medium italic text-[#E2E8F0] leading-relaxed"
+                >
+                  {liveSentencePreview}
+                </motion.p>
+              </AnimatePresence>
             </div>
 
             {/* 4 Sliders */}
@@ -1387,7 +2286,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="text-xs font-semibold text-[#F1F5F9]">
                   C5: Pick up to 4 words that describe your voice <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <span className="text-xs text-[#94A3B8] font-mono">
+                <span className="text-xs text-[#97A0B3] font-mono">
                   {secC.voice_words?.length || 0}/4 selected
                 </span>
               </div>
@@ -1407,10 +2306,10 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                         }
                         clearFieldError("voice_words");
                       }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer transform active:scale-95 hover:scale-[1.02] ${
                         isSelected
-                          ? "bg-[#7FA0D6] text-[#0B111C] border-[#7FA0D6]"
-                          : "bg-[#0B111C] text-[#CBD5E1] border-[#2A3446] hover:border-[#7FA0D6]/60"
+                          ? "bg-[#7FA0D6] text-[#0B111C] border-[#7FA0D6] shadow-[0_0_12px_rgba(127,160,214,0.45)] ring-1 ring-[#7FA0D6]"
+                          : "bg-[#0B111C] text-[#BCCCE6] border-[#2A3446] hover:border-[#7FA0D6]/60 hover:text-white"
                       }`}
                     >
                       {word}
@@ -1452,10 +2351,10 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                         }
                         clearFieldError("anti_voice_words");
                       }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer transform active:scale-95 hover:scale-[1.02] ${
                         isSelected
-                          ? "bg-rose-600 text-white border-rose-500 shadow-sm"
-                          : "bg-[#161F2D] text-rose-200 border-rose-900/50 hover:border-rose-700"
+                          ? "bg-rose-600 text-white border-rose-500 shadow-[0_0_12px_rgba(225,29,72,0.4)] ring-1 ring-rose-400"
+                          : "bg-[#161F2D] text-rose-200 border-rose-900/50 hover:border-rose-700 hover:text-rose-100"
                       }`}
                     >
                       {word}
@@ -1479,7 +2378,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 placeholder="e.g. Miracle cure, Guaranteed 10x, Cheap, Discount, Hack..."
                 value={secC.forbidden_phrases}
                 onChange={(e) => setSecC({ ...secC, forbidden_phrases: e.target.value })}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
               />
             </div>
           </div>
@@ -1490,7 +2389,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
           <div className="space-y-6">
             <div className="border-b border-[#2A3446] pb-4">
               <h2 className="text-lg font-bold text-white">Section D: Visual Direction & Assets</h2>
-              <p className="text-xs text-[#94A3B8]">Required · Supplies our graphic designers & animators (~2 min)</p>
+              <p className="text-xs text-[#97A0B3]">Required · Supplies our graphic designers & animators (~2 min)</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1498,7 +2397,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   D1: Do you have existing brand guidelines? <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secD.brand_guidelines}
                   onChange={(e) => {
                     setSecD({ ...secD, brand_guidelines: e.target.value });
@@ -1510,7 +2409,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   <option value="yes_will_upload">Yes, will upload full guidelines PDF</option>
                   <option value="partial">Partial (We have logo & colors only)</option>
                   <option value="none">None (Creo will establish visual palette)</option>
-                </select>
+                </NativeSelect>
               </div>
 
               <div>
@@ -1522,7 +2421,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   placeholder="e.g. Montserrat, Playfair Display, Inter"
                   value={secD.fonts}
                   onChange={(e) => setSecD({ ...secD, fonts: e.target.value })}
-                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
                 />
               </div>
             </div>
@@ -1535,19 +2434,16 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
               <div className="flex flex-wrap gap-2.5">
                 {secD.colours?.map((col, idx) => (
                   <div key={idx} className="flex items-center gap-2 p-2 bg-[#0B111C] border border-[#2A3446] rounded-xl">
-                    <input
-                      type="color"
-                      value={col.hex}
-                      onChange={(e) => {
+                    <AdvancedColorPicker
+                      color={col.hex}
+                      onChange={(newHex) => {
                         const next = [...(secD.colours || [])];
                         if (next[idx]) {
-                          next[idx] = { ...next[idx], hex: e.target.value };
+                          next[idx] = { ...next[idx], hex: newHex };
                           setSecD({ ...secD, colours: next });
                         }
                         clearFieldError("colours");
                       }}
-                      style={{ colorScheme: "dark" }}
-                      className="w-8 h-8 rounded-lg border-none cursor-pointer bg-transparent"
                     />
                     <input
                       type="text"
@@ -1561,7 +2457,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       }}
                       className="w-20 px-2 py-1 text-xs font-mono bg-[#161F2D] border border-[#2A3446] text-white rounded-lg uppercase"
                     />
-                    <select
+                    <NativeSelect
                       value={col.label}
                       style={{ colorScheme: "dark" }}
                       onChange={(e) => {
@@ -1576,7 +2472,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       <option value="primary">Primary</option>
                       <option value="accent">Accent</option>
                       <option value="background">Background</option>
-                    </select>
+                    </NativeSelect>
                     {secD.colours.length > 1 && (
                       <button
                         type="button"
@@ -1584,20 +2480,22 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                           const next = secD.colours.filter((_, i) => i !== idx);
                           setSecD({ ...secD, colours: next });
                         }}
-                        className="text-[#94A3B8] hover:text-rose-400 p-1 cursor-pointer"
+                        className="text-[#97A0B3] hover:text-rose-400 p-1 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => setSecD({ ...secD, colours: [...secD.colours, { hex: "#7FA0D6", label: "accent" }] })}
-                  className="px-3.5 py-2 border border-dashed border-[#2A3446] hover:border-[#7FA0D6] rounded-xl text-xs font-bold text-[#7FA0D6] hover:text-[#BCCCE6] flex items-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Color
-                </button>
+                <AddColorPaletteButton
+                  onAddColor={(newHex) => {
+                    setSecD({
+                      ...secD,
+                      colours: [...(secD.colours || []), { hex: newHex, label: "accent" }],
+                    });
+                    clearFieldError("colours");
+                  }}
+                />
               </div>
               {fieldErrors.colours && (
                 <p className="text-xs text-rose-400 mt-1 flex items-center gap-1">
@@ -1607,15 +2505,118 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
             </div>
 
             {/* D6: Visual Direction */}
-            <div id="field-visual_direction">
-              <div className="flex justify-between items-center mb-1.5">
+            <div id="field-visual_direction" className="space-y-4">
+              <div className="flex justify-between items-center mb-1">
                 <label className="text-xs font-semibold text-[#F1F5F9]">
                   D6: Visual Direction (Pick up to 3) <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <span className="text-xs text-[#94A3B8] font-mono">
+                <span className="text-xs text-[#97A0B3] font-mono">
                   {secD.visual_direction?.length || 0}/3 selected
                 </span>
               </div>
+
+              {/* LIVE VISUAL DIRECTION SYNTHESIZER PREVIEW BOX */}
+              <div className="bg-[#0B111C] rounded-2xl p-4.5 border border-[#2A3446] shadow-xl relative overflow-hidden transition-all duration-300 hover:border-[#7FA0D6]/50">
+                {/* Ambient glow from user's primary brand color */}
+                <div
+                  className="absolute -top-16 -right-16 w-44 h-44 rounded-full blur-3xl opacity-20 pointer-events-none transition-all duration-500"
+                  style={{ backgroundColor: secD.colours?.[0]?.hex || "#7FA0D6" }}
+                />
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono mb-2.5">
+                  <div className="flex items-center gap-2 text-[#7FA0D6] uppercase tracking-wider font-semibold">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#7FA0D6] opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#7FA0D6]"></span>
+                    </span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Live Visual Direction & Style Preview</span>
+                  </div>
+
+                  {/* Active Visual Direction Badges */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(secD.visual_direction || []).map((vVal: string) => {
+                      const opt = VISUAL_DIRECTION_OPTIONS.find((o) => o.value === vVal);
+                      return (
+                        <span
+                          key={vVal}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#7FA0D6]/20 text-[#7FA0D6] border border-[#7FA0D6]/40 uppercase tracking-wider shadow-[0_0_8px_rgba(127,160,214,0.2)]"
+                        >
+                          ✦ {opt?.label || vVal}
+                        </span>
+                      );
+                    })}
+                    {(!secD.visual_direction || secD.visual_direction.length === 0) && (
+                      <span className="text-[10px] text-[#97A0B3] italic">
+                        Select styles below to synthesize art direction
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Animated Creative Directive Text */}
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={(secD.visual_direction || []).join("-") + (secD.fonts || "") + (secD.colours || []).map((c) => c.hex).join("-")}
+                    initial={{ opacity: 0, y: 5, filter: "blur(2px)" }}
+                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, y: -4, filter: "blur(2px)" }}
+                    transition={{ duration: 0.22, ease: "easeOut" }}
+                    className="space-y-3"
+                  >
+                    <div className="border-l-2 border-[#7FA0D6] pl-3 py-0.5">
+                      <h4 className="text-sm font-bold text-white tracking-wide">
+                        {visualPreview.headline}
+                      </h4>
+                      <p className="text-xs text-[#BCCCE6] mt-1 leading-relaxed italic">
+                        "{visualPreview.creativeDirective}"
+                      </p>
+                    </div>
+
+                    {/* Miniature Live Creative Canvas / Mockup Banner */}
+                    <div className="p-3 rounded-xl border border-[#2A3446] bg-[#161F2D]/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono uppercase tracking-wider text-[#97A0B3]">Brand Harmony:</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {secD.colours?.map((c, i) => (
+                              <div
+                                key={i}
+                                className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#0B111C] border border-white/10 text-[10px] font-mono text-white"
+                              >
+                                <span className="w-2.5 h-2.5 rounded-full border border-white/20" style={{ backgroundColor: c.hex }} />
+                                <span>{c.hex}</span>
+                                <span className="text-[9px] text-[#97A0B3] lowercase">({c.label})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {secD.fonts && (
+                          <div className="flex items-center gap-1.5 text-[10px] text-[#97A0B3] font-mono">
+                            <span>Primary Font:</span>
+                            <span className="text-[#7FA0D6] font-semibold">{secD.fonts}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Execution tags */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {visualPreview.designPillars.map((pillar, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#0B111C] text-[#BCCCE6] border border-[#2A3446]"
+                          >
+                            {pillar}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
+              {/* D6 Buttons */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {VISUAL_DIRECTION_OPTIONS.map((vd) => {
                   const isSelected = secD.visual_direction?.includes(vd.value);
@@ -1632,10 +2633,10 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                         }
                         clearFieldError("visual_direction");
                       }}
-                      className={`p-3 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                      className={`p-3 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer transform active:scale-95 hover:scale-[1.02] ${
                         isSelected
-                          ? "bg-[#7FA0D6] text-[#0B111C] border-[#7FA0D6] shadow-sm"
-                          : "bg-[#0B111C] text-[#CBD5E1] border-[#2A3446] hover:border-[#7FA0D6]/60 hover:text-white"
+                          ? "bg-[#7FA0D6] text-[#0B111C] border-[#7FA0D6] shadow-[0_0_12px_rgba(127,160,214,0.45)] ring-1 ring-[#7FA0D6]"
+                          : "bg-[#0B111C] text-[#BCCCE6] border-[#2A3446] hover:border-[#7FA0D6]/60 hover:text-white"
                       }`}
                     >
                       {vd.label}
@@ -1659,7 +2660,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 placeholder="e.g. Neon gradients, loud yellow text, stock photo handshakes, chaotic fast cuts..."
                 value={secD.visual_avoid}
                 onChange={(e) => setSecD({ ...secD, visual_avoid: e.target.value })}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
               />
             </div>
           </div>
@@ -1670,7 +2671,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
           <div className="space-y-6">
             <div className="border-b border-[#2A3446] pb-4">
               <h2 className="text-lg font-bold text-white">Section E: Production Reality & Constraints</h2>
-              <p className="text-xs text-[#94A3B8]">
+              <p className="text-xs text-[#97A0B3]">
                 Required · The facts an editor, shoot coordinator, and producer need before Monday (~3 min)
               </p>
             </div>
@@ -1684,7 +2685,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   {ON_CAMERA_OPTIONS.map((opt) => {
                     const isChecked = secE.on_camera?.includes(opt.value);
                     return (
-                      <label key={opt.value} className="flex items-center gap-2.5 text-xs text-[#CBD5E1] cursor-pointer p-2 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:border-[#7FA0D6]/40">
+                      <label key={opt.value} className="flex items-center gap-2.5 text-xs text-[#BCCCE6] cursor-pointer p-2 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:border-[#7FA0D6]/40">
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -1714,7 +2715,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   E2: Is the founder comfortable on camera? <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secE.founder_comfort}
                   onChange={(e) => setSecE({ ...secE, founder_comfort: e.target.value })}
                   style={{ colorScheme: "dark" }}
@@ -1724,7 +2725,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   <option value="yes_with_direction">Yes, with teleprompter & direction</option>
                   <option value="prefers_voiceover">Prefers voiceover only</option>
                   <option value="no">No, will not film</option>
-                </select>
+                </NativeSelect>
 
                 <div id="field-shoot_locations">
                   <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
@@ -1734,7 +2735,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                     {SHOOT_LOCATION_OPTIONS.map((loc) => {
                       const isChecked = secE.shoot_locations?.includes(loc.value);
                       return (
-                        <label key={loc.value} className="flex items-center gap-2.5 text-xs text-[#CBD5E1] cursor-pointer p-2 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:border-[#7FA0D6]/40">
+                        <label key={loc.value} className="flex items-center gap-2.5 text-xs text-[#BCCCE6] cursor-pointer p-2 rounded-lg bg-[#0B111C] border border-[#2A3446] hover:border-[#7FA0D6]/40">
                           <input
                             type="checkbox"
                             checked={isChecked}
@@ -1772,7 +2773,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       setSecE({ ...secE, shoot_city: e.target.value });
                       clearFieldError("shoot_city");
                     }}
-                    className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#64748B] focus:outline-none transition-all ${
+                    className={`w-full px-3.5 py-2.5 text-sm rounded-xl border bg-[#0B111C] text-white placeholder-[#97A0B3] focus:outline-none transition-all ${
                       fieldErrors.shoot_city
                         ? "border-rose-500 bg-rose-950/10 focus:border-rose-500"
                         : "border-[#2A3446] focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]/30"
@@ -1792,7 +2793,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   E8: Where should content send viewers? <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secE.cta_destination}
                   onChange={(e) => {
                     setSecE({ ...secE, cta_destination: e.target.value });
@@ -1806,7 +2807,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                       {c.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
 
               <div>
@@ -1818,7 +2819,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   placeholder="https://yourbrand.com or +919876543210"
                   value={secE.cta_target}
                   onChange={(e) => setSecE({ ...secE, cta_target: e.target.value })}
-                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
                 />
               </div>
             </div>
@@ -1838,7 +2839,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 value={secE.legal_constraints}
                 onChange={(e) => setSecE({ ...secE, legal_constraints: e.target.value })}
                 style={{ colorScheme: "dark" }}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-[#161F2D] border border-rose-900/60 text-white placeholder-[#64748B] focus:border-rose-500 focus:outline-none transition-all"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-[#161F2D] border border-rose-900/60 text-white placeholder-[#97A0B3] focus:border-rose-500 focus:outline-none transition-all"
               />
             </div>
 
@@ -1847,7 +2848,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 <label className="block text-xs font-semibold text-[#F1F5F9] mb-1.5">
                   E11: Who approves content and how fast? <span className="text-rose-400 font-bold">*</span>
                 </label>
-                <select
+                <NativeSelect
                   value={secE.approval_speed}
                   onChange={(e) => setSecE({ ...secE, approval_speed: e.target.value })}
                   style={{ colorScheme: "dark" }}
@@ -1857,7 +2858,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   <option value="founder_2_3_days">Founder (2–3 Days)</option>
                   <option value="marketing_team">Marketing Team Lead (24h SLA)</option>
                   <option value="committee_slower">Review Committee (48h+ SLA)</option>
-                </select>
+                </NativeSelect>
               </div>
 
               <div>
@@ -1881,7 +2882,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                         className={`px-2.5 py-1 text-xs rounded-lg border transition-colors cursor-pointer ${
                           isExcl
                             ? "bg-rose-900/50 text-rose-300 border-rose-700 font-semibold"
-                            : "bg-[#0B111C] text-[#CBD5E1] border-[#2A3446] hover:border-[#7FA0D6]/50"
+                            : "bg-[#0B111C] text-[#BCCCE6] border-[#2A3446] hover:border-[#7FA0D6]/50"
                         }`}
                       >
                         {f.label}
@@ -1904,7 +2905,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   Optional Enrichment
                 </span>
               </div>
-              <p className="text-xs text-[#94A3B8] mt-1">Helps our team avoid repeating what flopped before (~2 min)</p>
+              <p className="text-xs text-[#97A0B3] mt-1">Helps our team avoid repeating what flopped before (~2 min)</p>
             </div>
 
             <div>
@@ -1916,7 +2917,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 placeholder="Styles, topics, formats, or angles that flopped or generated negative engagement..."
                 value={secF.what_failed}
                 onChange={(e) => setSecF({ ...secF, what_failed: e.target.value })}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
               />
             </div>
           </div>
@@ -1932,7 +2933,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   Optional Enrichment
                 </span>
               </div>
-              <p className="text-xs text-[#94A3B8] mt-1">
+              <p className="text-xs text-[#97A0B3] mt-1">
                 Keep these in your own authentic words — they inform our copywriters and narrative strategists.
               </p>
             </div>
@@ -1946,7 +2947,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 placeholder="The inciting moment, frustration with the industry, or origin story..."
                 value={secG.origin}
                 onChange={(e) => setSecG({ ...secG, origin: e.target.value })}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
               />
             </div>
 
@@ -1959,7 +2960,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 placeholder="Core conviction, moral stance, or uncompromising standard..."
                 value={secG.stands_for}
                 onChange={(e) => setSecG({ ...secG, stands_for: e.target.value })}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
               />
             </div>
 
@@ -1973,7 +2974,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   placeholder="The lingering feeling or reputation you want to hold..."
                   value={secG.remembered_for}
                   onChange={(e) => setSecG({ ...secG, remembered_for: e.target.value })}
-                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
                 />
               </div>
 
@@ -1986,7 +2987,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                   placeholder="Market share, global reach, revenue milestone, or new product verticals..."
                   value={secG.vision}
                   onChange={(e) => setSecG({ ...secG, vision: e.target.value })}
-                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#64748B] focus:border-[#7FA0D6] focus:outline-none"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#2A3446] bg-[#0B111C] text-white placeholder-[#97A0B3] focus:border-[#7FA0D6] focus:outline-none"
                 />
               </div>
             </div>
@@ -1999,30 +3000,21 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
             type="button"
             onClick={handlePrevSection}
             disabled={activeSection === "a"}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] text-[#94A3B8] text-xs font-bold hover:text-white hover:border-[#7FA0D6] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] text-[#97A0B3] text-xs font-bold hover:text-white hover:border-[#7FA0D6] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Previous Section</span>
           </button>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
             {activeSection !== "g" ? (
               <button
                 type="button"
                 onClick={handleNextSection}
                 className="w-full sm:w-auto min-w-[200px] px-6 py-3 rounded-xl bg-[#BCCCE6] hover:bg-white text-[#0B111C] text-sm font-bold transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
-                {saveSuccess ? (
-                  <>
-                    <Check className="w-4 h-4 text-[#0B111C]" />
-                    <span>Saved ✓</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Save & Continue</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
+                <span>Continue</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
               <button
@@ -2039,7 +3031,7 @@ export function StageQuestionnaire({ userId, initialSection, onComplete }: Stage
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-[#0B111C]" />
-                    <span>Synthesize Brand DNA & Finish</span>
+                    <span>Finish & allocate my pod</span>
                   </>
                 )}
               </button>

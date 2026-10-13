@@ -25,18 +25,25 @@ export interface AdminDashboardData {
 export interface ClientRosterItem {
   client_id: string;
   email: string;
+  full_name?: string | null;
   account_status: string;
   company_name: string | null;
   instagram_username: string | null;
   onboarding_stage: number;
   plan_name: string | null;
   plan_display_name: string | null;
+  monthly_price: number | null;
   subscription_status: string | null;
   quota_usage: Array<{
     kind: string;
     quota: number;
     used: number;
   }>;
+  timezone?: string | null;
+  brand_summary?: string | null;
+  industry?: string | null;
+  brand_dna?: Record<string, any> | null;
+  onboarding_completed_at?: string | null;
 }
 
 export interface StaffQueueItem {

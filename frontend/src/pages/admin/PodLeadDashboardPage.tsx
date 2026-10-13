@@ -1,3 +1,5 @@
+import { PublishingQueue } from "../../components/ops/PublishingPanel";
+import { NativeSelect } from "../../ui/NativeSelect";
 import { useState } from "react";
 import { Link } from "react-router";
 import { motion } from "motion/react";
@@ -11,6 +13,7 @@ import {
 } from "../../lib/ops-api";
 import { useAuth } from "../../lib/auth-context";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
+import { CreoLoadingScreen } from "../../components/ui/CreoLoadingScreen";
 import {
   Users,
   Clock,
@@ -28,7 +31,9 @@ import {
   X,
   MessageSquare,
   TrendingUp,
+  Sparkles,
 } from "lucide-react";
+import { StoryApprovalModal } from "../../components/ops/StoryApprovalModal";
 
 export function PodLeadDashboardPage() {
   const { user } = useAuth();
@@ -39,6 +44,7 @@ export function PodLeadDashboardPage() {
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
   const [standupModalOpen, setStandupModalOpen] = useState(false);
   const [standupNote, setStandupNote] = useState("");
+  const [storyApprovalOpen, setStoryApprovalOpen] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignForm, setAssignForm] = useState({
     title: "",
@@ -53,9 +59,10 @@ export function PodLeadDashboardPage() {
   const [reinforcementsModalOpen, setReinforcementsModalOpen] = useState(false);
   const [reinforceForm, setReinforceForm] = useState({ role: "3D Motion Designer", hours: "+20 hrs/week", urgency: "Immediate (Today)", notes: "" });
 
-  const { data } = useQuery<PodDashboardData>({
-    queryKey: ["pod_dashboard", selectedPodKey],
+  const { data, isLoading } = useQuery<PodDashboardData>({
+    queryKey: ["pod_dashboard", user?.id, selectedPodKey],
     queryFn: () => fetchPodDashboard(selectedPodKey),
+    staleTime: 30_000,
   });
 
   const showToast = (text: string, type: "success" | "error" | "info" = "success") => {
@@ -181,20 +188,21 @@ export function PodLeadDashboardPage() {
   const podName = data?.pod?.name || "Pod Operations";
 
   // Dynamic Team Roster mapped from backend data
-  const teamRoster = (data?.members || []).map((member) => {
-    const tasksCount = member.tasks_count || 0;
-    const capacity = member.capacity || 5;
+  const teamRoster = (data?.members || []).map((member: any) => {
+    const memberName = member?.name || member?.full_name || member?.email?.split("@")[0] || "Specialist";
+    const tasksCount = member?.tasks_count || member?.assigned_tasks_count || 0;
+    const capacity = member?.capacity || member?.daily_capacity || 5;
     const pct = Math.min(100, Math.round((tasksCount / (capacity > 0 ? capacity : 5)) * 100));
     return {
-      name: member.name,
-      avatar: member.name.slice(0, 2).toUpperCase(),
-      avatarBg: "bg-[#2563EB]",
-      role: member.role || "Specialist",
-      assignment: `${member.role || "Specialist"} · ${podName} Active`,
+      name: memberName,
+      avatar: (memberName || "SP").slice(0, 2).toUpperCase(),
+      avatarBg: "bg-[#7FA0D6]",
+      role: member?.role || member?.craft_title || "Specialist",
+      assignment: `${member?.role || member?.craft_title || "Specialist"} · ${podName} Active`,
       tasksCount: `${tasksCount} Tasks`,
       loadLabel: `${pct}% Load`,
       loadColor: pct > 80 ? "bg-rose-500" : pct > 50 ? "bg-amber-500" : "bg-emerald-500",
-      loadBadge: "bg-blue-50 text-blue-700 border-blue-200",
+      loadBadge: "bg-[#7FA0D6]/15 text-[#7FA0D6] border border-[#7FA0D6]/30",
       loadPercent: pct,
     };
   });
@@ -222,20 +230,24 @@ export function PodLeadDashboardPage() {
     showToast(`Downloaded ${podName} Weekly Lead Summary CSV report`, "success");
   };
 
+  if (isLoading || !data) {
+    return <CreoLoadingScreen fullScreen={false} label="Loading Pod Operations" className="min-h-[45vh]" />;
+  }
+
   return (
     <div data-surface="ops" className="min-h-screen bg-[#0B111C] text-white font-sans flex flex-col">
       {/* Top Header Navigation */}
       <AdminTopHeader title="Team Details" activeTab="Team Details" />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-5 lg:px-6 py-3.5 pb-20 sm:pb-6 space-y-3.5 sm:space-y-4">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-3.5 sm:px-5 lg:px-6 py-3.5 pb-20 sm:pb-6 space-y-3.5 sm:space-y-4">
         {/* Toast Alert */}
         {toastMessage && (
           <div
             className={`p-3 rounded-xl border text-xs font-bold flex items-center justify-between shadow-2xs animate-fade-in ${
               toastMessage.type === "error"
-                ? "bg-rose-50 border-rose-200 text-rose-700"
-                : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                ? "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                : "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
             }`}
           >
             <span>{toastMessage.text}</span>
@@ -248,7 +260,7 @@ export function PodLeadDashboardPage() {
         {/* 1. Header Welcome Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
           <div className="flex items-center gap-2">
-            <span className="size-2 sm:size-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-100 animate-pulse shrink-0" />
+            <span className="size-2 sm:size-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/40 animate-pulse shrink-0" />
             <h1 className="text-lg sm:text-2xl font-black text-white tracking-tight">
               Hi, Welcome back, {leadName}
             </h1>
@@ -265,7 +277,7 @@ export function PodLeadDashboardPage() {
                     className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-all ${
                       (selectedPodKey === p.key || (!selectedPodKey && data.pod.id === p.id))
                         ? "bg-blue-600 text-white shadow-2xs"
-                        : "text-[#F1F5F9] hover:bg-[#1F2C3F]"
+                        : "text-[#F1F5F9] hover:bg-[#161F2D]"
                     }`}
                   >
                     {p.letter}
@@ -283,10 +295,17 @@ export function PodLeadDashboardPage() {
             </button>
             <button
               onClick={() => setAssignModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
             >
               <Plus className="size-3.5" />
               Assign Deliverable
+            </button>
+            <button
+              onClick={() => setStoryApprovalOpen(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+            >
+              <Sparkles className="size-3.5" />
+              Story & Client Approval
             </button>
           </div>
         </div>
@@ -308,7 +327,7 @@ export function PodLeadDashboardPage() {
             </div>
             <div>
               <div className="flex items-baseline gap-1.5 mb-1">
-                <span className="text-lg sm:text-xl font-black text-white">4 / 4</span>
+                <span className="text-lg sm:text-xl font-black text-white">{teamRoster.length > 0 ? teamRoster.length : (data?.members?.length || 0)} / {teamRoster.length > 0 ? teamRoster.length : (data?.members?.length || 4)}</span>
                 <span className="text-[10.5px] sm:text-[11px] font-bold text-[#97A0B3]">Members Active</span>
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] pt-1.5 border-t border-[#2A3446]">
@@ -335,14 +354,14 @@ export function PodLeadDashboardPage() {
             </div>
             <div>
               <div className="flex items-baseline gap-1.5 mb-1">
-                <span className="text-lg sm:text-xl font-black text-white">6</span>
+                <span className="text-lg sm:text-xl font-black text-white">{(data?.tasks?.internal_qa?.length) ?? deliverablesList.length}</span>
                 <span className="text-[10.5px] sm:text-[11px] font-bold text-[#97A0B3]">Pending Review</span>
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] pt-1.5 border-t border-[#2A3446]">
                 <span className="font-bold text-rose-600 flex items-center gap-1">
-                  ▲ 2 Urgent
+                  ▲ {(data?.tasks?.internal_qa?.filter((t: any) => t.is_near_sla).length) || 0} Urgent
                 </span>
-                <span className="font-bold text-[#97A0B3]">Avg: 38m</span>
+                <span className="font-bold text-[#97A0B3]">Avg: {(data as any)?.kpis?.avg_turnaround_hours ? `${Math.round((data as any).kpis.avg_turnaround_hours * 60)}m` : "38m"}</span>
               </div>
             </div>
           </motion.div>
@@ -362,8 +381,8 @@ export function PodLeadDashboardPage() {
             </div>
             <div>
               <div className="flex items-baseline gap-1.5 mb-1">
-                <span className="text-lg sm:text-xl font-black text-white">0</span>
-                <span className="text-[10.5px] sm:text-[11px] font-bold text-[#97A0B3]">On Leave Today</span>
+                <span className="text-lg sm:text-xl font-black text-white">{pendingLeaveRequests.length}</span>
+                <span className="text-[10.5px] sm:text-[11px] font-bold text-[#97A0B3]">Pending Leave Requests</span>
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] pt-1.5 border-t border-[#2A3446]">
                 <span className="font-bold text-[#F1F5F9]">1 Upcoming Tomorrow</span>
@@ -415,7 +434,7 @@ export function PodLeadDashboardPage() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-black text-white">{member.name}</span>
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-[#1F2C3F] text-[#F1F5F9]">
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-[#161F2D] text-[#F1F5F9]">
                             {member.role}
                           </span>
                         </div>
@@ -433,7 +452,7 @@ export function PodLeadDashboardPage() {
                         <div className="flex justify-between text-[9px] font-bold text-[#97A0B3]">
                           <span>{member.loadLabel}</span>
                         </div>
-                        <div className="w-full h-1.5 bg-[#1F2C3F] rounded-full overflow-hidden">
+                        <div className="w-full h-1.5 bg-[#161F2D] rounded-full overflow-hidden">
                           <div
                             className={`h-full ${member.loadColor} rounded-full transition-all`}
                             style={{ width: `${member.loadPercent}%` }}
@@ -441,7 +460,7 @@ export function PodLeadDashboardPage() {
                         </div>
                       </div>
 
-                      <Link to="/lead/tasks" className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg hover:bg-[#1F2C3F] transition-colors">
+                      <Link to="/lead/tasks" className="p-1 text-[#97A0B3] hover:text-[#F1F5F9] rounded-lg hover:bg-[#161F2D] transition-colors">
                         <ArrowRight className="size-3.5" />
                       </Link>
                     </div>
@@ -467,8 +486,8 @@ export function PodLeadDashboardPage() {
                       <h2 className="text-sm font-black text-white">Deliverables Pending Lead Sign-off</h2>
                       <span className={`px-2 py-0.2 rounded-full text-[9px] font-bold border ${
                         deliverablesList.length > 0
-                          ? "bg-rose-50 text-rose-700 border-rose-200"
-                          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                          : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                       }`}>
                         {deliverablesList.length > 0 ? `${deliverablesList.length} Critical` : "0 Pending"}
                       </span>
@@ -532,7 +551,7 @@ export function PodLeadDashboardPage() {
                         </button>
                         <button
                           onClick={() => handleApproveDeliverable(del)}
-                          className="px-3.5 py-1.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                          className="px-3.5 py-1.5 rounded-lg bg-[#7FA0D6] hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
                         >
                           <Check className="size-3" />
                           Approve & Send
@@ -658,7 +677,7 @@ export function PodLeadDashboardPage() {
                       <button
                         type="button"
                         onClick={() => handleApproveLeave(leave.id, leave.name)}
-                        className="flex-1 py-1.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white text-[10px] font-bold transition-colors cursor-pointer shadow-2xs"
+                        className="flex-1 py-1.5 rounded-lg bg-[#7FA0D6] hover:bg-blue-700 text-white text-[10px] font-bold transition-colors cursor-pointer shadow-2xs"
                       >
                         Approve Leave
                       </button>
@@ -690,7 +709,7 @@ export function PodLeadDashboardPage() {
                         <span className="text-[#F1F5F9]">{c.name}</span>
                         <span className="text-emerald-400">On Track</span>
                       </div>
-                      <div className="h-1.5 w-full bg-[#1F2C3F] rounded-full overflow-hidden">
+                      <div className="h-1.5 w-full bg-[#161F2D] rounded-full overflow-hidden">
                         <div className="h-full bg-emerald-500 rounded-full" style={{ width: "100%" }} />
                       </div>
                     </div>
@@ -725,9 +744,9 @@ export function PodLeadDashboardPage() {
 
                 <button
                   onClick={() => setBlockedModalOpen(true)}
-                  className="p-2.5 rounded-xl bg-[#0B111C] hover:bg-rose-50/70 border border-[#2A3446] hover:border-rose-200 text-left transition-all cursor-pointer group"
+                  className="p-2.5 rounded-xl bg-[#0B111C] hover:bg-rose-500/15 border border-[#2A3446] hover:border-rose-500/40 text-left transition-all cursor-pointer group"
                 >
-                  <div className="size-6 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
+                  <div className="size-6 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
                     <AlertTriangle className="size-3" />
                   </div>
                   <span className="text-[11px] font-black text-white block">Log Issue</span>
@@ -736,9 +755,9 @@ export function PodLeadDashboardPage() {
 
                 <button
                   onClick={() => setReinforcementsModalOpen(true)}
-                  className="p-2.5 rounded-xl bg-[#0B111C] hover:bg-purple-50/70 border border-[#2A3446] hover:border-purple-200 text-left transition-all cursor-pointer group"
+                  className="p-2.5 rounded-xl bg-[#0B111C] hover:bg-purple-500/15 border border-[#2A3446] hover:border-purple-500/40 text-left transition-all cursor-pointer group"
                 >
-                  <div className="size-6 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
+                  <div className="size-6 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
                     <Users className="size-3" />
                   </div>
                   <span className="text-[11px] font-black text-white block">Reinforce</span>
@@ -747,9 +766,9 @@ export function PodLeadDashboardPage() {
 
                 <button
                   onClick={handleExportWeeklyReport}
-                  className="p-2.5 rounded-xl bg-[#0B111C] hover:bg-emerald-50/70 border border-[#2A3446] hover:border-emerald-200 text-left transition-all cursor-pointer group"
+                  className="p-2.5 rounded-xl bg-[#0B111C] hover:bg-emerald-500/15 border border-[#2A3446] hover:border-emerald-500/40 text-left transition-all cursor-pointer group"
                 >
-                  <div className="size-6 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
+                  <div className="size-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
                     <FileText className="size-3" />
                   </div>
                   <span className="text-[11px] font-black text-white block">Export CSV</span>
@@ -759,6 +778,7 @@ export function PodLeadDashboardPage() {
             </div>
           </div>
         </div>
+        <PublishingQueue />
       </main>
 
       {/* Revision Modal */}
@@ -784,7 +804,7 @@ export function PodLeadDashboardPage() {
             <div className="flex justify-end gap-3 pt-2">
               <button
                 onClick={() => setRevisionModalItem(null)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
               >
                 Cancel
               </button>
@@ -822,7 +842,7 @@ export function PodLeadDashboardPage() {
             <div className="flex justify-end gap-3 pt-2">
               <button
                 onClick={() => setStandupModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition"
               >
                 Cancel
               </button>
@@ -865,7 +885,7 @@ export function PodLeadDashboardPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Format</label>
-                  <select
+                  <NativeSelect
                     value={assignForm.format}
                     onChange={(e) => setAssignForm({ ...assignForm, format: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium"
@@ -873,11 +893,11 @@ export function PodLeadDashboardPage() {
                     <option value="Reel">Reel</option>
                     <option value="Story">Story</option>
                     <option value="Post">Post</option>
-                  </select>
+                  </NativeSelect>
                 </div>
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Client</label>
-                  <select
+                  <NativeSelect
                     value={assignForm.client}
                     onChange={(e) => setAssignForm({ ...assignForm, client: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white"
@@ -889,11 +909,11 @@ export function PodLeadDashboardPage() {
                         <option key={c.id} value={c.name}>{c.name}</option>
                       ))
                     )}
-                  </select>
+                  </NativeSelect>
                 </div>
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Specialist</label>
-                  <select
+                  <NativeSelect
                     value={assignForm.assignee}
                     onChange={(e) => setAssignForm({ ...assignForm, assignee: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white"
@@ -905,7 +925,7 @@ export function PodLeadDashboardPage() {
                         <option key={m.id} value={m.name}>{m.name} ({m.role})</option>
                       ))
                     )}
-                  </select>
+                  </NativeSelect>
                 </div>
               </div>
             </div>
@@ -913,7 +933,7 @@ export function PodLeadDashboardPage() {
               <button
                 type="button"
                 onClick={() => setAssignModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition cursor-pointer"
               >
                 Cancel
               </button>
@@ -940,7 +960,7 @@ export function PodLeadDashboardPage() {
           <div className="w-full max-w-lg bg-[#161F2D] rounded-3xl p-6 sm:p-7 shadow-2xl border border-[#2A3446] space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="size-9 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                <div className="size-9 rounded-2xl bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center justify-center">
                   <AlertTriangle className="size-4.5" />
                 </div>
                 <div>
@@ -968,7 +988,7 @@ export function PodLeadDashboardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Affected Client</label>
-                  <select
+                  <NativeSelect
                     value={blockedForm.client}
                     onChange={(e) => setBlockedForm({ ...blockedForm, client: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white focus:bg-[#161F2D]"
@@ -980,11 +1000,11 @@ export function PodLeadDashboardPage() {
                         <option key={c.id} value={c.name}>{c.name}</option>
                       ))
                     )}
-                  </select>
+                  </NativeSelect>
                 </div>
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Severity</label>
-                  <select
+                  <NativeSelect
                     value={blockedForm.severity}
                     onChange={(e) => setBlockedForm({ ...blockedForm, severity: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white focus:bg-[#161F2D]"
@@ -992,7 +1012,7 @@ export function PodLeadDashboardPage() {
                     <option value="Blocker (P0)">Blocker (P0 - SLA Risk)</option>
                     <option value="High (P1)">High (P1)</option>
                     <option value="Medium (P2)">Medium (P2)</option>
-                  </select>
+                  </NativeSelect>
                 </div>
               </div>
 
@@ -1012,7 +1032,7 @@ export function PodLeadDashboardPage() {
               <button
                 type="button"
                 onClick={() => setBlockedModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition cursor-pointer"
               >
                 Cancel
               </button>
@@ -1045,7 +1065,7 @@ export function PodLeadDashboardPage() {
           <div className="w-full max-w-lg bg-[#161F2D] rounded-3xl p-6 sm:p-7 shadow-2xl border border-[#2A3446] space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="size-9 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                <div className="size-9 rounded-2xl bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center justify-center">
                   <Users className="size-4.5" />
                 </div>
                 <div>
@@ -1062,7 +1082,7 @@ export function PodLeadDashboardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Craft Role Needed</label>
-                  <select
+                  <NativeSelect
                     value={reinforceForm.role}
                     onChange={(e) => setReinforceForm({ ...reinforceForm, role: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white focus:bg-[#161F2D]"
@@ -1071,11 +1091,11 @@ export function PodLeadDashboardPage() {
                     <option value="Video Editor & Colorist">Video Editor & Colorist</option>
                     <option value="Lead Copy Strategist">Lead Copy Strategist</option>
                     <option value="Brand Visual Designer">Brand Visual Designer</option>
-                  </select>
+                  </NativeSelect>
                 </div>
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Bandwidth Surge</label>
-                  <select
+                  <NativeSelect
                     value={reinforceForm.hours}
                     onChange={(e) => setReinforceForm({ ...reinforceForm, hours: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white focus:bg-[#161F2D]"
@@ -1083,13 +1103,13 @@ export function PodLeadDashboardPage() {
                     <option value="+20 hrs/week">+20 hrs/week (Part-time)</option>
                     <option value="+40 hrs/week">+40 hrs/week (Dedicated Surge)</option>
                     <option value="Single Milestone">Single Milestone Sprint</option>
-                  </select>
+                  </NativeSelect>
                 </div>
               </div>
 
               <div>
                 <label className="font-bold text-[#F1F5F9] block mb-1">Required Starting</label>
-                <select
+                <NativeSelect
                   value={reinforceForm.urgency}
                   onChange={(e) => setReinforceForm({ ...reinforceForm, urgency: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white focus:bg-[#161F2D]"
@@ -1097,7 +1117,7 @@ export function PodLeadDashboardPage() {
                   <option value="Immediate (Today)">Immediate (Today - Critical Bandwidth)</option>
                   <option value="Next Sprint Cycle">Next Sprint Cycle</option>
                   <option value="Next Month">Next Month</option>
-                </select>
+                </NativeSelect>
               </div>
 
               <div>
@@ -1116,7 +1136,7 @@ export function PodLeadDashboardPage() {
               <button
                 type="button"
                 onClick={() => setReinforcementsModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#1F2C3F] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-[#161F2D] text-[#F1F5F9] text-xs font-bold hover:bg-slate-200 transition cursor-pointer"
               >
                 Cancel
               </button>
@@ -1136,6 +1156,16 @@ export function PodLeadDashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Story & Approval Request Modal */}
+      <StoryApprovalModal
+        isOpen={storyApprovalOpen}
+        onClose={() => setStoryApprovalOpen(false)}
+        onSuccess={() => {
+          showToast("Story approval request sent successfully!", "success");
+          queryClient.invalidateQueries({ queryKey: ["pod_dashboard"] });
+        }}
+      />
     </div>
   );
 }
