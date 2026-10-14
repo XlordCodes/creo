@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { request } from "../../lib/http";
+import { HttpError, request } from "../../lib/http";
+import { approveDeliverable, requestChanges } from "../../lib/deliverables-api";
 import { useAuth } from "../../lib/auth-context";
 import { useOnboardingGate } from "../../lib/useOnboardingGate";
+import { CreoLoadingScreen } from "../../components/ui/CreoLoadingScreen";
 import { ResumeOnboardingBanner } from "../../components/portal/ResumeOnboardingBanner";
+import { Instagram, ExternalLink } from "lucide-react";
 
 /* ── Types ── */
 export interface TeamHandler {
@@ -23,6 +26,8 @@ interface DashboardData {
   ai_summary_line: string | null;
   onboarding_stage: number;
   brand_summary: string | null;
+  instagram_username?: string | null;
+  instagram_connected?: boolean;
   account_status?: string;
   active_plan?: {
     status: string;
@@ -42,13 +47,6 @@ interface DashboardData {
 
 
 
-function greetingForNow(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
-}
-
 export function PortalDashboardPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -57,13 +55,13 @@ export function PortalDashboardPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // The dashboard endpoint rejects clients that haven't finished onboarding, so don't call it until then
-  const { data: dashboard } = useQuery<DashboardData>({
+  const { data: dashboard, isLoading: isDashboardLoading } = useQuery<DashboardData>({
     queryKey: ["portal-dashboard", user?.id],
     queryFn: async () => {
       return await request<DashboardData>("/api/v1/portal/dashboard");
     },
     enabled: !isLocked,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const subscriptionActive = !!dashboard?.active_plan && ["active", "trialing"].includes(dashboard?.active_plan?.status);
@@ -78,7 +76,7 @@ export function PortalDashboardPage() {
       }
     },
     enabled: subscriptionActive,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const { data: upcomingEntries = [] } = useQuery<any[]>({
@@ -101,11 +99,11 @@ export function PortalDashboardPage() {
       }
     },
     enabled: subscriptionActive,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const { data: subData } = useQuery<any>({
-    queryKey: ["portal-sub-usage", user?.id],
+    queryKey: ["client-subscription", user?.id],
     queryFn: async () => {
       try {
         return await request<any>("/api/v1/payments/subscription");
@@ -114,7 +112,7 @@ export function PortalDashboardPage() {
       }
     },
     enabled: subscriptionActive,
-    refetchInterval: 30000,
+    refetchInterval: 2 * 60_000,
   });
 
   const showToast = (msg: string) => {
@@ -126,71 +124,74 @@ export function PortalDashboardPage() {
     e.preventDefault();
     e.stopPropagation();
     try {
-      await request(`/api/v1/deliverables/${id}/approve`, {
-        method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
-      });
+      await approveDeliverable(id, user?.id || "", crypto.randomUUID());
       queryClient.invalidateQueries({ queryKey: ["portal-dashboard-deliverables"] });
       queryClient.invalidateQueries({ queryKey: ["portal-dashboard"] });
-      showToast("Deliverable approved!");
-    } catch {
-      showToast("Approval failed or already processed");
+      queryClient.invalidateQueries({ queryKey: ["portal", "deliverables"] });
+      queryClient.invalidateQueries({ queryKey: ["portal", "dashboard"] });
+      showToast("Deliverable approved — download it from Review or Library.");
+    } catch (err) {
+      showToast(err instanceof HttpError ? err.message : "Approval failed. Please retry.");
     }
   };
 
-  const handleDeclineDeliverable = async (id: string, e: React.MouseEvent) => {
+  const [declineTarget, setDeclineTarget] = useState<{ id: string; title?: string } | null>(null);
+  const [declineComment, setDeclineComment] = useState("");
+  const [submittingDecline, setSubmittingDecline] = useState(false);
+
+  const handleDeclineDeliverable = (id: string, e: React.MouseEvent, title?: string) => {
     e.preventDefault();
     e.stopPropagation();
+    setDeclineTarget({ id, title });
+    setDeclineComment("");
+  };
+
+  const submitDeclineReason = async () => {
+    if (!declineTarget || !declineComment.trim()) return;
+    setSubmittingDecline(true);
     try {
-      await request(`/api/v1/deliverables/${id}/request-changes?rejection_comment=Changes requested from dashboard`, {
-        method: "POST",
-      });
+      await requestChanges(declineTarget.id, user?.id || "", declineComment.trim());
       queryClient.invalidateQueries({ queryKey: ["portal-dashboard-deliverables"] });
       queryClient.invalidateQueries({ queryKey: ["portal-dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["portal", "deliverables"] });
+      queryClient.invalidateQueries({ queryKey: ["portal", "dashboard"] });
       showToast("Revision requested from pod");
-    } catch {
-      showToast("Change request failed");
+      setDeclineTarget(null);
+      setDeclineComment("");
+    } catch (err) {
+      showToast(err instanceof HttpError ? err.message : "Change request failed");
+    } finally {
+      setSubmittingDecline(false);
     }
   };
 
   const pendingDeliverables = (deliverablesData?.items || []).filter(
-    (d: any) => d.status === "pending_approval" || d.status === "in_production"
+    (d: any) => d.status === "pending_approval"
   );
 
-  const companyName = dashboard?.company?.name || user?.company_name || user?.full_name || "Brand";
+  const displayName =
+    user?.full_name?.trim() ||
+    user?.company_name?.trim() ||
+    dashboard?.company?.name?.trim() ||
+    "Client";
   const pendingCount = pendingDeliverables.length;
-  
-  const today = new Date();
-  const dayName = today.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
-  const dateStr = today.toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase();
-  const daysRemaining = (dashboard?.active_plan as any)?.days_remaining ?? subData?.days_remaining ?? 30;
-  const cycleDay = Math.max(1, Math.min(30, 30 - daysRemaining + 1));
+
+  if (!gate.isReady || (!isLocked && (isDashboardLoading || !dashboard))) {
+    return <CreoLoadingScreen fullScreen={false} label="Loading Workspace" className="min-h-[45vh]" />;
+  }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="w-full min-w-0 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
       {/* ── Top Header Bar ── */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
-          {/* Context date */}
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#97A0B3] mb-3">
-            {dayName} {dateStr}
-            {!isLocked && ` · CYCLE DAY ${cycleDay} OF 30`}
-          </p>
-          {/* Hero Title */}
-          <h1 className="text-3xl sm:text-4xl font-normal text-[#F8FAFC] leading-tight">
-            {isLocked ? "Welcome" : greetingForNow()}, {companyName}.{" "}
-            <span className="font-bold italic">
-              {isLocked
-                ? "Let's finish setting up your workspace."
-                : pendingCount > 0
-                  ? `${pendingCount} piece${pendingCount > 1 ? "s are" : " is"} waiting for you.`
-                  : "All clear for now."}
-            </span>
+          <h1 className="text-3xl sm:text-4xl font-bold text-[#F8FAFC] tracking-tight">
+            Hi, {displayName}
           </h1>
         </div>
-        <div className={`flex items-center gap-3 shrink-0 pt-1 ${isLocked ? "hidden" : ""}`}>
-          <Link to="/portal/creative-pod" className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-[#2A3446] text-[13px] font-medium text-white hover:bg-[#1F2C3F] transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className={`flex flex-wrap items-center gap-2.5 sm:gap-3 shrink-0 pt-1 ${isLocked ? "hidden" : ""}`}>
+          <Link to="/portal/slack" className="flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 rounded-full border border-[#2A3446] text-[13px] font-medium text-white hover:bg-[#161F2D] transition-colors">
+            <svg className="w-4 h-4 text-[#7FA0D6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
             Message your pod
@@ -198,7 +199,7 @@ export function PortalDashboardPage() {
           {pendingCount > 0 && (
             <Link
               to="/portal/deliverables"
-              className="px-5 py-2.5 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors"
+              className="px-4 sm:px-5 py-2 sm:py-2.5 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors"
             >
               Review now
             </Link>
@@ -207,14 +208,14 @@ export function PortalDashboardPage() {
       </div>
 
       {/* ── Resume onboarding (above the pipeline while setup is incomplete) ── */}
-      <ResumeOnboardingBanner variant="hero" />
+      {isLocked && <ResumeOnboardingBanner variant="hero" />}
 
       {/* ── Main Content Grid ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
         {/* Left Column: Batch Status + Asset List (2/3 width) */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 flex flex-col gap-4">
           {/* Batch Status Card */}
-          <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
+          <div className="bg-[#161F2D] rounded-2xl p-5 sm:p-6 border border-[#2A3446]">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-base font-semibold text-white">
@@ -236,49 +237,59 @@ export function PortalDashboardPage() {
 
             {/* Progress Steps */}
             {(() => {
-              const inProd = deliverablesData?.items?.filter((d: any) => d.status === "in_production" || d.status === "draft")?.length || 0;
-              const hasScheduled = (upcomingEntries.length > 0) || (deliverablesData?.items?.some((d: any) => d.status === "scheduled" || d.status === "approved"));
-              const hasReview = pendingDeliverables.length > 0;
-
-              const dynamicSteps = [
-                { label: "Brief", completed: !isLocked, active: false },
-                { label: "Production", completed: hasReview || hasScheduled, active: inProd > 0 && !hasReview },
-                { label: "Internal QA", completed: hasReview || hasScheduled, active: false },
-                { label: "Your review", completed: hasScheduled && !hasReview, active: hasReview },
-                { label: "Scheduled", completed: false, active: hasScheduled && !hasReview },
-              ];
+              // Each step maps to real DeliverableStatus values from the backend, so the
+              // tracker cannot drift from what the pipeline actually reports.
+              const STAGE_OF: Record<string, number> = {
+                draft: 1, in_production: 1,
+                pending_qa: 2, qa_rejected: 2,
+                pending_approval: 3, revision_requested: 3,
+                approved: 4, scheduled: 4, publishing: 4, published: 4,
+              };
+              const items: any[] = deliverablesData?.items || [];
+              // Furthest stage this cycle reached; a booked calendar slot also counts as
+              // scheduled even when its deliverable row is not loaded here.
+              const reached = items.reduce(
+                (max, d) => Math.max(max, STAGE_OF[d.status as string] ?? 0),
+                upcomingEntries.length > 0 ? 4 : 0,
+              );
+              // Work waiting on the client outranks later work: that is the step to show.
+              const activeStep = isLocked
+                ? 0
+                : items.some((d) => d.status === "pending_approval")
+                ? 3
+                : Math.max(reached, 1);
+              const steps = ["Brief", "Production", "Internal QA", "Your review", "Scheduled"];
 
               return (
-                <div className="flex gap-2 mb-8">
-                  {dynamicSteps.map((step) => (
-                    <div key={step.label} className="flex-1 flex flex-col">
-                      <div
-                        className={`h-1.5 w-full rounded-full mb-3 ${
-                          step.completed || step.active
-                            ? "bg-[#7FA0D6]"
-                            : "bg-white/[0.08]"
-                        }`}
-                      />
-                      <span
-                        className={`text-[13px] text-center tracking-wide ${
-                          step.active
-                            ? "text-white font-bold"
-                            : step.completed
-                            ? "text-[#97A0B3] font-medium"
-                            : "text-[#7E889C] font-medium"
-                        }`}
-                      >
-                        {step.label}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <ol className="flex items-stretch gap-1.5 sm:gap-2 mb-6">
+                  {steps.map((label, i) => {
+                    const done = i < activeStep;
+                    const active = i === activeStep;
+                    return (
+                      <li key={label} className="flex-1 min-w-0">
+                        <div
+                          aria-hidden="true"
+                          className={`h-1.5 w-full rounded-full ${
+                            done ? "bg-[#7FA0D6]" : active ? "bg-[#BCCCE6]" : "bg-white/[0.08]"
+                          }`}
+                        />
+                        <span
+                          className={`mt-2.5 block truncate text-center text-[11px] sm:text-[13px] leading-tight ${
+                            active ? "text-white font-bold" : "text-[#97A0B3] font-medium"
+                          }`}
+                        >
+                          {label}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
               );
             })()}
 
             {/* Alert Box (Only when review is needed) */}
             {pendingDeliverables.length > 0 && (
-              <div className="bg-[#1F2C3F] rounded-xl p-4 mb-8">
+              <div className="rounded-xl border border-[#2A3446] bg-[#0B111C]/60 p-4 mb-5">
                 <p className="text-[13px] text-[#97A0B3] leading-relaxed">
                   You have <span className="text-white font-medium">{pendingDeliverables.length} {pendingDeliverables.length === 1 ? 'deliverable' : 'deliverables'}</span> awaiting your review. Approving or requesting changes keeps your batch on its delivery SLA.
                 </p>
@@ -288,7 +299,7 @@ export function PortalDashboardPage() {
             {/* Asset List */}
             {pendingDeliverables.length === 0 ? (
               <div className="py-8 text-center">
-                <p className="text-sm text-[#7E889C]">
+                <p className="text-sm text-[#97A0B3]">
                   {isLocked
                     ? "Your production pipeline activates once setup is complete. Pieces waiting for your review will show up here."
                     : "No deliverables pending review right now."}
@@ -297,44 +308,54 @@ export function PortalDashboardPage() {
             ) : (
               <div className="space-y-0 divide-y divide-white/[0.05]">
                 {pendingDeliverables.slice(0, 3).map((item: any) => (
-                  <div key={item.id} className="flex items-center gap-4 py-4">
-                    {/* Thumbnail */}
-                    <div className="w-16 h-16 rounded-lg bg-[#1F2C3F] overflow-hidden shrink-0 flex items-center justify-center">
-                      {item.thumbnail_url || item.file_url ? (
-                        <img
-                          src={item.thumbnail_url || item.file_url}
-                          alt={item.title}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <svg className="w-6 h-6 text-[#7E889C]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-                        </svg>
-                      )}
-                    </div>
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs uppercase text-[#97A0B3] font-medium tracking-wider">
-                        {item.asset_type || "Reel"} · {item.duration || "0:30"}
-                      </p>
-                      <p className="text-[15px] font-medium text-white truncate mt-0.5">
-                        {item.title || "Untitled"}
-                      </p>
-                      <p className="text-[13px] text-[#7E889C] truncate mt-0.5">
-                        {item.description || "Ready for your review"}
-                      </p>
+                  <div key={item.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 py-4">
+                    {/* Thumbnail + Info */}
+                    <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                      <Link
+                        to={`/portal/deliverables/${item.id}`}
+                        aria-label={`Review ${item.title}`}
+                        className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-[#0B111C] border border-[#2A3446] overflow-hidden shrink-0 flex items-center justify-center"
+                      >
+                        {item.file_url && item.is_video ? (
+                          <video src={`${item.file_url}#t=0.5`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                        ) : item.file_url ? (
+                          <img
+                            src={item.file_url}
+                            alt={item.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <svg className="w-6 h-6 text-[#97A0B3]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                          </svg>
+                        )}
+                      </Link>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] sm:text-xs uppercase text-[#7FA0D6] font-bold tracking-wider">
+                          {item.type_label || "Deliverable"} · v{item.version || 1}
+                        </p>
+                        <Link
+                          to={`/portal/deliverables/${item.id}`}
+                          className="block text-sm sm:text-[15px] font-bold text-white truncate mt-0.5 hover:underline"
+                        >
+                          {item.title || "Untitled"}
+                        </Link>
+                        <p className="text-xs sm:text-[13px] text-[#97A0B3] truncate mt-0.5">
+                          Ready for your review
+                        </p>
+                      </div>
                     </div>
                     {/* Actions */}
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 w-full sm:w-auto justify-end">
                       <button
-                        onClick={(e) => handleDeclineDeliverable(item.id, e)}
-                        className="px-4 py-2 rounded-full border border-[#2A3446] text-[13px] font-medium text-white hover:bg-[#1F2C3F] transition-colors"
+                        onClick={(e) => handleDeclineDeliverable(item.id, e, item.title)}
+                        className="flex-1 sm:flex-initial px-4 py-2 rounded-full border border-[#2A3446] bg-[#0B111C] text-xs sm:text-[13px] font-medium text-white hover:bg-[#161F2D] transition-colors cursor-pointer text-center"
                       >
                         Request change
                       </button>
                       <button
                         onClick={(e) => handleApproveDeliverable(item.id, e)}
-                        className="px-4 py-2 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors"
+                        className="flex-1 sm:flex-initial px-4 py-2 rounded-full bg-[#BCCCE6] text-[#0B111C] text-xs sm:text-[13px] font-bold hover:bg-white transition-colors cursor-pointer text-center"
                       >
                         Approve
                       </button>
@@ -346,16 +367,16 @@ export function PortalDashboardPage() {
           </div>
 
           {/* Coming Up */}
-          <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
+          <div className="bg-[#161F2D] rounded-2xl p-5 sm:p-6 border border-[#2A3446] flex-1 flex flex-col">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-base font-semibold text-white">Coming up</h3>
-              <span className="text-xs font-medium text-[#7E889C]">
+              <span className="text-xs font-medium text-[#97A0B3]">
                 next 7 days
               </span>
             </div>
 
             {/* Table Header */}
-            <div className="grid grid-cols-4 gap-4 text-[11px] uppercase tracking-[0.1em] text-[#7E889C] font-bold pb-2 border-b border-[#2A3446]">
+            <div className="grid grid-cols-4 gap-4 text-[11px] uppercase tracking-[0.1em] text-[#97A0B3] font-bold pb-2 border-b border-[#2A3446]">
               <span>When</span>
               <span>Format</span>
               <span>Post</span>
@@ -363,9 +384,9 @@ export function PortalDashboardPage() {
             </div>
 
             {/* Table Rows */}
-            <div className="divide-y divide-white/[0.04]">
+            <div className="divide-y divide-white/[0.04] flex-1 flex flex-col">
               {upcomingEntries.length === 0 ? (
-                <div className="py-8 text-center text-[#7E889C] text-sm">
+                <div className="flex-1 flex items-center justify-center py-8 text-center text-[#97A0B3] text-sm">
                   {isLocked
                     ? "Your 30-day content calendar is generated when setup is complete."
                     : "No upcoming posts scheduled in the next 7 days."}
@@ -382,7 +403,7 @@ export function PortalDashboardPage() {
                     "Scheduled";
                   const badgeColor =
                     statusLabel === "Needs you" ? "bg-[#D8BF9B]/15 text-[#D8BF9B]" :
-                    statusLabel === "Approved" ? "bg-[#10B981]/20 text-[#6EE7B7]" :
+                    statusLabel === "Approved" ? "bg-[#7FA0D6]/20 text-[#BCCCE6]" :
                     "bg-[#7FA0D6]/15 text-[#BCCCE6]";
                   return (
                     <div key={entry.id || idx} className="grid grid-cols-4 gap-4 py-3 text-sm items-center hover:bg-white/[0.02] transition-colors -mx-2 px-2 rounded-lg cursor-pointer">
@@ -403,9 +424,9 @@ export function PortalDashboardPage() {
         </div>
 
         {/* Right Column: Plan + Results + Pod */}
-        <div className="space-y-6">
+        <div className="flex flex-col gap-4">
           {/* Your plan this cycle */}
-          <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
+          <div className="bg-[#161F2D] rounded-2xl p-5 sm:p-6 border border-[#2A3446]">
             <h3 className="text-base font-semibold text-white mb-5">Your plan this cycle</h3>
             {isLocked ? (
               <div className="space-y-4">
@@ -434,17 +455,17 @@ export function PortalDashboardPage() {
                 {
                   label: "Reels",
                   used: quotas.reel?.used ?? 0,
-                  total: quotas.reel?.quota ?? plan?.reel_quota ?? 8,
+                  total: quotas.reel?.quota ?? plan?.reel_quota ?? 0,
                 },
                 {
                   label: "Posts",
                   used: (quotas.static_post?.used ?? quotas.poster?.used) ?? 0,
-                  total: quotas.static_post?.quota ?? quotas.poster?.quota ?? plan?.poster_quota ?? 4,
+                  total: quotas.static_post?.quota ?? quotas.poster?.quota ?? plan?.poster_quota ?? 0,
                 },
                 {
                   label: "Stories",
                   used: quotas.story?.used ?? 0,
-                  total: quotas.story?.quota ?? plan?.story_quota ?? 8,
+                  total: quotas.story?.quota ?? plan?.story_quota ?? 0,
                 },
               ];
 
@@ -459,7 +480,7 @@ export function PortalDashboardPage() {
                           <div className="flex items-center justify-between mb-1.5">
                             <span className="text-sm text-[#97A0B3]">{item.label}</span>
                             <span className="text-sm text-white font-medium">
-                              {item.used} <span className="text-[#7E889C]">/ {item.total}</span>
+                              {item.used} <span className="text-[#97A0B3]">/ {item.total}</span>
                             </span>
                           </div>
                           <div className="h-2 bg-white/[0.04] rounded-full overflow-hidden">
@@ -473,7 +494,7 @@ export function PortalDashboardPage() {
                     })}
                   </div>
                   <div className="mt-6 pt-4 border-t border-[#2A3446]">
-                    <p className="text-xs text-[#7E889C]">
+                    <p className="text-xs text-[#97A0B3]">
                       Renews {renewalDateStr} · <Link to="/portal/payments" className="text-white hover:underline">Add-ons available</Link>
                     </p>
                   </div>
@@ -482,30 +503,82 @@ export function PortalDashboardPage() {
             })()}
           </div>
 
-          {/* Results */}
-          <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
-            <h3 className="text-base font-semibold text-white mb-2">Results</h3>
-            <p className="text-sm text-[#97A0B3] mb-5 leading-relaxed">
-              Connect Instagram to see reach and saves for every post we publish. Until then we show nothing here rather than guess.
-            </p>
-            <Link to="/portal/account?tab=integrations" className="flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-[#BCCCE6] text-[13px] font-bold text-[#0B111C] hover:bg-white transition-colors w-max">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
-                <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
-                <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
-              </svg>
-              @ Connect Instagram
-            </Link>
+          {/* Results & Instagram Publishing */}
+          <div className="bg-[#161F2D] rounded-2xl p-5 sm:p-6 border border-[#2A3446]">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-semibold text-white">Results & Publishing</h3>
+              {dashboard?.instagram_connected && dashboard?.instagram_username && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+                  <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Meta Synced
+                </span>
+              )}
+            </div>
+
+            {dashboard?.instagram_connected && dashboard?.instagram_username ? (
+              <div className="space-y-4">
+                <p className="text-sm text-[#97A0B3] leading-relaxed">
+                  Your workspace is linked to Instagram. Approved deliverables are auto-published directly to your account.
+                </p>
+                <div className="p-3.5 rounded-xl bg-[#0B111C] border border-[#2A3446] flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="size-9 rounded-full bg-gradient-to-tr from-[#F58529] via-[#DD2A7B] to-[#8134AF] p-[2px]">
+                      <div className="size-full rounded-full bg-[#0B111C] flex items-center justify-center text-white">
+                        <Instagram className="size-4 text-rose-400" />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white leading-tight">
+                        @{dashboard.instagram_username.replace(/^@/, "")}
+                      </p>
+                      <p className="text-[11px] text-[#7FA0D6]">Auto-Publishing Active</p>
+                    </div>
+                  </div>
+                  <a
+                    href={`https://www.instagram.com/${dashboard.instagram_username.replace(/^@/, "")}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-[#161F2D] hover:bg-[#2A3446] text-[#BCCCE6] text-xs font-bold transition-colors flex items-center gap-1.5"
+                  >
+                    <span>View</span>
+                    <ExternalLink className="size-3" />
+                  </a>
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <Link
+                    to="/portal/account?tab=integrations"
+                    className="text-xs text-[#7FA0D6] hover:text-[#BCCCE6] hover:underline font-semibold flex items-center gap-1"
+                  >
+                    Manage Instagram Integration ⚙
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm text-[#97A0B3] mb-4 leading-relaxed">
+                  Connect Instagram to see reach and saves for every post we publish, and enable direct publishing of approved deliverables.
+                </p>
+                <div>
+                  <Link
+                    to="/portal/account?tab=integrations"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-[#BCCCE6] text-[13px] font-bold text-[#0B111C] hover:bg-white transition-colors w-fit"
+                  >
+                    <Instagram className="w-4 h-4" />
+                    @ Connect Instagram
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* From your pod */}
-          <div className="bg-[#161F2D] rounded-2xl p-6 border border-[#2A3446]">
+          <div className="bg-[#161F2D] rounded-2xl p-5 sm:p-6 border border-[#2A3446] flex-1 flex flex-col">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-base font-semibold text-white">From your pod</h3>
               {!isLocked && (
                 <Link
-                  to="/portal/creative-pod"
-                  className="px-4 py-1.5 rounded-full border border-[#2A3446] text-[13px] font-medium text-white hover:bg-[#1F2C3F] transition-colors"
+                  to="/portal/slack"
+                  className="px-4 py-1.5 rounded-full border border-[#2A3446] text-[13px] font-medium text-white hover:bg-[#161F2D] transition-colors"
                 >
                   Open chat
                 </Link>
@@ -514,16 +587,18 @@ export function PortalDashboardPage() {
 
             {/* Real Pod Team or Empty State */}
             {(!dashboard?.assigned_team || dashboard.assigned_team.length === 0) ? (
-              <div className="py-6 text-center text-sm text-[#7E889C]">
-                {isLocked
-                  ? "Your dedicated creative pod is assigned when setup is complete."
-                  : "Your dedicated creative pod is being allocated."}
+              <div className="flex-1 flex flex-col justify-center py-2">
+                <p className="text-sm text-[#97A0B3] leading-relaxed">
+                  {isLocked
+                    ? "Your dedicated creative pod is assigned when setup is complete."
+                    : "Your dedicated creative pod is being allocated."}
+                </p>
               </div>
             ) : (
               <div className="space-y-4">
                 {dashboard.assigned_team.slice(0, 3).map((member: any, i: number) => {
                   const initials = member.name.split(" ").filter((w: string) => w.length > 0).map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
-                  const avatarBgs = ["bg-[#BCCCE6] text-[#0B111C]", "bg-white/[0.08] text-white", "bg-[#10B981] text-white"];
+                  const avatarBgs = ["bg-[#BCCCE6] text-[#0B111C]", "bg-white/[0.08] text-white", "bg-[#7FA0D6] text-white"];
                   return (
                     <div key={member.id || i} className="flex gap-3 items-center">
                       <div className={`w-8 h-8 rounded-full ${avatarBgs[i % avatarBgs.length]} flex items-center justify-center text-[11px] font-bold shrink-0`}>
@@ -532,7 +607,7 @@ export function PortalDashboardPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between mb-0.5">
                           <span className="text-sm font-bold text-white truncate">{member.name}</span>
-                          <span className="text-xs text-[#7E889C]">{member.is_primary ? "Lead" : "Pod"}</span>
+                          <span className="text-xs text-[#97A0B3]">{member.is_primary ? "Lead" : "Pod"}</span>
                         </div>
                         <p className="text-[13px] text-[#97A0B3] truncate">
                           {member.role || "Creative execution"}
@@ -547,10 +622,72 @@ export function PortalDashboardPage() {
         </div>
       </div>
 
+      {/* Revision Reason Modal Dialog */}
+      {declineTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
+          <div className="bg-[#161F2D] border border-[#2A3446] rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2A3446]">
+              <h3 className="text-base font-bold text-white">
+                Request Changes on {declineTarget.title || "Deliverable"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDeclineTarget(null)}
+                className="text-[#97A0B3] hover:text-white text-xs font-bold px-2 py-1 rounded-lg bg-[#0B111C]"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <p className="text-xs text-[#97A0B3]">
+              Select quick feedback tags or describe what the creative pod should adjust in the next version:
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              {["Less text", "Different music", "Stronger hook", "Colour feels off-brand", "Wrong product"].map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setDeclineComment((prev) => (prev ? `${prev} · ${tag}` : tag))}
+                  className="px-3 py-1 rounded-lg bg-[#0B111C] hover:bg-[#2A3446] border border-[#2A3446] text-xs font-semibold text-[#BCCCE6] transition-colors"
+                >
+                  + {tag}
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={declineComment}
+              onChange={(e) => setDeclineComment(e.target.value)}
+              placeholder="Provide clear revision instructions for your creative team..."
+              className="w-full bg-[#0B111C] border border-[#2A3446] rounded-xl p-3.5 text-xs text-white placeholder:text-[#97A0B3] focus:outline-none focus:border-[#7FA0D6] h-28 resize-none"
+            />
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeclineTarget(null)}
+                className="px-4 py-2 rounded-xl border border-[#2A3446] text-xs font-bold text-[#97A0B3] hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitDeclineReason}
+                disabled={!declineComment.trim() || submittingDecline}
+                className="px-5 py-2 rounded-xl bg-[#BCCCE6] text-[#0B111C] text-xs font-bold hover:bg-white transition-colors disabled:opacity-50"
+              >
+                {submittingDecline ? "Submitting..." : "Submit Revision Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#161F2D] text-white px-5 py-3 rounded-xl shadow-2xl border border-white/[0.1] text-sm font-medium flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#6EE7B7]" />
+          <span className="w-2 h-2 rounded-full bg-[#BCCCE6]" />
           {toastMessage}
         </div>
       )}

@@ -174,7 +174,7 @@ export function InvoiceModal({
               </div>
               <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-slate-900 font-extrabold text-sm">
                 <span>Total Paid:</span>
-                <span className="text-base text-[#0052FF]">
+                <span className="text-base text-[#7FA0D6]">
                   ₹{numericAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </span>
               </div>
@@ -199,7 +199,7 @@ export function InvoiceModal({
             <button
               type="button"
               onClick={() => generateInvoicePDF(invoice)}
-              className="w-full sm:w-auto px-5 py-2 rounded-xl bg-gradient-to-r from-[#0052FF] to-[#0045D8] hover:brightness-110 text-white font-bold flex items-center justify-center gap-2 shadow-sm shadow-blue-500/20 cursor-pointer"
+              className="w-full sm:w-auto px-5 py-2 rounded-xl bg-gradient-to-r from-[#7FA0D6] to-[#7FA0D6] hover:brightness-110 text-white font-bold flex items-center justify-center gap-2 shadow-sm shadow-blue-500/20 cursor-pointer"
             >
               <Download className="size-3.5" />
               <span>Download PDF File</span>

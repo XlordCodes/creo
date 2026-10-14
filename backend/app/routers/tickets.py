@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,10 +31,14 @@ class CreateTicketRequest(BaseModel):
 class CreateTicketMessageRequest(BaseModel):
     message: str = Field(..., min_length=1)
 
+class UpdateTicketStatusRequest(BaseModel):
+    status: str
+
 
 @router.get("", response_model=list[dict[str, Any]])
 async def list_tickets(
     client_id: uuid.UUID | None = Query(None),
+    status_filter: str | None = Query("active"),
     actor: Actor = Depends(get_current_actor),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
@@ -43,6 +47,7 @@ async def list_tickets(
         .options(
             selectinload(Ticket.messages),
             selectinload(Ticket.assignee),
+            selectinload(Ticket.client),
             selectinload(Ticket.deliverable),
         )
         .order_by(Ticket.created_at.desc())
@@ -50,9 +55,17 @@ async def list_tickets(
 
     if actor.role in (UserRole.CLIENT, "client"):
         target_client_id = actor.client_id or actor.user_id
-        stmt = stmt.where(Ticket.client_id == target_client_id)
-    elif client_id:
-        stmt = stmt.where(Ticket.client_id == client_id)
+        stmt = stmt.where(Ticket.client_id == target_client_id, Ticket.status != TicketStatus.CLOSED)
+    else:
+        if client_id:
+            stmt = stmt.where(Ticket.client_id == client_id)
+        if status_filter == "active":
+            stmt = stmt.where(Ticket.status != TicketStatus.CLOSED, Ticket.title != "Client Pod Thread")
+        elif status_filter == "closed":
+            stmt = stmt.where(Ticket.status == TicketStatus.CLOSED, Ticket.title != "Client Pod Thread")
+        else:
+            stmt = stmt.where(Ticket.title != "Client Pod Thread")
+
     res = await db.execute(stmt)
     tickets = res.scalars().all()
 
@@ -70,11 +83,19 @@ async def list_tickets(
             "description": t.description,
             "status": t.status.value,
             "priority": t.priority.value,
+            "client": t.client.full_name if t.client else None,
+            "client_email": t.client.email if t.client else None,
+            "tier": "Active Retainer", # Could be dynamically fetched if tier exists on User/Client
+
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "message_count": len(t.messages),
             "assigned_to": str(t.assigned_to) if t.assigned_to else None,
-            "assignee_name": t.assignee.full_name or t.assignee.email if t.assignee else None,
-            "assignee_role": t.assignee.role.value if t.assignee and hasattr(t.assignee.role, "value") else (str(t.assignee.role) if t.assignee else None),
+            "assignee": {
+                "id": str(t.assignee.id),
+                "full_name": t.assignee.full_name,
+                "email": t.assignee.email,
+                "role": t.assignee.role.value if hasattr(t.assignee.role, "value") else str(t.assignee.role),
+            } if t.assignee else None,
             "deliverable_id": str(t.deliverable_id) if t.deliverable_id else None,
             "deliverable_title": get_deliv_title(t.deliverable),
             "deliverable_file_url": t.deliverable.file_url if t.deliverable else None,
@@ -166,7 +187,7 @@ async def get_ticket(
     stmt = (
         select(Ticket)
         .options(
-            selectinload(Ticket.messages),
+            selectinload(Ticket.messages).selectinload(TicketMessage.sender),
             selectinload(Ticket.assignee),
             selectinload(Ticket.deliverable),
         )
@@ -195,8 +216,12 @@ async def get_ticket(
         "priority": ticket.priority.value,
         "created_at": ticket.created_at.isoformat(),
         "assigned_to": str(ticket.assigned_to) if ticket.assigned_to else None,
-        "assignee_name": ticket.assignee.full_name or ticket.assignee.email if ticket.assignee else None,
-        "assignee_role": ticket.assignee.role.value if ticket.assignee and hasattr(ticket.assignee.role, "value") else (str(ticket.assignee.role) if ticket.assignee else None),
+        "assignee": {
+            "id": str(ticket.assignee.id),
+            "full_name": ticket.assignee.full_name,
+            "email": ticket.assignee.email,
+            "role": ticket.assignee.role.value if hasattr(ticket.assignee.role, "value") else str(ticket.assignee.role),
+        } if ticket.assignee else None,
         "deliverable_id": str(ticket.deliverable_id) if ticket.deliverable_id else None,
         "deliverable_title": deliv_title,
         "deliverable_file_url": ticket.deliverable.file_url if ticket.deliverable else None,
@@ -205,10 +230,13 @@ async def get_ticket(
             {
                 "id": str(m.id),
                 "sender_id": str(m.sender_id),
+                "sender_name": m.sender.full_name or m.sender.email if m.sender else None,
+                "sender_role": m.sender.role.value if m.sender and hasattr(m.sender.role, "value") else (str(m.sender.role) if m.sender else None),
+                "sender_email": m.sender.email if m.sender else None,
                 "message": m.message,
                 "created_at": m.created_at.isoformat(),
             }
-            for m in ticket.messages
+            for m in sorted(ticket.messages, key=lambda x: x.created_at)
         ],
     }
 
@@ -240,6 +268,21 @@ async def add_ticket_message(
     await db.commit()
     await db.refresh(msg)
 
+    if actor.role not in (UserRole.CLIENT, "client"):
+        from app.models.ops import Notification
+        from app.models.auth import User
+        user = await db.get(User, actor.user_id)
+        sender_name = user.full_name if user else "Support"
+        notif = Notification(
+            user_id=ticket.client_id,
+            title=f"New reply on ticket #{str(ticket.id)[:4].upper()}",
+            message=f"{sender_name}: {payload.message[:80]}...",
+            link=f"/portal/support/{ticket.id}",
+            is_read=False,
+        )
+        db.add(notif)
+        await db.commit()
+
     return {
         "id": str(msg.id),
         "ticket_id": str(ticket.id),
@@ -247,3 +290,48 @@ async def add_ticket_message(
         "message": msg.message,
         "created_at": msg.created_at.isoformat(),
     }
+
+
+@router.patch("/{ticket_id}/status", response_model=dict[str, Any])
+async def update_ticket_status(
+    ticket_id: uuid.UUID,
+    payload: UpdateTicketStatusRequest,
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+    stmt = select(Ticket).where(Ticket.id == ticket_id)
+    res = await db.execute(stmt)
+    ticket = res.scalars().first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if ticket.title == "Client Pod Thread":
+        raise HTTPException(
+            status_code=400, 
+            detail="Continuous pod chat thread cannot be closed or resolved."
+        )
+
+    if actor.role in (UserRole.CLIENT, "client"):
+        raise HTTPException(status_code=403, detail="Clients cannot resolve or close tickets.")
+
+    new_status = payload.status.upper()
+    if new_status == "RESOLVED":
+        ticket.status = TicketStatus.RESOLVED
+        ticket.resolved_at = datetime.now(timezone.utc)
+        from app.models.ops import Notification
+        notif = Notification(
+            user_id=ticket.client_id,
+            title=f"Ticket #{str(ticket.id)[:4].upper()} Resolved",
+            message="Your Pod Lead has marked this issue as resolved.",
+            link=f"/portal/support/{ticket.id}"
+        )
+        db.add(notif)
+    elif new_status == "CLOSED":
+        ticket.status = TicketStatus.CLOSED
+        ticket.closed_at = datetime.now(timezone.utc)
+    elif new_status == "OPEN":
+        ticket.status = TicketStatus.OPEN
+
+    await db.commit()
+    return {"message": "Status updated successfully", "status": ticket.status.value}

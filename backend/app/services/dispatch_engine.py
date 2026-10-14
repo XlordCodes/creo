@@ -19,9 +19,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import Conflict, PaymentRequired
 from app.models.billing import Plan, Subscription
-from app.models.enums import DeliverableType, TaskStatus, UserRole
+from app.models.enums import DeliverableType, SubscriptionStatus, TaskStatus, UserRole
 from app.models.ops import AuditLog, Notification
+from app.models.tenant import Agency
 from app.models.user import ClientProfile, StaffProfile, User
 from app.models.work import ClientAssignment, ContentCalendar, Deliverable, Task
 from app.services.blueprint_service import (
@@ -68,7 +70,7 @@ DEFAULT_TEMPLATE: dict[str, dict[str, Any]] = {
     "poster": {"days": [0, 4], "time": "12:30"},      # Mon, Fri at 12:30 PM
     "static_post": {"days": [0, 4], "time": "12:30"}, # Mon, Fri
     "carousel": {"days": [2], "time": "18:00"},        # Wed at 6:00 PM
-    "story": {"days": [0, 1, 2, 3, 4], "time": "20:00"}, # Daily at 8:00 PM
+    "story": {"days": [0, 1, 2, 3, 4, 5, 6], "time": "20:00"}, # Daily at 8:00 PM
 }
 
 
@@ -510,69 +512,167 @@ async def assign_load_first(
 
 async def assign_pod(db: AsyncSession, client_id: uuid.UUID) -> dict[str, Any]:
     """Assign durable creative pod ownership (Lead, Video Editor, Graphic Designer) for a client."""
+    # Serialize ownership changes and preserve an already allocated pod on retries.
+    client = (await db.execute(select(User).where(User.id == client_id).with_for_update())).scalar_one()
+
+    # Resolve target agency: use client's agency_id or auto-bind to the primary/active agency
+    target_agency_id = client.agency_id
+    if not target_agency_id:
+        target_agency_id = await db.scalar(
+            select(Agency.id).where(Agency.status == "active").order_by(Agency.created_at.asc()).limit(1)
+        )
+        if not target_agency_id:
+            target_agency_id = await db.scalar(select(Agency.id).limit(1))
+        target_agency_id = target_agency_id or uuid.UUID("00000000-0000-0000-0000-000000000001")
+        client.agency_id = target_agency_id
+        db.add(client)
+        await db.flush()
+
+    existing = (await db.execute(
+        select(ClientAssignment, User).join(User, User.id == ClientAssignment.user_id)
+        .where(ClientAssignment.client_id == client_id)
+    )).all()
+    by_role = {assignment.role: member for assignment, member in existing}
+    lead = by_role.get("team_lead")
+    if (lead and lead.role == UserRole.TEAM_LEAD and str(lead.account_status) == "active"
+        and (lead.agency_id == target_agency_id or target_agency_id is None)
+        and all(role in by_role and by_role[role].role == (UserRole.EDITOR if role == "video_editor" else UserRole.DESIGNER)
+                and str(by_role[role].account_status) == "active"
+                and (by_role[role].agency_id == target_agency_id or target_agency_id is None)
+                for role in ("video_editor", "graphic_designer"))):
+        editor = by_role.get("video_editor", lead)
+        designer = by_role.get("graphic_designer", lead)
+        return {
+            "team_lead_id": lead.id, "team_lead_name": lead.full_name or lead.email,
+            "editor_id": editor.id, "editor_name": editor.full_name or editor.email,
+            "designer_id": designer.id, "designer_name": designer.full_name or designer.email,
+        }
     # 1. Select Team Lead (Fewest active clients + longest since last assigned, prioritizing agency team)
-    tl_query = text("""
-        SELECT
-            u.id, u.full_name, u.email,
-            COUNT(ca.id) AS active_clients,
-            MAX(ca.created_at) AS last_assigned_at
-        FROM users u
-        LEFT JOIN client_assignments ca ON ca.user_id = u.id AND ca.role = 'team_lead'
-        WHERE u.role IN ('team_lead', 'admin')
-          AND u.account_status = 'active'
-        GROUP BY u.id, u.full_name, u.email
-        ORDER BY 
-            (CASE WHEN u.email LIKE '%creo.agency' THEN 0 ELSE 1 END) ASC,
-            active_clients ASC,
-            last_assigned_at ASC NULLS FIRST;
-    """)
-    tl_res = await db.execute(tl_query)
-    tl_candidates = tl_res.fetchall()
+    tl_stmt = (
+        select(
+            User.id,
+            User.full_name,
+            User.email,
+            func.count(ClientAssignment.id).label("active_clients"),
+            func.max(ClientAssignment.created_at).label("last_assigned_at")
+        )
+        .outerjoin(
+            ClientAssignment,
+            (ClientAssignment.user_id == User.id) & (ClientAssignment.role == "team_lead")
+        )
+        .where(User.role == "team_lead")
+        .where(User.agency_id.is_not_distinct_from(target_agency_id))
+        .where(User.account_status == "active")
+        .group_by(User.id, User.full_name, User.email)
+        .order_by(
+            func.count(ClientAssignment.id).asc(),
+            func.max(ClientAssignment.created_at).asc().nulls_first(),
+            User.id.asc()
+        )
+    )
+    tl_res = await db.execute(tl_stmt)
+    tl_candidates = tl_res.all()
+
+    if not tl_candidates and target_agency_id is not None:
+        tl_fallback_stmt = (
+            select(
+                User.id,
+                User.full_name,
+                User.email,
+                func.count(ClientAssignment.id).label("active_clients"),
+                func.max(ClientAssignment.created_at).label("last_assigned_at")
+            )
+            .outerjoin(
+                ClientAssignment,
+                (ClientAssignment.user_id == User.id) & (ClientAssignment.role == "team_lead")
+            )
+            .where(User.role == "team_lead")
+            .where(User.account_status == "active")
+            .group_by(User.id, User.full_name, User.email)
+            .order_by(
+                func.count(ClientAssignment.id).asc(),
+                func.max(ClientAssignment.created_at).asc().nulls_first(),
+                User.id.asc()
+            )
+        )
+        tl_candidates = (await db.execute(tl_fallback_stmt)).all()
 
     if tl_candidates:
         best_tl_id = tl_candidates[0][0]
         best_tl_name = tl_candidates[0][1] or tl_candidates[0][2]
     else:
-        admin_res = await db.execute(
-            select(User.id, User.full_name, User.email)
-            .where(User.role.in_([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
-            .order_by((User.email.like("%creo.agency%")).desc())
-            .limit(1)
-        )
-        row = admin_res.first()
-        if not row:
-            raise RuntimeError("No team lead or admin available for assignment")
-        best_tl_id = row[0]
-        best_tl_name = row[1] or row[2]
+        logger.error("Failed to find team lead for client %s with agency %s", client.id, client.agency_id)
+        raise Conflict("No active team lead available in this agency. Configure a creative team before onboarding.", code="POD_UNAVAILABLE")
 
     # 2. Select Video Editor & Graphic Designer by lowest client assignment count
-    staff_query = text("""
-        SELECT
-            u.id, u.full_name, u.email, u.role, sp.department, sp.skills, sp.team_lead_id,
-            COUNT(ca.id) AS client_count
-        FROM users u
-        JOIN staff_profiles sp ON sp.user_id = u.id
-        LEFT JOIN client_assignments ca ON ca.user_id = u.id
-        WHERE u.account_status = 'active'
-          AND sp.is_accepting_work = TRUE
-        GROUP BY u.id, u.full_name, u.email, u.role, sp.department, sp.skills, sp.team_lead_id
-        ORDER BY 
-            (CASE WHEN u.email LIKE '%creo.agency' THEN 0 ELSE 1 END) ASC,
-            client_count ASC;
-    """)
-    staff_rows = (await db.execute(staff_query)).fetchall()
+    staff_stmt = (
+        select(
+            User.id,
+            User.full_name,
+            User.email,
+            User.role,
+            StaffProfile.department,
+            StaffProfile.skills,
+            StaffProfile.team_lead_id,
+            func.count(ClientAssignment.id).label("client_count")
+        )
+        .join(StaffProfile, StaffProfile.user_id == User.id)
+        .outerjoin(
+            ClientAssignment,
+            ClientAssignment.user_id == User.id
+        )
+        .where(User.account_status == "active")
+        .where(User.role.in_(["editor", "designer"]))
+        .where(User.agency_id.is_not_distinct_from(target_agency_id))
+        .where(StaffProfile.is_accepting_work.is_(True))
+        .group_by(
+            User.id, User.full_name, User.email, User.role,
+            StaffProfile.department, StaffProfile.skills, StaffProfile.team_lead_id
+        )
+        .order_by(
+            func.count(ClientAssignment.id).asc(),
+            User.id.asc()
+        )
+    )
+    staff_rows = (await db.execute(staff_stmt)).all()
+    if not staff_rows and target_agency_id is not None:
+        staff_fallback_stmt = (
+            select(
+                User.id,
+                User.full_name,
+                User.email,
+                User.role,
+                StaffProfile.department,
+                StaffProfile.skills,
+                StaffProfile.team_lead_id,
+                func.count(ClientAssignment.id).label("client_count")
+            )
+            .join(StaffProfile, StaffProfile.user_id == User.id)
+            .outerjoin(
+                ClientAssignment,
+                ClientAssignment.user_id == User.id
+            )
+            .where(User.account_status == "active")
+            .where(User.role.in_(["editor", "designer"]))
+            .where(StaffProfile.is_accepting_work.is_(True))
+            .group_by(
+                User.id, User.full_name, User.email, User.role,
+                StaffProfile.department, StaffProfile.skills, StaffProfile.team_lead_id
+            )
+            .order_by(
+                func.count(ClientAssignment.id).asc(),
+                User.id.asc()
+            )
+        )
+        staff_rows = (await db.execute(staff_fallback_stmt)).all()
 
     def is_video_capable(s: Any) -> bool:
-        skills = [str(sk).lower() for sk in (s[5] or [])]
-        dept = str(s[4]).lower()
         role = str(s[3]).lower()
-        return dept in ["video", "motion", "creative"] or role == "editor" or any("video" in sk or "reel" in sk for sk in skills)
+        return role == "editor"
 
     def is_design_capable(s: Any) -> bool:
-        skills = [str(sk).lower() for sk in (s[5] or [])]
-        dept = str(s[4]).lower()
         role = str(s[3]).lower()
-        return dept in ["graphics", "design", "creative"] or role == "designer" or any("poster" in sk or "figma" in sk or "carousel" in sk for sk in skills)
+        return role == "designer"
 
     # Prefer staff in best_tl_id pod
     pod_staff = [s for s in staff_rows if s[6] == best_tl_id]
@@ -581,21 +681,24 @@ async def assign_pod(db: AsyncSession, client_id: uuid.UUID) -> dict[str, Any]:
     best_editor = next((s for s in pool if is_video_capable(s)), None) or next((s for s in staff_rows if is_video_capable(s)), None)
     best_designer = next((s for s in pool if is_design_capable(s)), None) or next((s for s in staff_rows if is_design_capable(s)), None)
 
+    if not best_editor or not best_designer:
+        raise Conflict("An active video editor and designer are required for a dedicated creative pod.", code="POD_UNAVAILABLE")
+
     # Clear old client assignments for idempotency
     await db.execute(delete(ClientAssignment).where(ClientAssignment.client_id == client_id))
 
-    db.add(ClientAssignment(client_id=client_id, user_id=best_tl_id, role="team_lead", craft_role="team_lead", is_primary=True))
+    db.add(ClientAssignment(agency_id=target_agency_id, client_id=client_id, user_id=best_tl_id, role="team_lead", craft_role="team_lead", is_primary=True))
 
     editor_id = best_editor[0] if best_editor else best_tl_id
     designer_id = best_designer[0] if best_designer else best_tl_id
 
     if best_editor:
-        db.add(ClientAssignment(client_id=client_id, user_id=best_editor[0], role="video_editor", craft_role="video_editor", is_primary=False))
-    if best_designer and (not best_editor or best_designer[0] != best_editor[0]):
-        db.add(ClientAssignment(client_id=client_id, user_id=best_designer[0], role="graphic_designer", craft_role="graphic_designer", is_primary=False))
+        db.add(ClientAssignment(agency_id=target_agency_id, client_id=client_id, user_id=best_editor[0], role="video_editor", craft_role="video_editor", is_primary=False))
+    if best_designer:
+        db.add(ClientAssignment(agency_id=target_agency_id, client_id=client_id, user_id=best_designer[0], role="graphic_designer", craft_role="graphic_designer", is_primary=False))
 
     await db.commit()
-    logger.info("Assigned pod for client %s: TL=%s, Editor=%s, Designer=%s", client_id, best_tl_id, editor_id, designer_id)
+    logger.info("Assigned pod for client %s: TL=%s, Editor=%s, Designer=%s (agency=%s)", client_id, best_tl_id, editor_id, designer_id, target_agency_id)
 
     return {
         "team_lead_id": best_tl_id,
@@ -605,6 +708,7 @@ async def assign_pod(db: AsyncSession, client_id: uuid.UUID) -> dict[str, Any]:
         "designer_id": designer_id,
         "designer_name": best_designer[1] if best_designer else best_tl_name,
     }
+
 
 
 def distribute_quota_slots(
@@ -671,6 +775,28 @@ def distribute_quota_slots(
     return slots[:quota]
 
 
+def distribute_balanced_slots(
+    start: date, end: date, quota: int, preferred_weekdays: list[int],
+    day_load: dict[date, int],
+) -> list[tuple[date, int]]:
+    """Keep exact quotas while spreading all formats across the eligible days."""
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    slots = []
+    for index in range(max(0, quota)):
+        if not days:
+            break
+        target = index * len(days) / max(1, quota)
+        chosen = min(range(len(days)), key=lambda i: (
+            day_load.get(days[i], 0), abs(i - target),
+            days[i].weekday() not in preferred_weekdays,
+        ))
+        day = days[chosen]
+        offset = day_load.get(day, 0)
+        day_load[day] = offset + 1
+        slots.append((day, offset))
+    return slots
+
+
 # --- Part 6: Quota-Driven Calendar Drafting ---
 
 async def draft_month_calendar(
@@ -693,19 +819,20 @@ async def draft_month_calendar(
         select(Subscription, Plan)
         .join(Plan, Subscription.plan_id == Plan.id)
         .where(Subscription.client_id == client_id)
+        .where(Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]))
+        .where(Subscription.current_period_end > datetime.now(timezone.utc))
         .order_by(Subscription.created_at.desc())
         .limit(1)
     )
     sub_row = (await db.execute(sub_query)).first()
-    if sub_row:
-        plan = sub_row[1]
-        quotas: dict[str, int] = {
-            "reel": plan.reel_quota,
-            "poster": plan.poster_quota,
-            "story": plan.story_quota,
-        }
-    else:
-        quotas = {"reel": 4, "poster": 8, "story": 8}
+    if not sub_row:
+        raise PaymentRequired("Active subscription required before calendar generation", code="PAYMENT_REQUIRED")
+    plan = sub_row[1]
+    quotas: dict[str, int] = {
+        "reel": plan.reel_quota,
+        "poster": plan.poster_quota,
+        "story": plan.story_quota,
+    }
 
     # Fetch client profile for timezone and custom template
     client_prof = await db.get(ClientProfile, client_id)
@@ -717,28 +844,51 @@ async def draft_month_calendar(
     except Exception:
         client_tz = ZoneInfo("Asia/Kolkata")
 
-    # 7-Day Strategy & Creative Preparation Lock Buffer:
-    # Days 1 to 7 are strictly locked for brand research, scripting, and asset prep (no deliverables scheduled).
-    # Content allocation begins on Day 8 and distributes monthly plan quotas across a 30-day window (Day 8 to Day 37).
-    sub_start_date = (sub_row[0].created_at.date() if sub_row and sub_row[0].created_at else date.today())
-    start_from = sub_start_date + timedelta(days=7)
-    window_end = start_from + timedelta(days=30)
+    # A posting cycle is 30 consecutive days, independent of calendar-month length.
+    sub_start = (sub_row[0].created_at.date() if sub_row[0].created_at else anchor)
+    initial_start = sub_start + timedelta(days=7)
+    period_start = getattr(sub_row[0], "current_period_start", None)
+    if period_start is not None:
+        cycle_base = initial_start
+        offset = max(0, (anchor - cycle_base).days // 30)
+        start_from = cycle_base + timedelta(days=offset * 30)
+    elif sub_start >= month_start or initial_start >= month_start:
+        start_from = initial_start
+    else:
+        start_from = month_start
+    window_end = start_from + timedelta(days=29)
 
-    # Clean previous draft slots
+    # Rebalancing never deletes approved, locked, or uploaded content.
     await db.execute(
         delete(ContentCalendar)
         .where(ContentCalendar.client_id == client_id)
         .where(ContentCalendar.status == "draft")
+        .where(ContentCalendar.is_locked.is_(False))
+        .where(ContentCalendar.deliverable_id.is_(None))
+        .where(ContentCalendar.publish_date >= start_from)
+        .where(ContentCalendar.publish_date <= window_end)
     )
+    retained = list((await db.execute(
+        select(ContentCalendar).where(ContentCalendar.client_id == client_id,
+            ContentCalendar.publish_date >= start_from, ContentCalendar.publish_date <= window_end)
+    )).scalars().all())
 
     # Fetch client Brand DNA
     brand_dna = client_prof.brand_dna if client_prof and client_prof.brand_dna else {}
 
-    created_slots: list[ContentCalendar] = []
+    created_slots: list[ContentCalendar] = list(retained)
+    day_load: dict[date, int] = {}
+    for slot in retained:
+        day_load[slot.publish_date] = day_load.get(slot.publish_date, 0) + 1
 
-    for kind, quota in quotas.items():
-        if quota <= 0:
+    for kind, base_quota in quotas.items():
+        if base_quota <= 0:
             continue
+
+        quota = max(0, base_quota - sum(
+            {"static_post": "poster", "carousel": "story"}.get(s.slot_kind, s.slot_kind) == kind
+            for s in retained
+        ))
 
         tmpl = template.get(kind, DEFAULT_TEMPLATE.get(kind, {"days": [1, 3], "time": "19:30"}))
         preferred_weekdays = tmpl.get("days", [1, 3])
@@ -746,7 +896,7 @@ async def draft_month_calendar(
         hour, minute = [int(p) for p in time_str.split(":")]
 
         # Distribute EXACTLY `quota` publication slots
-        slots_distribution = distribute_quota_slots(start_from, window_end, quota, preferred_weekdays)
+        slots_distribution = distribute_balanced_slots(start_from, window_end, quota, preferred_weekdays, day_load)
 
         # 70/30 Anchor + Flex partition
         anchor_quota = max(1, round(quota * 0.7))
@@ -787,6 +937,7 @@ async def draft_month_calendar(
                 caption = f"Brand {format_label} · Flexible News/Trend Reserve"
 
             slot = ContentCalendar(
+                agency_id=(sub_row[0].agency_id if sub_row and sub_row[0].agency_id else getattr(client_prof, "agency_id", None)) or uuid.UUID("00000000-0000-0000-0000-000000000001"),
                 client_id=client_id,
                 deliverable_id=None,
                 publish_date=slot_day,
@@ -809,12 +960,24 @@ async def draft_month_calendar(
     return created_slots
 
 
+async def rebalance_month_calendar(
+    db: AsyncSession,
+    client_id: uuid.UUID,
+    month_anchor: date | None = None,
+) -> list[ContentCalendar]:
+    """Rebalance calendar deliverables across the target month to ensure manageable daily pod workload and exact quota match."""
+    return await draft_month_calendar(db, client_id, month_anchor=month_anchor)
+
+
+
 # --- Part 7: Client Approval Gate & Rolling Window Task Generation ---
 
 async def approve_calendar_month(
     db: AsyncSession,
     client_id: uuid.UUID,
     actor_id: uuid.UUID | None = None,
+    *,
+    dispatch_immediately: bool = True,
 ) -> dict[str, Any]:
     """Approve draft calendar slots, materialize production tasks with lead times, and dispatch rolling horizon."""
     # 1. Fetch draft slots
@@ -852,7 +1015,7 @@ async def approve_calendar_month(
 
         sla_due_at = datetime.combine(task_due_date, time(hour=18), tzinfo=timezone.utc)
 
-        deliv_type = DeliverableType.REEL if kind == "reel" else DeliverableType.CAROUSEL if kind == "carousel" else DeliverableType.STATIC_POST
+        deliv_type = {"reel": DeliverableType.REEL, "carousel": DeliverableType.CAROUSEL, "story": DeliverableType.STORY}.get(kind, DeliverableType.STATIC_POST)
 
         default_assignee = editor_id if kind == "reel" else designer_id
         if not default_assignee:
@@ -863,6 +1026,7 @@ async def approve_calendar_month(
         pref_skill = "motion_graphics_2d" if kind == "reel" else "carousel_typography" if kind == "carousel" else None
 
         new_task = Task(
+            agency_id=slot.agency_id,
             client_id=client_id,
             deliverable_type=deliv_type,
             status=TaskStatus.BACKLOG,
@@ -870,20 +1034,19 @@ async def approve_calendar_month(
             sla_due_at=sla_due_at,
             effort_points=effort,
             is_revision=False,
-            assigned_to=default_assignee,
+            assigned_to=default_assignee if dispatch_immediately else None,
             preferred_sub_skill=pref_skill,
             concept_status=slot.concept_status,
             blueprint=slot.blueprint,
         )
         db.add(new_task)
-        await db.flush()
         created_tasks.append(new_task)
 
     await db.commit()
 
     # Dispatch tasks entering the 10-day rolling window
     dispatched_count = 0
-    for t in created_tasks:
+    for t in created_tasks if dispatch_immediately else []:
         if t.due_date and t.due_date <= horizon_date:
             assigned = await assign_continuity_first(db, t, actor_id=actor_id)
             if assigned:
@@ -939,7 +1102,7 @@ async def approve_calendar_month(
 
 # --- Part 8: Nightly Horizon & Rebalance Sweeps ---
 
-async def assign_upcoming_window(db: AsyncSession, horizon_days: int = 10) -> int:
+async def assign_upcoming_window(db: AsyncSession, horizon_days: int = 10, client_id: uuid.UUID | None = None) -> int:
     """Nightly Celery job: Dispatches tasks entering the 10-day horizon using continuity-first policy."""
     today = date.today()
     horizon = today + timedelta(days=horizon_days)
@@ -953,11 +1116,23 @@ async def assign_upcoming_window(db: AsyncSession, horizon_days: int = 10) -> in
         .order_by(Task.due_date.asc())
         .limit(50)
     )
+    if client_id is not None:
+        stmt = stmt.where(Task.client_id == client_id)
     tasks = (await db.execute(stmt)).scalars().all()
     assigned_count = 0
 
     for t in tasks:
-        assigned_id = await assign_continuity_first(db, t)
+        # Each assignment commits independently; reacquire the task lock after every
+        # commit so concurrent onboarding/beat workers cannot dispatch the same task.
+        locked = (await db.execute(
+            select(Task).where(Task.id == t.id, Task.status == TaskStatus.BACKLOG,
+                               Task.assigned_to.is_(None))
+            .with_for_update(skip_locked=True)
+            .execution_options(populate_existing=True)
+        )).scalar_one_or_none()
+        if locked is None:
+            continue
+        assigned_id = await assign_continuity_first(db, locked)
         if assigned_id:
             assigned_count += 1
 

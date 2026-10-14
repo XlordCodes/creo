@@ -8,6 +8,7 @@ import {
   Sparkles,
   CalendarCheck,
   CalendarDays,
+  Send,
   LifeBuoy,
   ShieldCheck,
   Layers,
@@ -86,11 +87,14 @@ export function AdminBottomNav() {
 
   // Team Member Workstation Items
   const isMemberRole =
-    user?.role === "team_member" ||
-    user?.role === "editor" ||
-    user?.role === "designer" ||
-    location.pathname.startsWith("/workstation") ||
-    location.pathname.startsWith("/member");
+    user?.role !== "team_lead" &&
+    user?.role !== "admin" &&
+    user?.role !== "super_admin" &&
+    (user?.role === "team_member" ||
+      user?.role === "editor" ||
+      user?.role === "designer" ||
+      location.pathname.startsWith("/workstation") ||
+      location.pathname.startsWith("/member"));
 
   const memberItems = [
     {
@@ -126,6 +130,7 @@ export function AdminBottomNav() {
     { label: "My Schedule & PTO", href: "/workstation/schedule", icon: CalendarCheck, desc: "Request leave & shift schedule" },
     { label: "Asset Handoff QA", href: "/workstation/tasks", icon: CheckSquare, desc: "Submit files for lead sign-off" },
     { label: "Agency Calendar", href: "/admin/calendar", icon: CalendarDays, desc: "View all scheduled content" },
+    { label: "Instagram Publishing", href: "/admin/publishing", icon: Send, desc: "Schedule and track auto-posting" },
   ];
 
   const moreLinks = isMemberRole
@@ -242,7 +247,7 @@ export function AdminBottomNav() {
               <button
                 type="button"
                 onClick={() => setMoreDrawerOpen(false)}
-                className="size-8 rounded-full bg-[#1F2C3F] text-[#97A0B3] hover:text-white flex items-center justify-center cursor-pointer"
+                className="size-8 rounded-full bg-[#161F2D] text-[#97A0B3] hover:text-white flex items-center justify-center cursor-pointer"
               >
                 <X className="size-4" />
               </button>
@@ -263,7 +268,7 @@ export function AdminBottomNav() {
                     className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
                       isActive
                         ? "bg-[#7FA0D6]/15 border-[#7FA0D6]/40 text-[#BCCCE6]"
-                        : "bg-[#0B111C] border-[#2A3446] hover:bg-[#1F2C3F] text-[#F1F5F9]"
+                        : "bg-[#0B111C] border-[#2A3446] hover:bg-[#161F2D] text-[#F1F5F9]"
                     }`}
                   >
                     <div className="flex items-center gap-3">

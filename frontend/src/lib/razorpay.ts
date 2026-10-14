@@ -9,13 +9,25 @@ export interface RazorpayOptions {
   currency: string;
   name: string;
   description: string;
-  order_id: string;
+  order_id?: string;
   prefill?: {
     name?: string;
     email?: string;
     contact?: string;
   };
-  theme?: { color?: string };
+  theme?: {
+    color?: string;
+    backdrop_color?: string;
+  };
+  backdrop_color?: string;
+  modal?: {
+    backdropclose?: boolean;
+    escape?: boolean;
+    handleback?: boolean;
+    confirm_close?: boolean;
+    animation?: boolean;
+    ondismiss?: () => void;
+  };
 }
 
 export interface RazorpayPaymentSuccess {
@@ -58,7 +70,7 @@ export async function openRazorpayCheckout(
 ): Promise<void> {
   try {
     await loadRazorpayScript();
-  } catch (err) {
+  } catch {
     onDismiss?.();
     throw new Error("Payment gateway could not be loaded. Please check your connection and try again.");
   }
@@ -70,16 +82,77 @@ export async function openRazorpayCheckout(
     throw new Error("Payment gateway could not be initialized.");
   }
 
+  // Keep the usual dark app background visible and blurred, preventing white canvas flash
+  const applyDarkBackdrop = () => {
+    const container = document.querySelector(".razorpay-container") as HTMLElement | null;
+    if (container) {
+      container.style.setProperty("color-scheme", "light", "important");
+      container.style.setProperty("background", "rgba(5, 8, 16, 0.82)", "important");
+      container.style.setProperty("backdrop-filter", "blur(8px)", "important");
+      container.style.setProperty("-webkit-backdrop-filter", "blur(8px)", "important");
+    }
+    const frames = document.querySelectorAll<HTMLIFrameElement>(
+      'iframe[src*="razorpay"], iframe.razorpay-checkout-frame, .razorpay-container iframe',
+    );
+    frames.forEach((f) => {
+      f.style.setProperty("color-scheme", "light", "important");
+      f.style.setProperty("background", "transparent", "important");
+      f.style.setProperty("background-color", "transparent", "important");
+      f.setAttribute("allowtransparency", "true");
+    });
+  };
+
+  applyDarkBackdrop();
+  const observer = new MutationObserver(() => {
+    applyDarkBackdrop();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  const cleanup = () => {
+    observer.disconnect();
+  };
+
+  const checkoutOptions: any = { ...options };
+
+  // Sanitize order_id: Razorpay Orders API IDs strictly begin with "order_".
+  // If an invalid or client-generated prefix (e.g. "addon_", "auth_") is passed,
+  // strip order_id so Razorpay standard checkout initializes directly without a 400 lookup failure.
+  if (checkoutOptions.order_id && !checkoutOptions.order_id.startsWith("order_")) {
+    delete checkoutOptions.order_id;
+  }
+
+  // Ensure minimum valid amount (at least 100 paise / ₹1) to prevent amount validation errors
+  if (!checkoutOptions.amount || checkoutOptions.amount <= 0) {
+    checkoutOptions.amount = 100;
+  }
+
   const rzp = new Razorpay({
-    ...options,
-    handler: (response: RazorpayPaymentSuccess) => {
-      onSuccess(response);
+    ...checkoutOptions,
+    backdrop_color: checkoutOptions.backdrop_color || "rgba(5, 8, 16, 0.82)",
+    theme: {
+      color: "#7FA0D6",
+      backdrop_color: "rgba(5, 8, 16, 0.82)",
+      ...checkoutOptions.theme,
     },
     modal: {
+      backdropclose: false,
+      escape: true,
+      animation: true,
+      ...checkoutOptions.modal,
       ondismiss: () => {
+        cleanup();
         onDismiss?.();
       },
     },
+    handler: (response: RazorpayPaymentSuccess) => {
+      cleanup();
+      onSuccess(response);
+    },
+  });
+
+  rzp.on("payment.failed", (response: any) => {
+    cleanup();
+    console.warn("Razorpay payment failed or cancelled:", response?.error);
   });
 
   rzp.open();

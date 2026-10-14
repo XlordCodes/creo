@@ -22,7 +22,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.errors import Conflict, Forbidden, NotFound, ValidationError
+from app.core.errors import Conflict, Forbidden, NotFound, PaymentRequired, ValidationError
 from app.core.logging import get_logger
 from app.core.rbac import Actor
 from app.models.billing import Plan, Subscription
@@ -32,7 +32,7 @@ from app.models.calendar import (
     ClientCycle,
     ShootDay,
 )
-from app.models.enums import DeliverableType, TaskStatus, UserRole
+from app.models.enums import DeliverableType, SubscriptionStatus, TaskStatus, UserRole
 from app.models.ops import AuditLog, Notification
 from app.models.user import ClientProfile, User
 from app.models.work import ClientAssignment, ContentCalendar, Task
@@ -46,7 +46,7 @@ logger = get_logger("app.services.calendar_engine")
 
 PLANS: dict[str, dict[str, Any]] = {
     "starter": {
-        "name": "Starter Growth",
+        "name": "Starter",
         "price_minor": 2_500_000,
         "posters": 8,
         "reels": 4,
@@ -55,27 +55,31 @@ PLANS: dict[str, dict[str, Any]] = {
         "shoot_days_per_cycle": 1,
         "dedicated_director": False,
     },
-    "accelerator": {
-        "name": "Brand Accelerator",
+    "growth": {
+        "name": "Growth",
         "price_minor": 5_000_000,
-        "posters": 15,
-        "reels": 8,
-        "stories": 20,
+        "posters": 16,
+        "reels": 10,
+        "stories": 22,
         "revision_rounds": 2,
         "shoot_days_per_cycle": 1,
         "dedicated_director": True,
     },
-    "enterprise": {
-        "name": "Enterprise Domination",
+    "scale": {
+        "name": "Scale",
         "price_minor": 9_500_000,
-        "posters": 30,
-        "reels": 16,
-        "stories": 40,
+        "posters": 32,
+        "reels": 20,
+        "stories": 44,
         "revision_rounds": 3,
         "shoot_days_per_cycle": 2,
         "dedicated_director": True,
     },
 }
+# Backward compatibility aliases
+PLANS["pro"] = PLANS["scale"]
+PLANS["accelerator"] = PLANS["growth"]
+PLANS["enterprise"] = PLANS["scale"]
 
 DEFAULT_POLICY: dict[str, Any] = {
     "runway_days": 7,
@@ -447,10 +451,8 @@ def resolve_publish_at(slot_date: date, time_str: str, tz_name: str) -> datetime
 # ==============================================================================
 
 def active_days(cycle_days: list[date], total_items: int) -> list[date]:
-    """Fill every day only when volume supports >=1/day. Otherwise weekdays only."""
-    if total_items >= len(cycle_days):
-        return cycle_days
-    return [d for d in cycle_days if d.weekday() < 5]
+    """All seven weekdays are eligible; subscription volume controls coverage."""
+    return cycle_days
 
 
 def spread_reels(
@@ -460,87 +462,19 @@ def spread_reels(
     active_set: set[date],
     blackouts: set[date] | None = None,
 ) -> list[date]:
-    """Step 1 - Reels first:
-    Window: first_reel_date..cycle_end.
-    Day preference: Tue, Wed, Thu, Mon, Fri.
-    Min gap: 2 days when quota <= 8, 1 day when quota > 8.
-    """
+    """Spread the exact reel entitlement evenly across production-ready dates."""
     if quota <= 0:
         return []
     blackouts = blackouts or set()
-    min_gap = 2 if quota <= 8 else 1
-
     avail = [d for d in sorted(active_set) if first_reel_date <= d <= cycle_end and d not in blackouts]
-    if len(avail) <= quota:
-        return avail
-
-    if quota > 8:
-        # Dense reel placement (e.g. Enterprise 16 reels in 23 days):
-        # We select len(avail) - quota non-adjacent skip days, prioritizing Fri and Sun to maximize Mon-Thu.
-        s = len(avail) - quota
-        if s <= 0:
-            return avail
-        dow_skip_pref = {4: 0, 6: 1, 5: 2, 0: 3, 3: 4, 2: 5, 1: 6}
-        candidates = list(range(len(avail)))
-        candidates.sort(key=lambda idx: (dow_skip_pref.get(avail[idx].weekday(), 10), idx))
-
-        skipped: set[int] = set()
-        for idx in candidates:
-            if len(skipped) >= s:
-                break
-            if (idx - 1) in skipped or (idx + 1) in skipped:
-                continue
-            skipped.add(idx)
-
-        for idx in candidates:
-            if len(skipped) >= s:
-                break
-            if idx not in skipped and (idx - 1 not in skipped) and (idx + 1 not in skipped):
-                skipped.add(idx)
-
-        return [avail[i] for i in range(len(avail)) if i not in skipped]
-
-    span = (cycle_end - first_reel_date).days
-    ideal_step = span / (quota - 1) if quota > 1 else 0
-    ideals = [first_reel_date + timedelta(days=round(i * ideal_step)) for i in range(quota)]
-
-    placed: list[date] = []
-
-    for i, ideal in enumerate(ideals):
-        rem = quota - 1 - i
-        best_cand = None
-        best_score = (999999, 999999, 999999)
-
-        for cand in avail:
-            if cand in placed:
-                continue
-            if placed:
-                gap = (cand - placed[-1]).days
-                if gap < min_gap:
-                    continue
-            if rem > 0:
-                if (cycle_end - cand).days < rem * min_gap:
-                    continue
-                cands_after = [c for c in avail if (c - cand).days >= min_gap]
-                if len(cands_after) < rem:
-                    continue
-
-            dist = abs((cand - ideal).days)
-            rank = DOW_RANK.get(cand.weekday(), 10)
-            score = (dist, rank, cand)
-            if score < best_score:
-                best_score = score
-                best_cand = cand
-
-        if best_cand is not None:
-            placed.append(best_cand)
-        else:
-            for cand in avail:
-                if cand not in placed and (not placed or (cand - placed[-1]).days >= min_gap):
-                    placed.append(cand)
-                    break
-
-    return sorted(placed)
+    if not avail:
+        return []
+    # Exact entitlement, including overflow for custom high-volume plans.
+    if quota > len(avail):
+        return sorted(avail[i % len(avail)] for i in range(quota))
+    if quota == 1:
+        return [avail[0]]
+    return [avail[round(i * (len(avail) - 1) / (quota - 1))] for i in range(quota)]
 
 
 def spread_posters(
@@ -556,18 +490,6 @@ def spread_posters(
         return []
     blackouts = blackouts or set()
     no_reel_days = [d for d in active if d not in reel_days and d not in blackouts]
-
-    if not blackouts:
-        # Starter Growth fixture (22 items, 8 posters across 18 reel-free weekdays):
-        if len(active) < 30 and quota == 8 and len(no_reel_days) == 18:
-            fixture_indices = [0, 3, 5, 8, 10, 12, 15, 17]
-            return [no_reel_days[i] for i in fixture_indices]
-        # Brand Accelerator fixture (15 posters across 30 days):
-        if quota == 15 and len(active) == 30:
-            return [active[i * 2] for i in range(15)]
-        # Enterprise fixture (30 posters across 30 days):
-        if quota == len(active):
-            return list(active)
 
     # General deterministic placement for custom quotas or blackouts:
     if quota <= len(no_reel_days):
@@ -698,6 +620,25 @@ def distribute_sequenced_slots(
     # 3. Stories (dark days first -> teasers -> echos -> remainder)
     stories = spread_stories(active, reels, posters, quotas.get("story", 0), blackouts)
 
+    eligible = [d for d in active if d not in blackouts]
+    counts = Counter(reels + posters + [d for d, _ in stories])
+    if total_items >= len(eligible):
+        for dark in eligible:
+            if counts[dark]:
+                continue
+            candidates = [(kind, index, day) for kind, values in (("poster", posters), ("story", stories), ("reel", reels))
+                          for index, value in enumerate(values)
+                          for day in [value[0] if isinstance(value, tuple) else value]
+                          if counts[day] > 1 and (kind != "reel" or dark >= first_reel_date)]
+            if not candidates:
+                continue
+            kind, index, old_day = min(candidates, key=lambda x: (x[0] == "reel", abs((x[2] - dark).days)))
+            if kind == "story": stories[index] = (dark, "coverage")
+            elif kind == "poster": posters[index] = dark
+            else: reels[index] = dark
+            counts[old_day] -= 1
+            counts[dark] += 1
+
     dayparts_cfg = policy.get("dayparts", DAYPARTS)
 
     raw_slots: list[dict[str, Any]] = []
@@ -758,6 +699,27 @@ def distribute_sequenced_slots(
 # §3 & §4: CYCLE GENERATION & SNAPSHOT FREEZING
 # ==============================================================================
 
+async def _clear_replaceable_draft(db: AsyncSession, client_id: uuid.UUID, cycle_number: int, *, replace_draft: bool = False) -> None:
+    # Lock the client even when no cycle exists, serializing concurrent generations.
+    await db.execute(select(User.id).where(User.id == client_id).with_for_update())
+    cycle = (await db.execute(select(ClientCycle).where(
+        ClientCycle.client_id == client_id, ClientCycle.cycle_number == cycle_number
+    ).with_for_update())).scalar_one_or_none()
+    if cycle is None:
+        return
+    if cycle.status != "draft":
+        raise Conflict("An approved or submitted cycle cannot be regenerated", code="CYCLE_LOCKED")
+    if not replace_draft:
+        raise Conflict("This cycle already exists; refresh the calendar", code="CYCLE_EXISTS")
+    protected = (await db.execute(select(ContentCalendar.id).where(
+        ContentCalendar.cycle_id == cycle.id,
+        (ContentCalendar.is_locked.is_(True)) | (ContentCalendar.deliverable_id.is_not(None))
+    ).limit(1))).scalar_one_or_none()
+    if protected is not None:
+        raise Conflict("This draft already contains locked or uploaded work", code="CYCLE_LOCKED")
+    await db.execute(delete(ClientCycle).where(ClientCycle.id == cycle.id, ClientCycle.status == "draft"))
+
+
 async def generate_client_cycle(
     db: AsyncSession,
     client_id: uuid.UUID,
@@ -766,6 +728,7 @@ async def generate_client_cycle(
     plan_id: uuid.UUID | None = None,
     carryover_credits: dict[str, int] | None = None,
     created_by: uuid.UUID | None = None,
+    replace_draft: bool = False,
 ) -> tuple[ClientCycle, list[ShootDay], list[ContentCalendar]]:
     """Generate a draft client cycle with deterministic slots, frozen snapshots, and shoot days."""
     carryover = carryover_credits or {}
@@ -780,42 +743,23 @@ async def generate_client_cycle(
             from fastapi import HTTPException
             raise HTTPException(403, "Agency account is past due. New cycle generation is blocked.")
 
-    # 1. Fetch Plan
-    plan_row: Plan | None = None
-    if plan_id:
-        plan_row = await db.get(Plan, plan_id)
-    if not plan_row:
-        # Fall back to client's active subscription plan
-        sub_stmt = (
-            select(Subscription, Plan)
-            .join(Plan, Subscription.plan_id == Plan.id)
-            .where(Subscription.client_id == client_id)
-            .order_by(Subscription.created_at.desc())
-            .limit(1)
-        )
-        sub_res = (await db.execute(sub_stmt)).first()
-        if sub_res:
-            plan_row = sub_res[1]
+    # Entitlement comes from this client's valid subscription, never a fallback plan.
+    sub_stmt = (
+        select(Subscription, Plan).join(Plan, Subscription.plan_id == Plan.id)
+        .where(Subscription.client_id == client_id)
+        .where(Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]))
+        .where(Subscription.current_period_end > datetime.now(UTC))
+        .order_by(Subscription.created_at.desc()).limit(1)
+    )
+    sub_res = (await db.execute(sub_stmt)).first()
+    if not sub_res:
+        raise PaymentRequired("Active subscription required before calendar generation", code="PAYMENT_REQUIRED")
+    plan_row = sub_res[1]
+    if plan_id and plan_id != plan_row.id:
+        raise Conflict("Update the client's subscription before selecting a different calendar plan", code="PLAN_MISMATCH")
 
-    if not plan_row:
-        # Fall back to starter
-        plan_res = await db.execute(select(Plan).where(Plan.name == "starter").limit(1))
-        plan_row = plan_res.scalar_one_or_none()
-        if not plan_row:
-            # Fall back to any active plan
-            plan_row = (await db.execute(select(Plan).limit(1))).scalar_one()
-
-    # Plan canonical properties
-    plan_name_clean = plan_row.name.lower()
-    if "enterprise" in plan_name_clean or "pro" in plan_name_clean:
-        shoot_days_count = 2
-        base_quotas = {"poster": 30, "reel": 16, "story": 40}
-    elif "accelerator" in plan_name_clean or "growth" in plan_name_clean:
-        shoot_days_count = 1
-        base_quotas = {"poster": 15, "reel": 8, "story": 20}
-    else:
-        shoot_days_count = 1
-        base_quotas = {"poster": plan_row.poster_quota or 8, "reel": plan_row.reel_quota or 4, "story": plan_row.story_quota or 10}
+    shoot_days_count = 2 if plan_row.name.lower() in ("scale", "enterprise", "pro") else 1
+    base_quotas = {"poster": plan_row.poster_quota, "reel": plan_row.reel_quota, "story": plan_row.story_quota}
 
     # 2. Fetch Policy & Timezone
     policy_row = await get_or_create_calendar_policy(db, client_id)
@@ -861,13 +805,9 @@ async def generate_client_cycle(
 
     # Reel quota pro-rating
     reel_base_quota = base_quotas["reel"] + carryover.get("reel", 0)
-    reel_cap_policy = dict(policy)
-    if reel_base_quota > 8:
-        reel_cap_policy["min_gap_days"] = dict(policy.get("min_gap_days", {}))
-        reel_cap_policy["min_gap_days"]["reel"] = 0
-    # Deliver 100% of subscribed reel quota without prorating loss
-    prorated_reels = min(reel_base_quota, reel_cap_max) if reel_cap_max > 0 else reel_base_quota
-    reel_credit = max(0, reel_base_quota - prorated_reels)
+    # Never prorate away a client's subscribed reel entitlement.
+    prorated_reels = reel_base_quota
+    reel_credit = 0
 
     poster_quota = base_quotas["poster"] + carryover.get("poster", 0)
     story_quota = base_quotas["story"] + carryover.get("story", 0)
@@ -926,13 +866,7 @@ async def generate_client_cycle(
         },
     }
 
-    # Clean existing draft cycle for this client and cycle_number
-    await db.execute(
-        delete(ClientCycle).where(
-            ClientCycle.client_id == client_id,
-            ClientCycle.cycle_number == cycle_number,
-        )
-    )
+    await _clear_replaceable_draft(db, client_id, cycle_number, replace_draft=replace_draft)
 
     # Create ClientCycle
     cycle = ClientCycle(
@@ -1471,7 +1405,7 @@ async def admin_regenerate_cycle(
         raise ValidationError("Only draft cycles can be regenerated.")
 
     res = await generate_client_cycle(
-        db, client_id, cycle_number, cycle.start_date, plan_id=cycle.plan_id, created_by=actor.user_id if actor else None
+        db, client_id, cycle_number, cycle.start_date, plan_id=cycle.plan_id, created_by=actor.user_id if actor else None, replace_draft=True
     )
 
     audit = AuditLog(

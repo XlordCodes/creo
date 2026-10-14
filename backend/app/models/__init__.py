@@ -1,9 +1,11 @@
 """Models package exporting all ORM models."""
 
 from app.models.auth import IdempotencyKey, RefreshToken
+from app.models.publishing import InstagramOAuth, PublishingJob
 from app.models.billing import (
     PaymentEvent,
     Plan,
+    PlanNegotiation,
     PlatformPaymentEvent,
     PlatformSubscription,
     Subscription,
@@ -26,12 +28,22 @@ from app.models.calendar import (
     ClientCycle,
     ShootDay,
 )
-from app.models.ops import Announcement, AuditLog, LeaveRequest, Notification
+from app.models.ops import (
+    Announcement,
+    AuditLog,
+    EscalationState,
+    LeaveRequest,
+    Notification,
+    PlatformSetting,
+    SampleRequest,
+)
 from app.models.questionnaire import Questionnaire
 from app.models.support import Ticket, TicketMessage
 from app.models.tenant import Agency, Team, TeamMember
 from app.models.user import ClientProfile, ClientRoleRequirement, StaffProfile, User
 from app.models.work import ClientAssignment, ContentCalendar, Deliverable, Task
+from app.models.chat import DirectMessage
+from app.models.pod_call import PodCallBooking
 
 __all__ = [
     # Enums
@@ -51,6 +63,7 @@ __all__ = [
     "ClientRoleRequirement",
     # Billing
     "Plan",
+    "PlanNegotiation",
     "Subscription",
     "PaymentEvent",
     "UsageCounter",
@@ -61,6 +74,9 @@ __all__ = [
     "Deliverable",
     "ContentCalendar",
     "ClientAssignment",
+    "PodCallBooking",
+    "InstagramOAuth",
+    "PublishingJob",
     # Calendar Engine
     "ClientCycle",
     "ShootDay",
@@ -74,6 +90,9 @@ __all__ = [
     "Announcement",
     "AuditLog",
     "Notification",
+    "SampleRequest",
+    "PlatformSetting",
+    "EscalationState",
     # Auth
     "RefreshToken",
     "IdempotencyKey",

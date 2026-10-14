@@ -1,5 +1,6 @@
-import { Suspense, lazy, Component, type ReactNode, type ErrorInfo, useEffect } from "react";
+import { Suspense, Component, type ReactNode, type ErrorInfo, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from "react-router";
+import { ArrowLeft } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "../lib/auth-context";
 import { ConfirmProvider } from "../components/ui/ConfirmDialog";
@@ -8,20 +9,21 @@ import type { HealthResponse } from "../types/api";
 
 // Public Layout & Landing Page (other pages are split into their own chunks)
 import { PublicLayout } from "../components/public/PublicLayout";
-import { HomePage } from "../pages/public/HomePage";
+
 import {
   AboutPage,
   AuthPage,
   ClientsPage,
   FaqPage,
   GoogleCallbackPage,
+  InstagramCallbackPage,
   OnboardingView,
   PortalAccountPage,
   PortalCalendarPage,
-  PortalCreativePodPage,
   PortalDashboardPage,
   PortalDeliverablesPage,
   PortalLibraryPage,
+  PortalBrandDNAPage,
   PortalPaymentsPage,
   PortalSupportPage,
   PortfolioPage,
@@ -30,6 +32,7 @@ import {
   TermsPage,
   preloadPortalPages,
   whenIdle,
+  lazyModule,
 } from "./lazy-pages";
 
 import { ProtectedRoute } from "../components/auth/ProtectedRoute";
@@ -39,85 +42,101 @@ import { RequireOnboardingStage } from "../components/auth/RequireOnboardingStag
 import { MandatoryPasswordResetModal } from "../components/auth/MandatoryPasswordResetModal";
 import { CreoLoadingScreen } from "../components/ui/CreoLoadingScreen";
 import { CreoLoader, CreoInlineLoader } from "../components/ui/CreoLoader";
+import { SimpleErrorBoundary } from "../components/ui/SimpleErrorBoundary";
 
 // Portal Layout (pages are lazy-loaded from ./lazy-pages)
-import { PortalLayout } from "../components/portal/PortalLayout";
+const PortalLayout = lazyModule(() =>
+  import("../components/portal/PortalLayout").then(m => ({ default: m.PortalLayout }))
+);
+const OpsLayout = lazyModule(() =>
+  import("../components/ops/OpsLayout").then(m => ({ default: m.OpsLayout }))
+);
+const HomePage = lazyModule(() =>
+  import("../pages/public/HomePage").then(m => ({ default: m.HomePage }))
+);
 
-// Ops Layout & Features
-import { OpsLayout } from "../components/ops/OpsLayout";
-const AdminDashboard = lazy(() =>
+const AdminDashboard = lazyModule(() =>
   import("../features/admin/AdminDashboard").then((m) => ({ default: m.AdminDashboard }))
 );
 
-const AdminClientsPage = lazy(() =>
+const AdminClientsPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminClientsPage }))
 );
-const AdminDeliverablesPage = lazy(() =>
+const AdminDeliverablesPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminDeliverablesPage }))
 );
-const AdminTasksPage = lazy(() =>
+const AdminTasksPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminTasksPage }))
 );
-const AdminCalendarPage = lazy(() =>
-  import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminCalendarPage }))
+const AdminCalendarPage = lazyModule(() =>
+  import("../features/admin/AdminCalendarPage").then((m) => ({ default: m.AdminCalendarPage }))
 );
-const AdminSupportTicketsPage = lazy(() =>
+const AdminSupportTicketsPage = lazyModule(() =>
   import("../features/admin/AdminSupportTicketsPage").then((m) => ({ default: m.AdminSupportTicketsPage }))
 );
-const AdminTicketDetailPage = lazy(() =>
+const AdminTicketDetailPage = lazyModule(() =>
   import("../features/admin/AdminTicketDetailPage").then((m) => ({ default: m.AdminTicketDetailPage }))
 );
-const AdminSLAPerformancePage = lazy(() =>
+const AdminSLAPerformancePage = lazyModule(() =>
   import("../features/admin/AdminSLAPerformancePage").then((m) => ({ default: m.AdminSLAPerformancePage }))
 );
+const ClientTicketDetailPage = lazyModule(() =>
+  import("../pages/portal/PortalTicketDetailPage").then((m) => ({ default: m.ClientTicketDetailPage }))
+);
 
-const AdminRevenuePage = lazy(() =>
+const AdminRevenuePage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminRevenuePage }))
 );
-const AdminPlansPage = lazy(() =>
+const AdminPlansPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminPlansPage }))
 );
-const AdminSalesPage = lazy(() =>
+const AdminSalesPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminSalesPage }))
 );
 
-const AdminTeamManagementPage = lazy(() =>
+const AdminTeamManagementPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminTeamManagementPage }))
 );
-const AdminLeaveApprovalsPage = lazy(() =>
+const AdminLeaveApprovalsPage = lazyModule(() =>
   import("../features/admin/AdminSubPages").then((m) => ({ default: m.AdminLeaveApprovalsPage }))
 );
-const AdminClientBrandPage = lazy(() =>
+const AdminClientBrandPage = lazyModule(() =>
   import("../features/admin/AdminClientBrandPage").then((m) => ({ default: m.AdminClientBrandPage }))
 );
-const PodLeadDashboardPage = lazy(() =>
+const PodLeadDashboardPage = lazyModule(() =>
   import("../pages/admin/PodLeadDashboardPage").then((m) => ({ default: m.PodLeadDashboardPage }))
 );
-const PodTaskBoardPage = lazy(() =>
+const PodTaskBoardPage = lazyModule(() =>
   import("../pages/admin/PodTaskBoardPage").then((m) => ({ default: m.PodTaskBoardPage }))
 );
-const PodDeliverablesReviewPage = lazy(() =>
+const PodDeliverablesReviewPage = lazyModule(() =>
   import("../pages/admin/PodDeliverablesReviewPage").then((m) => ({ default: m.PodDeliverablesReviewPage }))
 );
-const PodScheduleLeavePage = lazy(() =>
+const PodScheduleLeavePage = lazyModule(() =>
   import("../pages/admin/PodScheduleLeavePage").then((m) => ({ default: m.PodScheduleLeavePage }))
 );
-const PodClientAllocationsPage = lazy(() =>
+const PodClientAllocationsPage = lazyModule(() =>
   import("../pages/admin/PodClientAllocationsPage").then((m) => ({ default: m.PodClientAllocationsPage }))
 );
 
 // Team Member Workstation & Collaboration Hub
-const MemberOverviewPage = lazy(() =>
+const MemberOverviewPage = lazyModule(() =>
   import("../pages/admin/MemberOverviewPage").then((m) => ({ default: m.MemberOverviewPage }))
 );
-const MemberTaskBoardPage = lazy(() =>
+const MemberTaskBoardPage = lazyModule(() =>
   import("../pages/admin/MemberTaskBoardPage").then((m) => ({ default: m.MemberTaskBoardPage }))
 );
 
-const MemberSchedulePTOPage = lazy(() =>
+const PublishingPage = lazyModule(() =>
+  import("../pages/admin/PublishingPage").then((m) => ({ default: m.PublishingPage }))
+);
+const MemberSchedulePTOPage = lazyModule(() =>
   import("../pages/admin/MemberSchedulePTOPage").then((m) => ({ default: m.MemberSchedulePTOPage }))
 );
-const SlackChatPage = lazy(() =>
+const MemberSettingsPage = lazyModule(() =>
+  import("../pages/admin/MemberSettingsPage").then((m) => ({ default: m.MemberSettingsPage }))
+);
+const SlackChatPage = lazyModule(() =>
   import("../pages/admin/SlackChatPage").then((m) => ({ default: m.SlackChatPage }))
 );
 
@@ -142,13 +161,13 @@ class OnboardingErrorBoundary extends Component<
   override render() {
     if (this.state.hasError) {
       return (
-        <div className="w-full max-w-md mx-auto p-8 rounded-2xl bg-white border border-[#C9DFF0] shadow-sm text-center my-12">
+        <div className="w-full max-w-md mx-auto p-8 rounded-2xl bg-white border border-[#2A3446] shadow-sm text-center my-12">
           <p className="text-sm text-rose-600 font-semibold mb-2">Something interrupted onboarding display.</p>
-          <p className="text-xs text-[#64748B] mb-5">{this.state.error?.message || "Please reload to continue."}</p>
+          <p className="text-xs text-[#97A0B3] mb-5">{this.state.error?.message || "Please reload to continue."}</p>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="px-5 py-2.5 rounded-xl bg-[#2B7BC4] text-white font-semibold text-xs hover:bg-[#1A5EA8] transition-colors"
+            className="px-5 py-2.5 rounded-xl bg-[#7FA0D6] text-white font-semibold text-xs hover:bg-[#7FA0D6] transition-colors"
           >
             Reload Onboarding
           </button>
@@ -164,57 +183,32 @@ function OnboardingPageWrapper() {
   const navigate = useNavigate();
   const userId = user?.id || "00000000-0000-0000-0000-000000000001";
 
-  // Warm the portal while the client works through onboarding
-  useEffect(() => whenIdle(() => preloadPortalPages()), []);
-
   return (
-    <div data-surface="review" className="bento-theme min-h-screen bg-[#0B111C] text-[#F8FAFC] flex flex-col overflow-x-hidden">
+    <div data-surface="review" className="bento-theme min-h-[100dvh] bg-[#0B111C] text-[#F8FAFC] flex flex-col overflow-x-hidden">
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 border-b border-[#2A3446] bg-[#050810]/95 backdrop-blur-md px-4 sm:px-8 py-3 shadow-md shrink-0">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2.5 group">
-            <span className="size-8 flex items-center justify-center rounded-xl bg-[#161F2D] border border-[#2A3446] font-mono text-sm font-bold text-[#7FA0D6] shadow-xs group-hover:scale-105 transition-transform">
-              C
-            </span>
-            <div className="flex flex-col">
-              <span className="text-base font-bold font-display tracking-tight text-white">
+      <header className="sticky top-0 z-30 border-b border-[#2A3446]/80 bg-[#0B111C]/95 backdrop-blur-md shrink-0">
+        <div className="max-w-6xl mx-auto flex min-h-16 items-center justify-between gap-4 px-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-4 sm:gap-5">
+            <Link to="/" aria-label="Creo home" className="rounded-lg px-1 py-2 group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7FA0D6]">
+              <span className="text-2xl font-bold font-display tracking-tight text-white group-hover:text-[#BCCCE6] transition-colors">
                 creo<span className="text-[#7FA0D6]">.</span>
               </span>
-              <span className="text-[10px] font-semibold text-[#97A0B3] -mt-1 tracking-wider uppercase">
-                Client Onboarding
-              </span>
-            </div>
-          </Link>
-
-          <div className="flex items-center gap-3 sm:gap-4 text-xs font-semibold">
-            <Link
-              to="/"
-              className="text-[#97A0B3] hover:text-white transition-colors hidden sm:inline-flex items-center gap-1.5"
-            >
-              ← Back to Home
             </Link>
-            <a
-              href="https://wa.me/919941999415"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="whitespace-nowrap text-[#97A0B3] hover:text-[#7FA0D6] transition-colors inline-flex items-center gap-1.5"
-            >
-              <span className="sm:hidden">Help</span>
-              <span className="hidden sm:inline">Need Help?</span>
-            </a>
-            <Link
-              to="/portal"
-              className="whitespace-nowrap inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#161F2D] text-[#BCCCE6] hover:bg-[#2A3446] border border-[#2A3446] transition-colors"
-            >
-              <span className="sm:hidden">Portal →</span>
-              <span className="hidden sm:inline">Go to Portal →</span>
-            </Link>
+            <span className="h-6 w-px bg-[#2A3446]" aria-hidden="true" />
+            <span className="text-xs sm:text-sm font-medium text-[#A7B4C8]">Client onboarding</span>
           </div>
+          <Link
+            to="/portal"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#161F2D] hover:bg-[#202B3D] border border-[#2A3446] hover:border-[#7FA0D6]/40 text-xs sm:text-sm font-semibold text-[#BCCCE6] hover:text-white transition-all shadow-xs cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4 text-[#7FA0D6]" />
+            <span>Back to Portal</span>
+          </Link>
         </div>
       </header>
 
       {/* Main Onboarding Canvas - full page view with generous space */}
-      <main className="flex-1 max-w-5xl lg:max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 flex flex-col items-center">
+      <main className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-6 sm:pt-8 lg:pt-10 pb-10 sm:pb-12 flex flex-col items-center">
         <OnboardingErrorBoundary>
           <Suspense fallback={<CreoInlineLoader label="Loading your onboarding" />}>
             <OnboardingView userId={userId} onPortalLaunch={() => navigate("/portal")} />
@@ -234,34 +228,34 @@ function HealthPage() {
   });
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-[#E8F4FD] text-[#0D2137] p-6 sm:p-8">
-      <div className="w-full max-w-md rounded-2xl border border-[#C9DFF0] bg-white p-8 shadow-lg space-y-6">
-        <div className="flex items-center gap-3 border-b border-[#C9DFF0] pb-4">
-          <div className="size-10 rounded-xl bg-[#E8F4FD] border border-[#C9DFF0] flex items-center justify-center text-[#2B7BC4] font-bold">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#BCCCE6] text-[#0B111C] p-6 sm:p-8">
+      <div className="w-full max-w-md rounded-2xl border border-[#2A3446] bg-white p-8 shadow-lg space-y-6">
+        <div className="flex items-center gap-3 border-b border-[#2A3446] pb-4">
+          <div className="size-10 rounded-xl bg-[#BCCCE6] border border-[#2A3446] flex items-center justify-center text-[#7FA0D6] font-bold">
             ⚡
           </div>
           <div>
-            <h1 className="text-lg font-bold text-[#0D2137]">Creo System Status</h1>
-            <p className="text-xs text-[#64748B] mt-0.5">
+            <h1 className="text-lg font-bold text-[#0B111C]">Creo System Status</h1>
+            <p className="text-xs text-[#97A0B3] mt-0.5">
               Real-time backend API & Database health
             </p>
           </div>
         </div>
 
         <div className="space-y-3 text-xs">
-          <div className="flex justify-between items-center border-b border-[#F0F4F8] py-2">
-            <span className="text-[#64748B] font-medium">API Service</span>
+          <div className="flex justify-between items-center border-b border-[#161F2D] py-2">
+            <span className="text-[#97A0B3] font-medium">API Service</span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
               <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
               {data?.status || (isLoading ? "Checking..." : "Error")}
             </span>
           </div>
-          <div className="flex justify-between items-center border-b border-[#F0F4F8] py-2">
-            <span className="text-[#64748B] font-medium">Platform Version</span>
-            <span className="font-mono text-[#0D2137] font-semibold">{data?.version || "0.1.0"}</span>
+          <div className="flex justify-between items-center border-b border-[#161F2D] py-2">
+            <span className="text-[#97A0B3] font-medium">Platform Version</span>
+            <span className="font-mono text-[#0B111C] font-semibold">{data?.version || "0.1.0"}</span>
           </div>
-          <div className="flex justify-between items-center border-b border-[#F0F4F8] py-2">
-            <span className="text-[#64748B] font-medium">Database Engine</span>
+          <div className="flex justify-between items-center border-b border-[#161F2D] py-2">
+            <span className="text-[#97A0B3] font-medium">Database Engine</span>
             <span className="font-mono text-emerald-700 font-semibold">PostgreSQL (Connected)</span>
           </div>
         </div>
@@ -269,13 +263,13 @@ function HealthPage() {
         <div className="flex gap-3 pt-2">
           <Link
             to="/"
-            className="flex-1 text-center rounded-xl bg-[#2B7BC4] py-2.5 text-xs font-bold text-white hover:bg-[#1A5EA8] transition-colors shadow-xs"
+            className="flex-1 text-center rounded-xl bg-[#7FA0D6] py-2.5 text-xs font-bold text-white hover:bg-[#7FA0D6] transition-colors shadow-xs"
           >
             Landing Page
           </Link>
           <Link
             to="/portal"
-            className="flex-1 text-center rounded-xl bg-[#E8F4FD] border border-[#C9DFF0] py-2.5 text-xs font-bold text-[#2B7BC4] hover:bg-[#D5EBFA] transition-colors"
+            className="flex-1 text-center rounded-xl bg-[#BCCCE6] border border-[#2A3446] py-2.5 text-xs font-bold text-[#7FA0D6] hover:bg-[#161F2D] transition-colors"
           >
             Client Portal
           </Link>
@@ -285,6 +279,81 @@ function HealthPage() {
   );
 }
 
+const dashboardRoutes = {
+  "/": HomePage,
+  "/pricing": PricingPage,
+  "/work": PortfolioPage,
+  "/portfolio": PortfolioPage,
+  "/clients": ClientsPage,
+  "/about": AboutPage,
+  "/faq": FaqPage,
+  "/terms": TermsPage,
+  "/privacy": PrivacyPage,
+  "/login": AuthPage,
+  "/signup": AuthPage,
+  "/portal/deliverables": PortalDeliverablesPage,
+  "/portal/deliverables/:deliverableId": PortalDeliverablesPage,
+  "/portal/calendar": PortalCalendarPage,
+  "/portal/payments": PortalPaymentsPage,
+  "/portal/support": PortalSupportPage,
+  "/portal/support/:ticketId": ClientTicketDetailPage,
+  "/portal/account": PortalAccountPage,
+  "/portal/brand": PortalBrandDNAPage,
+  "/portal/brand-dna": PortalBrandDNAPage,
+  "/portal/library": PortalLibraryPage,
+  "/portal": PortalDashboardPage,
+  "/admin": AdminDashboard,
+  "/admin/dashboard": AdminDashboard,
+  "/admin/clients": AdminClientsPage,
+  "/admin/clients/:clientId": AdminClientsPage,
+  "/admin/clients/:clientId/brand": AdminClientBrandPage,
+  "/admin/calendar": AdminCalendarPage,
+  "/admin/deliverables": AdminDeliverablesPage,
+  "/admin/tasks": AdminTasksPage,
+  "/admin/support": AdminSupportTicketsPage,
+  "/admin/support/tickets": AdminSupportTicketsPage,
+  "/admin/support/tickets/:ticketId": AdminTicketDetailPage,
+  "/admin/support/sla": AdminSLAPerformancePage,
+  "/admin/sla": AdminSLAPerformancePage,
+  "/admin/teams": AdminTeamManagementPage,
+  "/admin/team": AdminTeamManagementPage,
+  "/admin/leave": AdminLeaveApprovalsPage,
+  "/admin/leaves": AdminLeaveApprovalsPage,
+  "/admin/revenue": AdminRevenuePage,
+  "/admin/plans": AdminPlansPage,
+  "/admin/plans-and-negotiations": AdminPlansPage,
+  "/admin/sales": AdminSalesPage,
+  "/admin/pod-dashboard": PodLeadDashboardPage,
+  "/admin/pod": PodLeadDashboardPage,
+  "/team-lead/dashboard": PodLeadDashboardPage,
+  "/team-lead/tasks": PodTaskBoardPage,
+  "/team-lead/deliverables": PodDeliverablesReviewPage,
+  "/team-lead/schedule": PodScheduleLeavePage,
+  "/team-lead/clients": PodClientAllocationsPage,
+  "/team-lead/clients/:clientId": AdminClientBrandPage,
+  "/lead/dashboard": PodLeadDashboardPage,
+  "/lead/tasks": PodTaskBoardPage,
+  "/lead/deliverables": PodDeliverablesReviewPage,
+  "/lead/schedule": PodScheduleLeavePage,
+  "/lead/clients": PodClientAllocationsPage,
+  "/lead/clients/:clientId": AdminClientBrandPage,
+  "/workstation": MemberOverviewPage,
+  "/workstation/overview": MemberOverviewPage,
+  "/member": MemberOverviewPage,
+  "/member/overview": MemberOverviewPage,
+  "/workstation/tasks": MemberTaskBoardPage,
+  "/member/tasks": MemberTaskBoardPage,
+  "/workstation/schedule": MemberSchedulePTOPage,
+  "/member/schedule": MemberSchedulePTOPage,
+  "/workstation/settings": MemberSettingsPage,
+  "/member/settings": MemberSettingsPage,
+  "/slack": SlackChatPage,
+  "/workstation/slack": SlackChatPage,
+  "/workstation/chat": SlackChatPage,
+  "/admin/slack": SlackChatPage,
+  "/portal/slack": SlackChatPage,
+};
+
 /** Prefetch the chunks a signed-in user is most likely to open next, once the browser is idle. */
 function RoutePrefetcher() {
   const { user } = useAuth();
@@ -292,10 +361,43 @@ function RoutePrefetcher() {
   const needsOnboarding = role === "client" && (user?.onboarding_stage ?? 0) < 8;
 
   useEffect(() => {
-    if (role !== "client" && role !== "admin" && role !== "super_admin") return;
-    return whenIdle(() => preloadPortalPages({ includeOnboarding: needsOnboarding }));
+    if (!role) return;
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (connection?.saveData || ["slow-2g", "2g"].includes(connection?.effectiveType ?? "")) return;
+    return whenIdle(() => {
+      if (role === "client") { preloadPortalPages({ includeOnboarding: needsOnboarding }); return; }
+      const chunks = role === "team_lead"
+        ? [import("../pages/admin/PodTaskBoardPage"), import("../pages/admin/PodDeliverablesReviewPage"), import("../pages/admin/PodScheduleLeavePage")]
+        : ["editor", "designer", "team_member"].includes(role)
+          ? [import("../pages/admin/MemberTaskBoardPage"), import("../pages/admin/MemberSchedulePTOPage")]
+          : [import("../features/admin/AdminSubPages"), import("../features/admin/AdminCalendarPage")];
+      void Promise.allSettled(chunks);
+    });
   }, [role, needsOnboarding]);
 
+  useEffect(() => {
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
+    const warmLink = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const link = target.closest("a[href]");
+      if (!(link instanceof HTMLAnchorElement) || link.origin !== location.origin) return;
+      const path = link.pathname.replace(/\/$/, "") || "/";
+      for (const [route, page] of Object.entries(dashboardRoutes)) {
+        const pattern = new RegExp(`^${route.replace(/:[^/]+/g, "[^/]+")}$`);
+        if (pattern.test(path)) { void page.preload().catch(() => {}); break; }
+      }
+    };
+    document.addEventListener("pointerover", warmLink, { passive: true });
+    document.addEventListener("focusin", warmLink);
+    document.addEventListener("touchstart", warmLink, { passive: true });
+    return () => {
+      document.removeEventListener("pointerover", warmLink);
+      document.removeEventListener("focusin", warmLink);
+      document.removeEventListener("touchstart", warmLink);
+    };
+  }, [role]);
   return null;
 }
 
@@ -314,9 +416,52 @@ function ScrollToTop() {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     document.documentElement.scrollTo({ top: 0, left: 0, behavior: "instant" });
     document.body.scrollTo({ top: 0, left: 0, behavior: "instant" });
+
+    // Reset internal container scroll positions (e.g., ops/portal layout surfaces)
+    const scrollContainers = document.querySelectorAll(
+      "main, [data-surface], .overflow-y-auto, div[class*='overflow-y-auto']"
+    );
+    scrollContainers.forEach((el) => {
+      try {
+        el.scrollTop = 0;
+      } catch (_e) {
+        // ignore non-scrollable nodes
+      }
+    });
   }, [pathname, search, hash]);
 
   return null;
+}
+
+function SupportRedirect() {
+  const { user } = useAuth();
+  if (user?.role === "admin" || user?.role === "super_admin") {
+    return <Navigate to="/admin/support" replace />;
+  }
+  if (user) {
+    return <Navigate to="/portal/support" replace />;
+  }
+  return <Navigate to="/pricing" replace />;
+}
+
+function SlackUniversalRedirect() {
+  const { user } = useAuth();
+  if (user?.role === "client") {
+    return <Navigate to="/portal/slack" replace />;
+  }
+  // Team leads have chat inside their own pod portal; only specialists use the Workstation.
+  if (
+    user?.role === "admin" ||
+    user?.role === "super_admin" ||
+    user?.role === "ops_admin" ||
+    user?.role === "team_lead"
+  ) {
+    return <Navigate to="/admin/slack" replace />;
+  }
+  if (user) {
+    return <Navigate to="/workstation/slack" replace />;
+  }
+  return <Navigate to="/login" replace />;
 }
 
 export function App() {
@@ -328,9 +473,14 @@ export function App() {
           <RoutePrefetcher />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
+              {/* Universal Support & Slack Redirects */}
+              <Route path="/support" element={<SupportRedirect />} />
+              <Route path="/slack" element={<SlackUniversalRedirect />} />
+
               {/* 1. Public Marketing Pages (Open to All) */}
               <Route element={<PublicLayout />}>
                 <Route path="/" element={<HomePage />} />
+                <Route path="/work" element={<PortfolioPage />} />
                 <Route path="/pricing" element={<PricingPage />} />
                 <Route path="/portfolio" element={<PortfolioPage />} />
                 <Route path="/clients" element={<ClientsPage />} />
@@ -370,6 +520,17 @@ export function App() {
               <Route path="/verifying" element={<CreoLoader />} />
               <Route path="/loader-preview" element={<CreoLoader />} />
 
+              {/* Meta OAuth return: outside the onboarding gate so it also works mid-onboarding.
+                  Registered as the exact INSTAGRAM_REDIRECT_URI path. */}
+              <Route
+                path="/portal/account/instagram"
+                element={
+                  <ProtectedRoute allowedRoles={["client"]}>
+                    <InstagramCallbackPage />
+                  </ProtectedRoute>
+                }
+              />
+
               {/* 3. Onboarding Multi-stage Flow (Client + Admin) */}
               <Route
                 path="/onboarding"
@@ -404,14 +565,20 @@ export function App() {
                 }
               >
                 <Route index element={<PortalDashboardPage />} />
-                <Route path="deliverables" element={<PortalDeliverablesPage />} />
+                <Route path="deliverables" element={<SimpleErrorBoundary name="Deliverables"><PortalDeliverablesPage /></SimpleErrorBoundary>} />
+                <Route path="deliverables/:deliverableId" element={<SimpleErrorBoundary name="Deliverables"><PortalDeliverablesPage /></SimpleErrorBoundary>} />
                 <Route path="calendar" element={<PortalCalendarPage />} />
-                <Route path="creative-pod" element={<PortalCreativePodPage />} />
-                <Route path="creative_pod" element={<PortalCreativePodPage />} />
+                <Route path="creative-pod" element={<Navigate to="/portal" replace />} />
+                <Route path="creative_pod" element={<Navigate to="/portal" replace />} />
                 <Route path="payments" element={<PortalPaymentsPage />} />
-                <Route path="support" element={<PortalSupportPage />} />
+                <Route path="support" element={<SimpleErrorBoundary name="Support"><PortalSupportPage /></SimpleErrorBoundary>} />
+                <Route path="support/:ticketId" element={<ClientTicketDetailPage />} />
+
                 <Route path="account" element={<PortalAccountPage />} />
+                <Route path="brand" element={<PortalBrandDNAPage />} />
+                <Route path="brand-dna" element={<PortalBrandDNAPage />} />
                 <Route path="library" element={<PortalLibraryPage />} />
+                <Route path="slack" element={<SlackChatPage />} />
               </Route>
 
               {/* 5. Agency Operations Surface (Ops Paper Surface - Admin, Super Admin, Team) */}
@@ -445,7 +612,9 @@ export function App() {
                   path="/admin/clients"
                   element={
                     <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
-                      <AdminClientsPage />
+                      <SimpleErrorBoundary name="Admin Clients">
+                        <AdminClientsPage />
+                      </SimpleErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
@@ -453,13 +622,19 @@ export function App() {
                   path="/admin/clients/:clientId"
                   element={
                     <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
-                      <AdminClientsPage />
+                      <SimpleErrorBoundary name="Admin Clients">
+                        <AdminClientsPage />
+                      </SimpleErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
                 <Route
                   path="/admin/clients/:clientId/brand"
-                  element={<AdminClientBrandPage />}
+                  element={
+                    <SimpleErrorBoundary name="Admin Client Brand Brief">
+                      <AdminClientBrandPage />
+                    </SimpleErrorBoundary>
+                  }
                 />
                 <Route path="/admin/calendar" element={<AdminCalendarPage />} />
                 <Route path="/admin/deliverables" element={<AdminDeliverablesPage />} />
@@ -467,6 +642,7 @@ export function App() {
                 <Route path="/admin/support" element={<AdminSupportTicketsPage />} />
                 <Route path="/admin/support/tickets" element={<AdminSupportTicketsPage />} />
                 <Route path="/admin/support/tickets/:ticketId" element={<AdminTicketDetailPage />} />
+                <Route path="/admin/support/:ticketId" element={<AdminTicketDetailPage />} />
                 <Route path="/admin/support/sla" element={<AdminSLAPerformancePage />} />
                 <Route path="/admin/sla" element={<AdminSLAPerformancePage />} />
                 <Route
@@ -507,6 +683,14 @@ export function App() {
                   }
                 />
                 <Route
+                  path="/admin/plans-and-negotiations"
+                  element={
+                    <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
+                      <AdminPlansPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
                   path="/admin/sales"
                   element={
                     <ProtectedRoute allowedRoles={["admin", "super_admin", "sales"]}>
@@ -526,10 +710,12 @@ export function App() {
                   path="/admin/settings"
                   element={<Navigate to="/admin" replace />}
                 />
+                <Route path="/lead" element={<Navigate to="/lead/dashboard" replace />} />
+                <Route path="/pod-lead" element={<Navigate to="/lead/dashboard" replace />} />
                 <Route
                   path="/admin/pod-dashboard"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodLeadDashboardPage />
                     </ProtectedRoute>
                   }
@@ -537,7 +723,7 @@ export function App() {
                 <Route
                   path="/admin/pod"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodLeadDashboardPage />
                     </ProtectedRoute>
                   }
@@ -547,7 +733,7 @@ export function App() {
                 <Route
                   path="/team-lead/dashboard"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodLeadDashboardPage />
                     </ProtectedRoute>
                   }
@@ -555,7 +741,7 @@ export function App() {
                 <Route
                   path="/team-lead/tasks"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodTaskBoardPage />
                     </ProtectedRoute>
                   }
@@ -563,7 +749,7 @@ export function App() {
                 <Route
                   path="/team-lead/deliverables"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodDeliverablesReviewPage />
                     </ProtectedRoute>
                   }
@@ -571,7 +757,7 @@ export function App() {
                 <Route
                   path="/team-lead/schedule"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodScheduleLeavePage />
                     </ProtectedRoute>
                   }
@@ -579,7 +765,7 @@ export function App() {
                 <Route
                   path="/team-lead/clients"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodClientAllocationsPage />
                     </ProtectedRoute>
                   }
@@ -587,8 +773,10 @@ export function App() {
                 <Route
                   path="/team-lead/clients/:clientId"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
-                      <AdminClientBrandPage />
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
+                      <SimpleErrorBoundary name="Team Lead Client Details">
+                        <AdminClientBrandPage />
+                      </SimpleErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
@@ -596,15 +784,26 @@ export function App() {
                 <Route
                   path="/lead/dashboard"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodLeadDashboardPage />
                     </ProtectedRoute>
                   }
                 />
                 <Route
+                  path="/admin/publishing"
+                  element={
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
+                      <PublishingPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="/lead/publishing" element={<Navigate to="/admin/publishing" replace />} />
+                <Route path="/workstation/publishing" element={<Navigate to="/admin/publishing" replace />} />
+                <Route path="/member/publishing" element={<Navigate to="/admin/publishing" replace />} />
+                <Route
                   path="/lead/tasks"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodTaskBoardPage />
                     </ProtectedRoute>
                   }
@@ -612,7 +811,7 @@ export function App() {
                 <Route
                   path="/lead/deliverables"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodDeliverablesReviewPage />
                     </ProtectedRoute>
                   }
@@ -620,7 +819,7 @@ export function App() {
                 <Route
                   path="/lead/schedule"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodScheduleLeavePage />
                     </ProtectedRoute>
                   }
@@ -628,7 +827,7 @@ export function App() {
                 <Route
                   path="/lead/clients"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
                       <PodClientAllocationsPage />
                     </ProtectedRoute>
                   }
@@ -636,8 +835,10 @@ export function App() {
                 <Route
                   path="/lead/clients/:clientId"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead"]}>
-                      <AdminClientBrandPage />
+                    <ProtectedRoute allowedRoles={["admin", "super_admin", "team_lead", "team_member", "editor", "designer"]}>
+                      <SimpleErrorBoundary name="Lead Client Details">
+                        <AdminClientBrandPage />
+                      </SimpleErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
@@ -657,11 +858,13 @@ export function App() {
                 <Route path="/workstation/schedule" element={<MemberSchedulePTOPage />} />
                 <Route path="/member/schedule" element={<MemberSchedulePTOPage />} />
 
-                {/* Universal Slack Hub */}
-                <Route path="/slack" element={<SlackChatPage />} />
+                <Route path="/workstation/settings" element={<MemberSettingsPage />} />
+                <Route path="/member/settings" element={<MemberSettingsPage />} />
+
+                {/* Team & Admin Slack Hub */}
                 <Route path="/workstation/slack" element={<SlackChatPage />} />
+                <Route path="/workstation/chat" element={<SlackChatPage />} />
                 <Route path="/admin/slack" element={<SlackChatPage />} />
-                <Route path="/portal/slack" element={<SlackChatPage />} />
 
                 {/* Redirect legacy Kanban routes to Task Queue */}
                 <Route path="/dashboard" element={<Navigate to="/admin/pod-dashboard" replace />} />

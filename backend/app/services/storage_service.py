@@ -8,13 +8,24 @@ Key guarantees:
 - confirm HEAD-checks the object before marking it usable
 - signed_get generates short-lived read URLs per-request
 - storage_key namespacing: clients/{client_id}/{yyyy}/{mm}/{uuid}.{ext}
+- resolve_media_url turns any stored file_url into something a browser on
+  another origin can load (signed URL or absolute API URL), never a bare key
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
+import time as clock_time
+from collections import OrderedDict
+from threading import Lock
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, Literal
+from functools import lru_cache
+from typing import IO, Any, Literal
+from urllib.parse import quote
+from weakref import WeakValueDictionary
 
 import structlog
 
@@ -30,9 +41,34 @@ ALLOWED_MIMES: dict[str, str] = {
     "image/jpeg": "jpg",
     "image/jpg": "jpg",
     "image/webp": "webp",
+    "image/gif": "gif",
+    "image/svg+xml": "svg",
+    "application/pdf": "pdf",
+    "application/zip": "zip",
+    "application/x-zip-compressed": "zip",
+    "font/ttf": "ttf",
+    "font/otf": "otf",
+    "font/woff": "woff",
+    "font/woff2": "woff2",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
 }
 
-MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024  # 512 MB
+# App Flow 6.4: 10 MB for images, 500 MB for videos.
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024
+MAX_FILE_SIZE_BYTES = MAX_VIDEO_SIZE_BYTES
+
+LOCAL_UPLOAD_PREFIXES = ("/static/", "/uploads/")
+_LOCAL_STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+
+
+def max_size_for(mime_type: str) -> int:
+    if mime_type.startswith("video/"):
+        return MAX_VIDEO_SIZE_BYTES
+    if mime_type in ("application/zip", "application/x-zip-compressed", "application/pdf"):
+        return 100 * 1024 * 1024
+    return 25 * 1024 * 1024
 
 
 class StorageError(Exception):
@@ -56,13 +92,27 @@ class UnsupportedMimeType(StorageError):
 
 
 class FileTooLarge(StorageError):
-    """Raised when the declared file size exceeds MAX_FILE_SIZE_BYTES."""
+    """Raised when the declared file size exceeds the limit for its media kind."""
 
-    def __init__(self, size_bytes: int) -> None:
-        max_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+    def __init__(self, size_bytes: int, limit_bytes: int = MAX_FILE_SIZE_BYTES) -> None:
+        max_mb = limit_bytes // (1024 * 1024)
         super().__init__(
-            f"File size {size_bytes} bytes exceeds the maximum allowed ({max_mb} MB)",
+            f"File exceeds maximum size ({max_mb}MB for this file type); got {size_bytes} bytes",
             code="FILE_TOO_LARGE",
+        )
+
+
+def validate_media(mime_type: str, file_size_bytes: int) -> None:
+    """Reject unsupported types and oversized or empty files before any storage call."""
+    if mime_type not in ALLOWED_MIMES:
+        raise UnsupportedMimeType(mime_type)
+    limit = max_size_for(mime_type)
+    if file_size_bytes <= 0 or file_size_bytes > limit:
+        raise FileTooLarge(file_size_bytes, limit)
+    if mime_type.startswith("video/") and file_size_bytes < 1024:
+        raise StorageError(
+            f"Video file is corrupt or too small ({file_size_bytes} bytes; minimum 1KB required)",
+            code="INVALID_VIDEO_FILE",
         )
 
 
@@ -86,20 +136,46 @@ class ContentLengthMismatch(StorageError):
         )
 
 
-def _make_storage_key(client_id: uuid.UUID, mime_type: str) -> str:
-    """Generate namespaced storage key: clients/{client_id}/{yyyy}/{mm}/{uuid}.{ext}"""
+def make_storage_key(owner_id: uuid.UUID, mime_type: str, prefix: str = "clients") -> str:
+    """Generate namespaced storage key: {prefix}/{owner_id}/{yyyy}/{mm}/{uuid}.{ext}"""
     now = datetime.now(UTC)
     ext = ALLOWED_MIMES[mime_type]
     file_uuid = uuid.uuid4()
-    return f"clients/{client_id}/{now.year}/{now.month:02d}/{file_uuid}.{ext}"
+    return f"{prefix}/{owner_id}/{now.year}/{now.month:02d}/{file_uuid}.{ext}"
+
+
+_s3_healthy: bool | None = None
+
+
+def mark_s3_unhealthy(reason: str) -> None:
+    global _s3_healthy
+    _s3_healthy = False
+    log.warning("s3_marked_unhealthy_using_supabase", reason=reason)
+
+
+def _check_s3_health() -> bool:
+    """Inspect configuration without making a blocking bucket probe.
+
+    Signing an R2 URL is local cryptography. A bucket HEAD here used to block
+    the API event loop on the first media list, potentially for SDK retries.
+    Actual storage operations still validate access and can mark R2 unhealthy.
+    """
+    return settings.STORAGE_S3_ENABLED and _s3_healthy is not False and bool(
+        settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY
+    )
 
 
 def _is_s3_configured() -> bool:
-    return bool(settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY)
+    return _check_s3_health()
 
 
 def _is_supabase_configured() -> bool:
     return bool(settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY)
+
+
+def supports_direct_upload() -> bool:
+    """True when a remote bucket can accept browser PUTs via pre-signed URLs."""
+    return _is_s3_configured() or _is_supabase_configured()
 
 
 def _supabase_headers() -> dict[str, str]:
@@ -110,21 +186,36 @@ def _supabase_headers() -> dict[str, str]:
 
 
 def _get_s3_client() -> Any:
-    """Lazily create a boto3 S3 client (avoids import cost at module level)."""
+    """Reuse SDK clients; credential/endpoint changes get a separate instance."""
+    return _s3_client_for(
+        settings.STORAGE_REGION or "auto", settings.STORAGE_ENDPOINT_URL,
+        settings.AWS_ACCESS_KEY_ID, settings.AWS_SECRET_ACCESS_KEY,
+    )
+
+
+@lru_cache(maxsize=4)
+def _s3_client_for(region: str, endpoint: str | None, access_key: str, secret_key: str) -> Any:
     try:
         import importlib
 
         boto3: Any = importlib.import_module("boto3")
+        botocore_config: Any = importlib.import_module("botocore.config")
 
         kwargs: dict[str, Any] = {
-            "region_name": settings.STORAGE_REGION or "auto",
+            "region_name": region,
+            # Cloudflare R2 only accepts SigV4; without this botocore may sign
+            # pre-signed URLs with legacy SigV2, which R2 rejects.
+            "config": botocore_config.Config(
+                signature_version="s3v4", connect_timeout=5, read_timeout=60,
+                retries={"max_attempts": 1},
+            ),
         }
-        if settings.AWS_ACCESS_KEY_ID:
-            kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
-        if settings.AWS_SECRET_ACCESS_KEY:
-            kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
-        if settings.STORAGE_ENDPOINT_URL:
-            kwargs["endpoint_url"] = settings.STORAGE_ENDPOINT_URL
+        if access_key:
+            kwargs["aws_access_key_id"] = access_key
+        if secret_key:
+            kwargs["aws_secret_access_key"] = secret_key
+        if endpoint:
+            kwargs["endpoint_url"] = endpoint
 
         return boto3.client("s3", **kwargs)
     except (ImportError, ModuleNotFoundError) as exc:
@@ -132,6 +223,17 @@ def _get_s3_client() -> Any:
             "boto3 is not installed. Add it to pyproject.toml dependencies.",
             code="BOTO3_MISSING",
         ) from exc
+
+
+@lru_cache(maxsize=1)
+def _storage_http_client() -> Any:
+    """httpx clients are thread-safe; reuse TLS connections for media signing."""
+    import httpx
+
+    return httpx.Client(
+        timeout=10.0,
+        limits=httpx.Limits(max_connections=12, max_keepalive_connections=8),
+    )
 
 
 def upload_intent(
@@ -143,15 +245,9 @@ def upload_intent(
 
     Supports Cloudflare R2, AWS S3, and Supabase Storage.
     """
-    # 1. MIME validation
-    if mime_type not in ALLOWED_MIMES:
-        raise UnsupportedMimeType(mime_type)
+    validate_media(mime_type, file_size_bytes)
 
-    # 2. Size validation
-    if file_size_bytes > MAX_FILE_SIZE_BYTES:
-        raise FileTooLarge(file_size_bytes)
-
-    storage_key = _make_storage_key(client_id, mime_type)
+    storage_key = make_storage_key(client_id, mime_type)
     ttl = settings.PRESIGNED_URL_TTL  # 15 min by default
 
     # 1. Prioritize Cloudflare R2 / S3 if credentials configured
@@ -286,6 +382,8 @@ def confirm_upload(storage_key: str, declared_size_bytes: int) -> dict[str, obje
             error_str = str(exc)
             if "404" in error_str or "NoSuchKey" in error_str or "Not Found" in error_str:
                 raise ObjectNotFound(storage_key) from exc
+            if "403" in error_str or "AccessDenied" in error_str or "Forbidden" in error_str:
+                mark_s3_unhealthy(error_str)
             log.warning("r2_confirm_failed", error=str(exc))
             if not _is_supabase_configured():
                 if settings.ENVIRONMENT in ("development", "test"):
@@ -334,21 +432,43 @@ def confirm_upload(storage_key: str, declared_size_bytes: int) -> dict[str, obje
     raise StorageError(f"No storage provider configured for confirmation of {storage_key}")
 
 
-def signed_get(storage_key: str, ttl: int = 900, expires_in: int | None = None) -> str:
+def _attachment_header(filename: str) -> str:
+    safe = "".join(ch for ch in filename if ch.isalnum() or ch in "._- ") or "creo-asset"
+    return f'attachment; filename="{safe}"'
+
+
+def signed_get(
+    storage_key: str,
+    ttl: int = 900,
+    expires_in: int | None = None,
+    download_filename: str | None = None,
+) -> str:
     """Generate a short-lived pre-signed GET URL for the object.
 
     The bucket is NEVER public. Every read request must use a fresh signed URL.
-    Prioritizes Cloudflare R2 / S3 when configured, falling back to Supabase Storage.
+    Respects provider prefixes (r2://, supabase://). If no prefix is present,
+    it falls back to available providers in priority order.
     """
     effective_ttl = expires_in if expires_in is not None else ttl
 
-    # 1. Prioritize Cloudflare R2 / S3 if credentials configured
-    if _is_s3_configured():
+    provider = None
+    if storage_key.startswith("r2://"):
+        provider = "r2"
+        storage_key = storage_key[5:]
+    elif storage_key.startswith("supabase://"):
+        provider = "supabase"
+        storage_key = storage_key[11:]
+
+    # 1. Cloudflare R2 / S3
+    if (provider == "r2" or provider is None) and _is_s3_configured():
         try:
             s3 = _get_s3_client()
+            params: dict[str, str] = {"Bucket": settings.STORAGE_BUCKET, "Key": storage_key}
+            if download_filename:
+                params["ResponseContentDisposition"] = _attachment_header(download_filename)
             url: str = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": settings.STORAGE_BUCKET, "Key": storage_key},
+                Params=params,
                 ExpiresIn=effective_ttl,
             )
             return url
@@ -356,14 +476,14 @@ def signed_get(storage_key: str, ttl: int = 900, expires_in: int | None = None) 
             raise
         except Exception as exc:
             log.warning("r2_signed_get_failed", error=str(exc))
-            if not _is_supabase_configured():
-                if settings.ENVIRONMENT in ("development", "test"):
-                    return f"https://{settings.STORAGE_BUCKET}.s3.amazonaws.com/{storage_key}?presigned=mock"
-                raise StorageError(f"Failed to generate signed GET URL: {exc}") from exc
+            if provider == "r2":
+                raise StorageError(f"Failed to generate signed GET URL for R2: {exc}") from exc
+            # If no explicit provider, fall through
 
     # 2. Supabase Storage fallback
-    if _is_supabase_configured():
+    if (provider == "supabase" or provider is None) and _is_supabase_configured():
         import httpx
+        from urllib.parse import quote
 
         sign_url = (
             f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1/object/sign/"
@@ -371,32 +491,225 @@ def signed_get(storage_key: str, ttl: int = 900, expires_in: int | None = None) 
         )
         headers = {**_supabase_headers(), "Content-Type": "application/json"}
         try:
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.post(sign_url, headers=headers, json={"expiresIn": effective_ttl})
-                if resp.status_code in (200, 201):
-                    signed_path = resp.json().get("signedURL", "")
-                    return f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1{signed_path}"
-                log.warning("supabase_signed_get_bad_status", status=resp.status_code, body=resp.text)
-                if resp.status_code in (400, 404):
-                    if settings.ENVIRONMENT in ("development", "test"):
-                        return (
-                            f"https://{settings.STORAGE_BUCKET}.s3.amazonaws.com/{storage_key}?presigned=mock"
-                        )
-                    raise ObjectNotFound(storage_key)
+            resp = _storage_http_client().post(sign_url, headers=headers, json={"expiresIn": effective_ttl})
+            if resp.status_code in (200, 201):
+                signed_path = resp.json().get("signedURL", "")
+                signed = f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1{signed_path}"
+                if download_filename:
+                    sep = "&" if "?" in signed else "?"
+                    signed = f"{signed}{sep}download={quote(download_filename)}"
+                return signed
+            log.warning("supabase_signed_get_bad_status", status=resp.status_code)
+            if resp.status_code in (400, 404):
+                if settings.ENVIRONMENT in ("development", "test"):
+                    return f"https://{settings.STORAGE_BUCKET}.s3.amazonaws.com/{storage_key}?presigned=mock"
+                raise ObjectNotFound(storage_key)
         except ObjectNotFound:
             raise
         except Exception as exc:
             log.warning("supabase_signed_get_error", error=str(exc))
-            if settings.ENVIRONMENT in ("development", "test"):
-                return (
-                    f"https://{settings.STORAGE_BUCKET}.s3.amazonaws.com/{storage_key}?presigned=mock"
-                )
-            raise StorageError(f"Failed to generate signed GET URL: {exc}") from exc
+            if provider == "supabase":
+                raise StorageError(f"Failed to generate signed GET URL for Supabase: {exc}") from exc
 
     if settings.ENVIRONMENT in ("development", "test"):
         return f"https://{settings.STORAGE_BUCKET}.s3.amazonaws.com/{storage_key}?presigned=mock"
 
     raise StorageError("No storage provider configured to generate signed GET URL")
+
+
+def _chunks(fileobj: IO[bytes], size: int = 1024 * 1024) -> Iterator[bytes]:
+    while chunk := fileobj.read(size):
+        yield chunk
+
+
+class NonClosingWrapper:
+    def __init__(self, fileobj: IO[bytes]) -> None:
+        self._fileobj = fileobj
+    def read(self, *args: Any, **kwargs: Any) -> bytes:
+        return self._fileobj.read(*args, **kwargs)
+    def seek(self, *args: Any, **kwargs: Any) -> int:
+        return self._fileobj.seek(*args, **kwargs)
+    def tell(self, *args: Any, **kwargs: Any) -> int:
+        return self._fileobj.tell(*args, **kwargs)
+    def close(self) -> None:
+        pass
+    @property
+    def closed(self) -> bool:
+        return False
+
+def put_object(storage_key: str, fileobj: IO[bytes], mime_type: str, size_bytes: int) -> str:
+    """Store an uploaded file server-side and return the value to persist as file_url.
+
+    Used when the browser cannot PUT directly to the bucket (for example when the
+    bucket has no CORS rule for the frontend origin). Remote providers return the
+    storage key; local disk is used only in development/test and returns a
+    /static path, because a container's disk does not survive a redeploy.
+    Blocking: call through asyncio.to_thread from request handlers.
+    """
+    validate_media(mime_type, size_bytes)
+
+    if _is_s3_configured():
+        try:
+            s3 = _get_s3_client()
+            s3.upload_fileobj(
+                NonClosingWrapper(fileobj),
+                settings.STORAGE_BUCKET,
+                storage_key,
+                ExtraArgs={"ContentType": mime_type},
+            )
+            log.info("r2_server_upload_stored", storage_key=storage_key, size_bytes=size_bytes)
+            return f"r2://{storage_key}"
+        except Exception as exc:
+            error_str = str(exc)
+            if "403" in error_str or "AccessDenied" in error_str or "Forbidden" in error_str:
+                mark_s3_unhealthy(error_str)
+            log.error("r2_server_upload_failed", error=str(exc), storage_key=storage_key)
+            if not _is_supabase_configured():
+                raise StorageError(f"Upload to storage failed: {exc}") from exc
+            fileobj.seek(0)
+
+    if _is_supabase_configured():
+        import httpx
+
+        upload_url = (
+            f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1/object/"
+            f"{settings.STORAGE_BUCKET}/{storage_key}"
+        )
+        headers = {
+            **_supabase_headers(),
+            "Content-Type": mime_type,
+            "Content-Length": str(size_bytes),
+            "x-upsert": "true",
+        }
+        try:
+            with httpx.Client(timeout=300.0) as client:
+                resp = client.post(upload_url, headers=headers, content=_chunks(fileobj))
+        except Exception as exc:
+            raise StorageError(f"Upload to storage failed: {exc}") from exc
+        if resp.status_code not in (200, 201):
+            raise StorageError(f"Upload to storage failed with HTTP {resp.status_code}: {resp.text[:200]}")
+        log.info("supabase_server_upload_stored", storage_key=storage_key, size_bytes=size_bytes)
+        return f"supabase://{storage_key}"
+
+    if settings.ENVIRONMENT in ("development", "test"):
+        relative = os.path.join("uploads", storage_key)
+        destination = os.path.join(_LOCAL_STATIC_DIR, relative)
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        with open(destination, "wb") as out:
+            for chunk in _chunks(fileobj):
+                out.write(chunk)
+        log.info("local_dev_upload_stored", path=destination)
+        return "/static/" + relative.replace(os.sep, "/")
+
+    raise StorageError("No storage provider is configured for deliverable uploads")
+
+
+def public_base_url(request: Any | None) -> str:
+    """Absolute origin of this API, honouring the proxy's forwarded scheme/host."""
+    if settings.PUBLIC_API_BASE_URL:
+        return settings.PUBLIC_API_BASE_URL.rstrip("/")
+    if request is None:
+        return ""
+    headers = request.headers
+    scheme = headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = headers.get("x-forwarded-host") or headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+_signed_media_cache: OrderedDict[tuple, tuple[float, str]] = OrderedDict()
+_signed_media_lock = Lock()
+_signing_locks: WeakValueDictionary[tuple, Any] = WeakValueDictionary()
+
+
+def _cached_signed_media(raw: str, filename: str | None) -> str:
+    # Supabase's download name is an unsigned query parameter. Reuse its preview
+    # signature instead of another provider round trip for every approved file.
+    supabase = raw.startswith("supabase://") or (
+        not raw.startswith("r2://") and not _is_s3_configured() and _is_supabase_configured()
+    )
+    if filename and supabase:
+        url = _cached_signed_media(raw, None)
+        return f"{url}{'&' if '?' in url else '?'}download={quote(filename)}"
+
+    # Only media URLs are cached, after each caller's record-level authorization.
+    key = (settings.STORAGE_ENDPOINT_URL, settings.SUPABASE_URL, settings.STORAGE_BUCKET,
+           settings.STORAGE_S3_ENABLED, settings.AWS_ACCESS_KEY_ID, raw, filename)
+    with _signed_media_lock:
+        lock = _signing_locks.get(key)
+        if lock is None:
+            lock = Lock()
+            _signing_locks[key] = lock
+    # Concurrent calendar and gallery requests share one signing operation.
+    with lock:
+        with _signed_media_lock:
+            hit = _signed_media_cache.get(key)
+            if hit and hit[0] > clock_time.monotonic():
+                _signed_media_cache.move_to_end(key)
+                return hit[1]
+        result = signed_get(raw, download_filename=filename)
+        duration = max(0, min(300, settings.PRESIGNED_URL_TTL - 60))
+        with _signed_media_lock:
+            _signed_media_cache[key] = (clock_time.monotonic() + duration, result)
+            _signed_media_cache.move_to_end(key)
+            while len(_signed_media_cache) > 1024:
+                _signed_media_cache.popitem(last=False)
+        return result
+
+
+def resolve_media_url(
+    raw: str | None,
+    request: Any | None = None,
+    download_filename: str | None = None,
+) -> str | None:
+    """Turn a stored file_url into a URL a browser on the frontend origin can load.
+
+    - http(s) URLs pass through unchanged
+    - local /static or /uploads paths become absolute API URLs
+    - prefixed keys (r2://, supabase://) resolve via the specified provider
+    - legacy keys fall back to local disk if present, else signed via available provider
+    """
+    if not raw:
+        return None
+    if raw.startswith(("http://", "https://")):
+        return raw
+    if raw.startswith(LOCAL_UPLOAD_PREFIXES):
+        return f"{public_base_url(request)}{raw}"
+
+    # Prefix stripping for explicit provider URLs
+    provider = None
+    if raw.startswith("r2://"):
+        provider = "r2"
+        raw = raw[5:]
+    elif raw.startswith("supabase://"):
+        provider = "supabase"
+        raw = raw[11:]
+    elif raw.startswith("local://"):
+        return f"{public_base_url(request)}/static/uploads/{raw[8:]}"
+
+    # For legacy or unspecified provider, check local fallback first
+    if not provider and settings.ENVIRONMENT in ("development", "test"):
+        local_path = os.path.join(_LOCAL_STATIC_DIR, "uploads", raw)
+        if os.path.exists(local_path):
+            # Windows path separators fix for URL
+            relative_url = f"/static/uploads/{raw}".replace("\\", "/")
+            return f"{public_base_url(request)}{relative_url}"
+
+    try:
+        return _cached_signed_media(f"{provider}://{raw}" if provider else raw, download_filename)
+    except Exception as exc:
+        log.warning("media_url_sign_failed", key=raw, error=str(exc))
+        return None
+
+
+async def resolve_media_urls(raw_urls: list[str | None], request: Any | None = None) -> dict[str, str | None]:
+    """Resolve authorized rows concurrently, with bounded provider pressure."""
+    semaphore = asyncio.Semaphore(6)
+
+    async def resolve(raw: str) -> tuple[str, str | None]:
+        async with semaphore:
+            return raw, await asyncio.to_thread(resolve_media_url, raw, request)
+
+    return dict(await asyncio.gather(*(resolve(raw) for raw in dict.fromkeys(raw_urls) if raw)))
 
 
 StorageKind = Literal["upload_intent", "confirm", "signed_get"]

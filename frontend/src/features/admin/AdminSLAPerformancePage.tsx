@@ -18,35 +18,35 @@ export function AdminSLAPerformancePage() {
     {
       pod: "Pod A",
       lead: "Vikram Malhotra",
-      bg: "bg-[#E0E7FF]",
-      text: "text-[#4338CA]",
+      bg: "bg-[#161F2D]",
+      text: "text-[#7FA0D6]",
       slaMet: "99.4%",
       avgResponse: "6.2m",
       resolved: "42 tickets",
       status: "OPTIMAL",
-      statusBg: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      statusBg: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     },
     {
       pod: "Pod B",
       lead: "Sarah Connor",
-      bg: "bg-[#DBEAFE]",
-      text: "text-[#1E40AF]",
+      bg: "bg-[#161F2D]",
+      text: "text-[#7FA0D6]",
       slaMet: "98.8%",
       avgResponse: "7.8m",
       resolved: "38 tickets",
       status: "OPTIMAL",
-      statusBg: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      statusBg: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     },
     {
       pod: "Pod C",
       lead: "Rohan Mehta",
-      bg: "bg-[#FEE2E2]",
-      text: "text-[#991B1B]",
+      bg: "bg-[#161F2D]",
+      text: "text-[#D8BF9B]",
       slaMet: "97.5%",
       avgResponse: "9.1m",
       resolved: "35 tickets",
       status: "OPTIMAL",
-      statusBg: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      statusBg: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     },
   ];
 
@@ -59,7 +59,7 @@ export function AdminSLAPerformancePage() {
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className="px-6 lg:px-8 py-6 max-w-[1500px] w-full mx-auto space-y-6"
+          className="px-3.5 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-8 max-w-[1500px] w-full mx-auto space-y-4 sm:space-y-6"
         >
           {/* Top 2 KPI Metric Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -115,9 +115,9 @@ export function AdminSLAPerformancePage() {
           </div>
 
           {/* Row 1: Chart & Compliance by Priority */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
             {/* Chart Card (2 Cols) */}
-            <div className="lg:col-span-2 bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-6 shadow-xs space-y-4 hover-card-innovative">
+            <div className="lg:col-span-2 bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4 hover-card-innovative">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#2A3446] pb-4">
                 <div>
                   <h3 className="text-base font-black text-white">Response & Resolution Trend</h3>
@@ -150,12 +150,12 @@ export function AdminSLAPerformancePage() {
                   <svg className="w-full h-full" viewBox="0 0 500 110" preserveAspectRatio="none">
                     <defs>
                       <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.35" />
-                        <stop offset="100%" stopColor="#3B82F6" stopOpacity="0.02" />
+                        <stop offset="0%" stopColor="#7FA0D6" stopOpacity="0.35" />
+                        <stop offset="100%" stopColor="#7FA0D6" stopOpacity="0.02" />
                       </linearGradient>
                       <linearGradient id="indigoGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#6366F1" stopOpacity="0.25" />
-                        <stop offset="100%" stopColor="#6366F1" stopOpacity="0.0" />
+                        <stop offset="0%" stopColor="#7FA0D6" stopOpacity="0.25" />
+                        <stop offset="100%" stopColor="#7FA0D6" stopOpacity="0.0" />
                       </linearGradient>
                     </defs>
                     {/* Area Fill */}
@@ -167,7 +167,7 @@ export function AdminSLAPerformancePage() {
                     <path
                       d="M 0 68 C 60 40, 120 72, 180 44 C 240 20, 300 58, 360 32 C 420 14, 470 48, 500 24"
                       fill="none"
-                      stroke="#3B82F6"
+                      stroke="#7FA0D6"
                       strokeWidth="3.5"
                       strokeLinecap="round"
                     />
@@ -175,7 +175,7 @@ export function AdminSLAPerformancePage() {
                     <path
                       d="M 0 82 C 60 55, 120 68, 180 54 C 240 34, 300 50, 360 40 C 420 24, 470 38, 500 34"
                       fill="none"
-                      stroke="#818CF8"
+                      stroke="#BCCCE6"
                       strokeWidth="2.5"
                       strokeDasharray="5 3"
                       strokeLinecap="round"
@@ -196,7 +196,7 @@ export function AdminSLAPerformancePage() {
             </div>
 
             {/* Compliance by Priority Card (1 Col) */}
-            <div className="bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-6 shadow-xs space-y-5 hover-card-innovative">
+            <div className="bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4 sm:space-y-5 hover-card-innovative">
               <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
                 <div>
                   <h3 className="text-base font-black text-white">Compliance by Priority</h3>
@@ -267,9 +267,9 @@ export function AdminSLAPerformancePage() {
           </div>
 
           {/* Row 2: Pod Efficiency Leaderboard & Active Breach Warnings */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
             {/* Leaderboard (2 Cols) */}
-            <div className="lg:col-span-2 bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-6 shadow-xs space-y-4 hover-card-innovative">
+            <div className="lg:col-span-2 bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4 hover-card-innovative">
               <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-white">Pod Efficiency Leaderboard</h3>
@@ -291,7 +291,7 @@ export function AdminSLAPerformancePage() {
                       <th className="px-4 py-3 text-right">STATUS</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
+                  <tbody className="divide-y divide-[#2A3446] font-medium">
                     {podLeaderboard.map((item) => (
                       <tr key={item.pod} className="hover:bg-[#0B111C] transition-colors">
                         <td className="px-4 py-3.5">
@@ -325,7 +325,7 @@ export function AdminSLAPerformancePage() {
             </div>
 
             {/* Active Breach Warnings (1 Col) */}
-            <div className="bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-6 shadow-xs space-y-4 hover-card-innovative">
+            <div className="bg-[#161F2D] border border-[#2A3446]/90 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4 hover-card-innovative">
               <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
                 <h3 className="text-sm font-bold text-white">Active Breach Warnings</h3>
                 <span className="text-[11px] font-bold text-[#7FA0D6] bg-[#7FA0D6]/15 px-2.5 py-0.5 rounded-full border border-[#7FA0D6]/30">
@@ -402,6 +402,7 @@ export function AdminSLAPerformancePage() {
                     <span className="text-xs font-semibold text-amber-400">Auto-load balancing recommended</span>
                     <button
                       type="button"
+                      onClick={() => navigate("/admin/tasks")}
                       className="px-3 py-1 rounded-lg bg-[#0B111C] border border-amber-500/30 text-amber-300 font-bold text-[11px] hover:bg-amber-950/50 transition-colors cursor-pointer"
                     >
                       Monitor

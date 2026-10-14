@@ -11,12 +11,15 @@ The client NEVER ends up with nothing or an error.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 import uuid
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, get_args
 
 import httpx
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +36,14 @@ from app.schemas.brand_dna import (
     ContentPillar,
     LanguageRules,
     ProductionProfile,
+    TeamBrief,
     ToneProfile,
     VisualDirection,
 )
 from app.services.gemini_client import generate_gemini_content
 
 logger = get_logger(__name__)
+BRAND_DNA_PROMPT = (Path(__file__).parents[1] / "prompts" / "brand_dna.md").read_text(encoding="utf-8")
 
 # Daily Brand DNA regeneration cap
 MAX_DAILY_REGENERATIONS = 5
@@ -66,6 +71,14 @@ def sanitize_for_llm(answers: dict[str, Any]) -> dict[str, Any]:
     NEVER sends upstream: instagram handle, cta target (URL/phone), uploaded file
     URLs, founder name, or contact details.
     """
+    def strip_private_fields(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: strip_private_fields(item) for key, item in value.items()
+                    if key not in {"post_url", "handle", "url", "file_url", "email", "phone", "cta_target"}}
+        if isinstance(value, list):
+            return [strip_private_fields(item) for item in value]
+        return value
+
     clean: dict[str, Any] = {}
     for sec_key, allowed_fields in LLM_ALLOWLIST.items():
         sec_data = answers.get(sec_key, {})
@@ -74,7 +87,7 @@ def sanitize_for_llm(answers: dict[str, Any]) -> dict[str, Any]:
         clean[sec_key] = {}
         for f in allowed_fields:
             if f in sec_data:
-                clean[sec_key][f] = sec_data[f]
+                clean[sec_key][f] = strip_private_fields(sec_data[f])
     return clean
 
 
@@ -199,7 +212,7 @@ def generate_deterministic_brand_dna(answers: dict[str, Any]) -> BrandDNA:
         on_camera = [on_camera]
     founder_comfort = str(e.get("founder_comfort", "yes_confident"))
 
-    can_shoot_people = "no_people_product_only" not in on_camera
+    can_shoot_people = bool(set(on_camera) & {"founder", "team_members", "customers", "professional_model"})
     founder_on_cam = (founder_comfort in ["yes_confident", "yes_with_direction"]) and ("founder" in on_camera)
 
     infeasible: list[str] = []
@@ -208,6 +221,7 @@ def generate_deterministic_brand_dna(answers: dict[str, Any]) -> BrandDNA:
         infeasible.append("founder_face_to_camera")
     if not can_shoot_people:
         infeasible.append("customer_testimonials")
+        infeasible.append("testimonial")
         infeasible.append("ugc_style")
     for f in (e.get("format_exclusions") or []):
         if f not in infeasible:
@@ -341,26 +355,149 @@ def generate_deterministic_brand_dna(answers: dict[str, Any]) -> BrandDNA:
     )
 
 
-async def synthesize_brand_dna(answers: dict[str, Any]) -> tuple[BrandDNA, str]:
+_SCHEMA_KEYS_KEPT = {
+    "type", "properties", "required", "items", "enum", "anyOf", "$defs", "$ref",
+    "minItems", "maxItems", "minimum", "maximum", "description", "additionalProperties",
+}
+
+
+def gemini_json_schema(model_cls: type[BaseModel]) -> dict[str, Any]:
+    """Pydantic JSON schema reduced to the keywords Gemini's responseJsonSchema supports."""
+
+    def clean(node: Any) -> Any:
+        if isinstance(node, dict):
+            out: dict[str, Any] = {}
+            for key, value in node.items():
+                if key == "const":
+                    out["enum"] = [value]
+                elif key in ("properties", "$defs"):
+                    out[key] = {k: clean(v) for k, v in value.items()}
+                elif key in _SCHEMA_KEYS_KEPT:
+                    out[key] = clean(value)
+            return out
+        if isinstance(node, list):
+            return [clean(item) for item in node]
+        return node
+
+    return clean(model_cls.model_json_schema())
+
+
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    for arg in get_args(annotation):
+        found = _nested_model(arg)
+        if found:
+            return found
+    return None
+
+
+def fit_to_model(model_cls: type[BaseModel], data: Any) -> Any:
+    """Trim over-long strings/lists and drop unknown keys so near-miss LLM output validates
+    instead of throwing the whole answer away."""
+    if not isinstance(data, dict):
+        return data
+    out: dict[str, Any] = {}
+    for name, field in model_cls.model_fields.items():
+        if name not in data:
+            continue
+        value = data[name]
+        max_len = next((m.max_length for m in field.metadata if getattr(m, "max_length", None)), None)
+        inner = _nested_model(field.annotation)
+        if isinstance(value, str) and max_len:
+            value = value[:max_len]
+        elif isinstance(value, list):
+            if inner:
+                value = [fit_to_model(inner, v) for v in value]
+            if max_len:
+                value = value[:max_len]
+        elif isinstance(value, dict) and inner:
+            value = fit_to_model(inner, value)
+        out[name] = value
+    return out
+
+
+def parse_llm_brand_dna(raw_text: str) -> BrandDNA:
+    text = raw_text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.find("{"):]
+    return BrandDNA.model_validate(fit_to_model(BrandDNA, json.loads(text)))
+
+
+def build_deterministic_team_brief(dna: BrandDNA) -> TeamBrief:
+    """Team brief assembled from the Brand DNA itself, used when no LLM brief is available."""
+    tone = [w for w in dna.tone.voice_words][:4] or ["clear", "confident"]
+    if len(tone) < 2:
+        tone.append("consistent")
+    avoid = f" Avoid: {', '.join(dna.visual_direction.visual_avoid[:3])}." if dna.visual_direction.visual_avoid else ""
+    directives = [
+        f"Default reel style: {dna.production.default_reel_style.replace('_', ' ')}. "
+        f"Feasible formats: {', '.join(dna.production.feasible_formats[:4]) or 'all standard formats'}.",
+        f"Visual direction: {', '.join(dna.visual_direction.styles)}.{avoid}",
+        f"Hard rules: {'; '.join(dna.do_not[:3])}.",
+    ]
+    return TeamBrief(
+        brand_summary=f"{dna.summary_line} {dna.positioning}"[:700],
+        tone_profile=tone[:5],
+        production_directives=directives,
+        pod_alignment=[],
+    )
+
+
+def enforce_brand_constraints(
+    answers: dict[str, Any], dna: BrandDNA, roster: list[dict[str, str]] | None = None,
+) -> BrandDNA:
+    """Keep client restrictions and assigned identities authoritative over AI output."""
+    baseline = generate_deterministic_brand_dna(answers)
+    blocked = list(dict.fromkeys(baseline.production.infeasible_formats + dna.production.infeasible_formats))
+    feasible = [item for item in dna.production.feasible_formats if item not in blocked]
+    style = dna.production.default_reel_style
+    if style in blocked:
+        style = baseline.production.default_reel_style
+    production = dna.production.model_copy(update={
+        "founder_on_camera": baseline.production.founder_on_camera,
+        "can_shoot_people": baseline.production.can_shoot_people,
+        "default_reel_style": style,
+        "infeasible_formats": blocked,
+        "feasible_formats": feasible or [item for item in baseline.production.feasible_formats if item not in blocked],
+    })
+    tone_updates = {key: getattr(baseline.tone, key) for key in
+                    ("humour", "formality", "respectfulness", "energy")
+                    if key in answers.get("c", {})}
+    final = dna.model_copy(update={"production": production,
+        "tone": dna.tone.model_copy(update=tone_updates), "do_not": assemble_do_not(answers, dna)})
+    brief = final.team_brief or build_deterministic_team_brief(final)
+    identities = {(member["name"], member["role"]) for member in roster or []}
+    brief = brief.model_copy(update={
+        "pod_alignment": [member for member in brief.pod_alignment
+                          if (member.member_name, member.role) in identities],
+        "production_directives": brief.production_directives[:4] + [
+            "Hard production limits: " + ", ".join(blocked) + ". Default reel style: " + style + "."
+        ],
+    })
+    return final.model_copy(update={"team_brief": brief})
+
+
+async def synthesize_brand_dna(
+    answers: dict[str, Any],
+    roster: list[dict[str, str]] | None = None,
+) -> tuple[BrandDNA, str]:
     """Execute the resilient fallback chain:
-    1. Gemini 2.0 Flash / 1.5 Flash (strict JSON mode)
+    1. Gemini 2.5 Flash with a structured JSON response schema (thinking disabled)
     2. OpenAI gpt-4o-mini
     3. Deterministic Python template generator
+
+    Every result carries a team_brief for the team lead and pod.
     """
     clean_answers = sanitize_for_llm(answers)
     prompt_payload = json.dumps(clean_answers, ensure_ascii=False)
+    roster_payload = json.dumps(roster or [], ensure_ascii=False)
 
-    system_instruction = (
-        "You are an elite creative director. Synthesize a Brand DNA strictly matching the required JSON schema.\n"
-        "Rules:\n"
-        "1. Derive, do not echo back raw text.\n"
-        "2. At least 2 of the content pillars MUST have 'answers_objection' explicitly countering the customer objection from section B.\n"
-        "3. Respect all production constraints from section E.\n"
-        "4. Output ONLY valid JSON with no markdown backticks."
-    )
+    system_instruction = BRAND_DNA_PROMPT
 
     user_content = (
-        f"{system_instruction}\n\n"
+        f"ASSIGNED POD: {roster_payload}\n\n"
         f"<<<CLIENT_ANSWERS_BEGIN>>>\n"
         f"{prompt_payload}\n"
         f"<<<CLIENT_ANSWERS_END>>>\n"
@@ -372,6 +509,7 @@ async def synthesize_brand_dna(answers: dict[str, Any]) -> tuple[BrandDNA, str]:
     # 1. Gemini (multi-key pool with 20 req/day quota failover)
     try:
         gemini_payload = {
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
             "contents": [
                 {
                     "role": "user",
@@ -380,22 +518,23 @@ async def synthesize_brand_dna(answers: dict[str, Any]) -> tuple[BrandDNA, str]:
             ],
             "generationConfig": {
                 "responseMimeType": "application/json",
+                "responseJsonSchema": gemini_json_schema(BrandDNA),
                 "temperature": 0.3,
+                "maxOutputTokens": 4096,
             },
         }
         res_data, key_used = await generate_gemini_content(gemini_payload)
         if res_data:
-            text_out = (
-                res_data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "{}")
-            )
-            model_dna = BrandDNA.model_validate_json(text_out)
+            parts = res_data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            text_out = "".join(part.get("text", "") for part in parts if not part.get("thought"))
+            model_dna = parse_llm_brand_dna(text_out)
             # Assemble hard do_not verbatim on top of model output
             full_do_not = assemble_do_not(answers, model_dna)
             final_dna = model_dna.model_copy(update={"do_not": full_do_not})
-            return final_dna, "gemini"
+            if final_dna.team_brief is None:
+                final_dna = final_dna.model_copy(update={"team_brief": build_deterministic_team_brief(final_dna)})
+            logger.info("brand_dna_synthesized_with_gemini", key=key_used)
+            return enforce_brand_constraints(answers, final_dna, roster), "gemini"
     except Exception as err:
         logger.warning("gemini_synthesis_failed_trying_openai", error=str(err))
 
@@ -420,16 +559,57 @@ async def synthesize_brand_dna(answers: dict[str, Any]) -> tuple[BrandDNA, str]:
                 )
                 if res.status_code == 200:
                     raw_text = res.json()["choices"][0]["message"]["content"]
-                    model_dna = BrandDNA.model_validate_json(raw_text)
+                    model_dna = parse_llm_brand_dna(raw_text)
                     full_do_not = assemble_do_not(answers, model_dna)
                     final_dna = model_dna.model_copy(update={"do_not": full_do_not})
-                    return final_dna, "openai"
+                    if final_dna.team_brief is None:
+                        final_dna = final_dna.model_copy(update={"team_brief": build_deterministic_team_brief(final_dna)})
+                    return enforce_brand_constraints(answers, final_dna, roster), "openai"
         except Exception as err:
             logger.warning("openai_synthesis_failed_using_template", error=str(err))
 
     # 3. Deterministic Python Template
     dna = generate_deterministic_brand_dna(answers)
+    dna = dna.model_copy(update={"team_brief": build_deterministic_team_brief(dna)})
     return dna, "template"
+
+
+def questionnaire_answers(quest: Questionnaire) -> dict[str, Any]:
+    return {
+        "a": quest.section_a or {},
+        "b": quest.section_b or {},
+        "c": quest.section_c or {},
+        "d": quest.section_d or {},
+        "e": quest.section_e or {},
+        "f": quest.section_f or {},
+        "g": quest.section_g or {},
+    }
+
+
+def brand_dna_input_hash(answers: dict[str, Any], roster: list[dict[str, str]]) -> str:
+    snapshot = {"answers": answers, "pod": sorted(roster, key=lambda member: (member["name"], member["role"]))}
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+async def save_template_brand_dna(db: AsyncSession, client_id: uuid.UUID) -> BrandDNA:
+    """Instant, network-free Brand DNA so onboarding never waits on an LLM.
+    The background pipeline upgrades it with Gemini afterwards."""
+    quest = (await db.execute(select(Questionnaire).where(Questionnaire.user_id == client_id))).scalar_one_or_none()
+    if not quest:
+        raise NotFound("Questionnaire not found for client", code="QUESTIONNAIRE_NOT_FOUND")
+    dna = generate_deterministic_brand_dna(questionnaire_answers(quest))
+    dna = dna.model_copy(update={"team_brief": build_deterministic_team_brief(dna)})
+
+    profile = (await db.execute(select(ClientProfile).where(ClientProfile.user_id == client_id))).scalar_one_or_none()
+    if not profile:
+        profile = ClientProfile(user_id=client_id)
+        db.add(profile)
+    profile.brand_dna = dna.model_dump()
+    profile.brand_summary = dna.summary_line
+    profile.brand_dna_source = "template"
+    quest.ai_summary_line = dna.summary_line
+    await db.commit()
+    return dna
 
 
 # ==============================================================================
@@ -446,17 +626,23 @@ async def run_brand_dna_pipeline(
         raise NotFound("Questionnaire not found for client", code="QUESTIONNAIRE_NOT_FOUND")
 
     # Combine sections into unified dict
-    answers = {
-        "a": quest.section_a or {},
-        "b": quest.section_b or {},
-        "c": quest.section_c or {},
-        "d": quest.section_d or {},
-        "e": quest.section_e or {},
-        "f": quest.section_f or {},
-        "g": quest.section_g or {},
-    }
+    answers = questionnaire_answers(quest)
 
-    dna, source = await synthesize_brand_dna(answers)
+    from app.services.onboarding_service import load_pod_roster
+
+    roster = await load_pod_roster(db, client_id)
+    input_hash = brand_dna_input_hash(answers, roster)
+    # No transaction or pooled DB connection is held during external AI requests.
+    await db.rollback()
+    dna, source = await synthesize_brand_dna(answers, roster=roster)
+    from app.models.user import User
+    await db.execute(select(User).where(User.id == client_id).with_for_update())
+    quest = (await db.execute(q_stmt.execution_options(populate_existing=True))).scalar_one()
+    current_hash = brand_dna_input_hash(questionnaire_answers(quest), await load_pod_roster(db, client_id))
+    if current_hash != input_hash:
+        raise AppError("Questionnaire changed during synthesis; retry with the latest answers", code="BRAND_INPUT_CHANGED", status_code=409)
+    quest.answers = {**(quest.answers or {}), "brand_dna_input_hash": input_hash, "brand_generated_version": quest.version}
+
 
     # Persist to profile
     p_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)

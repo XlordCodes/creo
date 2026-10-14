@@ -288,7 +288,7 @@ export function RevisionDialog({
                         ? "var(--color-waiting)"
                         : "rgba(240, 162, 2, 0.3)",
                     border: "none",
-                    color: "#0E1116",
+                    color: "#0B111C",
                     fontWeight: 600,
                     borderRadius: 8,
                     fontSize: "0.875rem",

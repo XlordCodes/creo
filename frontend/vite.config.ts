@@ -17,6 +17,7 @@ export default defineConfig({
     }),
   ],
   resolve: {
+    preserveSymlinks: true,
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
@@ -52,6 +53,7 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
         secure: false,
+        ws: true,
       },
       "/static": {
         target: "http://localhost:8000",

@@ -22,7 +22,6 @@ interface NotificationPayload {
 function getPageName(pathname: string, short: boolean = false) {
   if (pathname === "/portal") return "Dashboard";
   if (pathname.includes("/payments")) return "Plans";
-  if (pathname.includes("/creative-pod")) return "Creative Pod";
   if (pathname.includes("/calendar")) return short ? "Calendar" : "Content Calendar";
   if (pathname.includes("/deliverables")) return short ? "Deliverables" : "Content Deliverables";
   if (pathname.includes("/support")) return "Support";
@@ -49,7 +48,7 @@ export function CreoTopNavbar() {
       return await request<NotificationPayload>("/api/v1/notifications");
     },
     enabled: !!user?.id,
-    refetchInterval: 15000,
+    refetchInterval: 5000,
   });
 
   const rawNotifications = notifData?.items || [];
@@ -154,16 +153,6 @@ export function CreoTopNavbar() {
               }`}
             >
               Plans
-            </Link>
-            <Link
-              to="/portal/creative-pod"
-              className={`transition-all px-4 py-2 text-[13px] font-semibold rounded-full ${
-                location.pathname.includes("/creative-pod")
-                  ? "bg-[#BCCCE6] text-[#0B111C] font-bold shadow-[0_2px_10px_rgba(188,204,230,0.25)]"
-                  : "text-[#97A0B3] hover:text-white hover:bg-[#161F2D] hover:-translate-y-0.5 active:translate-y-0 transition-all"
-              }`}
-            >
-              Creative Pod
             </Link>
 
             {/* Logo in the middle */}
@@ -292,10 +281,10 @@ export function CreoTopNavbar() {
                   Company & Contact Info
                 </Link>
                 <Link
-                  to="/portal/account?tab=brand"
+                  to="/portal/brand"
                   className="flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-[#97A0B3] hover:bg-[#0B111C] hover:text-white transition-colors"
                 >
-                  Brand Profile
+                  Brand DNA
                 </Link>
                 <Link
                   to="/portal/account?tab=security"

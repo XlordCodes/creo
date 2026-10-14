@@ -1,3 +1,4 @@
+import { NativeSelect } from "../../ui/NativeSelect";
 import { useState } from "react";
 import { Link } from "react-router";
 import { AdminTopHeader } from "../../components/admin/AdminTopHeader";
@@ -13,12 +14,17 @@ import {
   Sparkles,
   RefreshCw,
   Eye,
-  FileCheck,
   Check,
   X,
-  ArrowLeftRight,
   FileText,
 } from "lucide-react";
+
+/** Backlog ages run into hundreds of hours, so show days past a day and keep hours below it. */
+function formatDuration(hours: number): string {
+  if (!Number.isFinite(hours) || hours <= 0) return "0h";
+  if (hours < 24) return `${Math.round(hours * 10) / 10}h`;
+  return `${Math.round(hours / 24)}d`;
+}
 
 export function PodTaskBoardPage() {
   const { user } = useAuth();
@@ -26,8 +32,9 @@ export function PodTaskBoardPage() {
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState("");
   const [newCardClient, setNewCardClient] = useState("");
+  const [newCardAssignee, setNewCardAssignee] = useState("");
+  const [rerouteTaskId, setRerouteTaskId] = useState("");
 
-  const [workloadModalOpen, setWorkloadModalOpen] = useState(false);
   const [rerouteModalOpen, setRerouteModalOpen] = useState(false);
   const [rerouteTarget, setRerouteTarget] = useState("");
 
@@ -35,12 +42,23 @@ export function PodTaskBoardPage() {
   const [activeMobileCol, setActiveMobileCol] = useState<"all" | "backlog" | "in_progress" | "review" | "dispatched">("all");
 
   const { data } = useQuery<PodDashboardData>({
-    queryKey: ["pod_dashboard"],
+    queryKey: ["pod_dashboard", user?.id, undefined],
     queryFn: () => fetchPodDashboard(),
+    staleTime: 30_000,
+    enabled: !!user?.id,
   });
 
   const podName = data?.pod?.name || "Pod Operations";
   const leadName = data?.pod?.lead?.name || user?.full_name || "Pod Lead";
+  // craft_title is the human-readable role; `role` alone is a raw enum key.
+  const memberLabel = (m: any) =>
+    `${m?.full_name || m?.name || m?.email?.split("@")[0] || "Specialist"} · ${
+      m?.craft_title || m?.craft_role || String(m?.role || "Specialist").replace(/_/g, " ")
+    }`;
+  const memberValue = (m: any) => m?.full_name || m?.name || m?.email || "";
+  // Work already in flight is what a lead re-routes when it stalls.
+  const activeTasks = [...(data?.tasks?.in_production || []), ...(data?.tasks?.internal_qa || [])];
+  const rerouteTask = activeTasks.find((t) => t.id === rerouteTaskId) || activeTasks[0];
 
   const showToast = (text: string, type: "success" | "error" = "success") => {
     setToastMessage({ type, text });
@@ -61,11 +79,11 @@ export function PodTaskBoardPage() {
   const handleExportSprintCSV = () => {
     const headers = ["Task ID", "Column / Stage", "Task Title", "Format", "Client", "Assignee", "Status Info"];
     const allTasks: any[] = [
-      ...(data?.tasks?.backlog || []).map(t => [t.id, "Backlog", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee_name, "Ready for Sprint"]),
-      ...(data?.tasks?.in_production || []).map(t => [t.id, "In Progress", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee_name, "In Production"]),
-      ...(data?.tasks?.internal_qa || []).map(t => [t.id, "Pending Lead QA", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee_name, "Requires Lead Sign-off"]),
-      ...(data?.tasks?.ready_to_publish || []).map(t => [t.id, "Ready to Publish", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee_name, "Approved"]),
-      ...(data?.tasks?.completed || []).map(t => [t.id, "Dispatched", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee_name, "Delivered"]),
+      ...(data?.tasks?.backlog || []).map(t => [t.id, "Backlog", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee?.full_name || t.assignee_name, "Ready for Sprint"]),
+      ...(data?.tasks?.in_production || []).map(t => [t.id, "In Progress", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee?.full_name || t.assignee_name, "In Production"]),
+      ...(data?.tasks?.internal_qa || []).map(t => [t.id, "Pending Lead QA", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee?.full_name || t.assignee_name, "Requires Lead Sign-off"]),
+      ...(data?.tasks?.ready_to_publish || []).map(t => [t.id, "Ready to Publish", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee?.full_name || t.assignee_name, "Approved"]),
+      ...(data?.tasks?.completed || []).map(t => [t.id, "Dispatched", t.blueprint?.concept_name || "Task", t.deliverable_type, t.client_name, t.assignee?.full_name || t.assignee_name, "Delivered"]),
     ];
 
     const rows = allTasks.length > 0 ? allTasks : [["N/A", "N/A", "No active tasks in sprint", "-", "-", "-", "-"]];
@@ -123,7 +141,7 @@ export function PodTaskBoardPage() {
             </button>
             <button
               onClick={() => setAssignModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-[#7FA0D6] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
             >
               <Plus className="size-3.5" />
               Assign New Task
@@ -214,15 +232,15 @@ export function PodTaskBoardPage() {
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3.5 items-start"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3.5 items-stretch h-[560px] sm:h-[600px] lg:h-[calc(100vh-270px)] min-h-[500px]"
         >
           {/* COLUMN 1: Backlog / To Do */}
           <div
             className={`${
-              activeMobileCol === "all" || activeMobileCol === "backlog" ? "block" : "hidden md:block"
-            } bg-[#161F2D] rounded-2xl p-3 border border-[#2A3446] space-y-2.5`}
+              activeMobileCol === "all" || activeMobileCol === "backlog" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D] rounded-2xl p-3 border border-[#2A3446] space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between px-1 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-slate-400" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">Backlog</h3>
@@ -233,17 +251,24 @@ export function PodTaskBoardPage() {
             </div>
 
             {/* Cards */}
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {(!data?.tasks?.backlog || data.tasks.backlog.length === 0) ? (
                 <div className="bg-[#0B111C]/60 border border-dashed border-[#2A3446] rounded-xl p-4 text-center">
                   <p className="text-xs font-medium text-[#97A0B3]">No backlog tasks</p>
                 </div>
               ) : (
-                data.tasks.backlog.map((task) => (
+                [...data.tasks.backlog]
+                  // Soonest first; tasks without an estimate sink to the bottom.
+                  .sort(
+                    (a, b) =>
+                      (a.hours_remaining ?? Number.POSITIVE_INFINITY) -
+                      (b.hours_remaining ?? Number.POSITIVE_INFINITY),
+                  )
+                  .map((task) => (
                   <div key={task.id} className="bg-[#0B111C] rounded-xl p-3 border border-[#2A3446] shadow-2xs hover:border-[#7FA0D6]/30 transition-all space-y-2">
                     <div className="flex items-center justify-between text-[10.5px] font-bold">
                       <span className="text-[#7FA0D6] truncate max-w-[130px]">{task.client_name || "Client"}</span>
-                      <span className="text-[#97A0B3]">{task.hours_remaining ? `${task.hours_remaining}h` : (task.due_date || "")}</span>
+                      <span className="text-[#97A0B3]">{task.hours_remaining ? formatDuration(task.hours_remaining) : (task.due_date || "")}</span>
                     </div>
                     <h4 className="text-xs font-black text-white leading-snug">
                       {task.blueprint?.concept_name || `${task.client_name || "Sprint"} ${task.deliverable_type?.toUpperCase() || "Asset"}`}
@@ -253,7 +278,7 @@ export function PodTaskBoardPage() {
                         {task.deliverable_type?.toUpperCase() || "ASSET"}
                       </span>
                       <div className="flex items-center gap-1 text-[#F1F5F9] font-bold text-[9.5px]">
-                        <span>{task.assignee_name || "Unassigned"}</span>
+                        <span>{task.assignee?.full_name || task.assignee_name || "Unassigned"}</span>
                       </div>
                     </div>
                   </div>
@@ -272,10 +297,10 @@ export function PodTaskBoardPage() {
           {/* COLUMN 2: In Progress / Active */}
           <div
             className={`${
-              activeMobileCol === "all" || activeMobileCol === "in_progress" ? "block" : "hidden md:block"
-            } bg-[#161F2D] rounded-2xl p-3 border border-[#7FA0D6]/30 space-y-2.5`}
+              activeMobileCol === "all" || activeMobileCol === "in_progress" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D] rounded-2xl p-3 border border-[#7FA0D6]/30 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between px-1 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-[#7FA0D6] animate-pulse" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-[#7FA0D6]">In Progress</h3>
@@ -286,7 +311,7 @@ export function PodTaskBoardPage() {
             </div>
 
             {/* Cards */}
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {(!data?.tasks?.in_production || data.tasks.in_production.length === 0) ? (
                 <div className="bg-[#0B111C]/60 border border-dashed border-[#2A3446] rounded-xl p-4 text-center">
                   <p className="text-xs font-medium text-[#97A0B3]">No tasks currently in progress</p>
@@ -307,7 +332,7 @@ export function PodTaskBoardPage() {
                       <p className="text-[9.5px] text-[#97A0B3] font-medium mt-0.5">{task.assignee_role || "Creative Execution"}</p>
                     </div>
                     <div className="flex items-center justify-between pt-1.5 border-t border-[#2A3446] text-[9.5px] font-bold text-[#F1F5F9]">
-                      <span>{task.assignee_name || "Specialist"}</span>
+                      <span>{task.assignee?.full_name || task.assignee_name || "Specialist"}</span>
                       <span className="px-1.5 py-0.2 rounded bg-[#7FA0D6]/15 text-[#7FA0D6] font-bold text-[9px] border border-[#7FA0D6]/30">
                         {task.deliverable_type?.toUpperCase() || "ASSET"}
                       </span>
@@ -321,10 +346,10 @@ export function PodTaskBoardPage() {
           {/* COLUMN 3: Pending Lead QA Review */}
           <div
             className={`${
-              activeMobileCol === "all" || activeMobileCol === "review" ? "block" : "hidden md:block"
-            } bg-[#161F2D] rounded-2xl p-3 border border-amber-500/40 space-y-2.5`}
+              activeMobileCol === "all" || activeMobileCol === "review" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D] rounded-2xl p-3 border border-amber-500/40 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between px-1 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-amber-400 animate-ping" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-amber-400">Lead QA Review</h3>
@@ -335,7 +360,7 @@ export function PodTaskBoardPage() {
             </div>
 
             {/* Cards */}
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {(!data?.tasks?.internal_qa || data.tasks.internal_qa.length === 0) ? (
                 <div className="bg-[#0B111C]/60 border border-dashed border-[#2A3446] rounded-xl p-4 text-center">
                   <p className="text-xs font-medium text-[#97A0B3]">No deliverables awaiting sign-off</p>
@@ -351,12 +376,12 @@ export function PodTaskBoardPage() {
                       <h4 className="text-xs font-black text-white leading-snug">
                         {task.blueprint?.concept_name || `${task.client_name || "Sprint"} ${task.deliverable_type?.toUpperCase() || "Asset"}`}
                       </h4>
-                      <p className="text-[9.5px] text-[#97A0B3] font-medium mt-0.5">{task.assignee_name}</p>
+                      <p className="text-[9.5px] text-[#97A0B3] font-medium mt-0.5">{task.assignee?.full_name || task.assignee_name}</p>
                     </div>
                     <div className="flex items-center gap-1.5 pt-1.5 border-t border-[#2A3446]">
                       <Link
                         to="/lead/deliverables"
-                        className="flex-1 py-1 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#1E2D42] text-[#F1F5F9] hover:text-[#7FA0D6] text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
+                        className="flex-1 py-1 rounded-lg bg-[#161F2D] border border-[#2A3446] hover:bg-[#161F2D] text-[#F1F5F9] hover:text-[#7FA0D6] text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
                       >
                         <Eye className="size-3" /> Inspect
                       </Link>
@@ -364,7 +389,7 @@ export function PodTaskBoardPage() {
                         onClick={() => {
                           qaMutation.mutate({ taskId: task.id, decision: "approve", comment: "Direct QA sign-off from Task Board." });
                         }}
-                        className="flex-1 py-1 rounded-lg bg-[#2563EB] hover:bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center gap-1 shadow-xs cursor-pointer transition-colors"
+                        className="flex-1 py-1 rounded-lg bg-[#7FA0D6] hover:bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center gap-1 shadow-xs cursor-pointer transition-colors"
                       >
                         <Check className="size-3" /> Sign-off
                       </button>
@@ -378,10 +403,10 @@ export function PodTaskBoardPage() {
           {/* COLUMN 4: Approved & Dispatched */}
           <div
             className={`${
-              activeMobileCol === "all" || activeMobileCol === "dispatched" ? "block" : "hidden md:block"
-            } bg-[#161F2D] rounded-2xl p-3 border border-emerald-500/40 space-y-2.5`}
+              activeMobileCol === "all" || activeMobileCol === "dispatched" ? "flex" : "hidden md:flex"
+            } flex-col h-full bg-[#161F2D] rounded-2xl p-3 border border-emerald-500/40 space-y-2.5 min-h-0`}
           >
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between px-1 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-emerald-400" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-emerald-400">Dispatched</h3>
@@ -392,7 +417,7 @@ export function PodTaskBoardPage() {
             </div>
 
             {/* Cards */}
-            <div className="space-y-2.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar min-h-0">
               {(!data?.tasks?.completed && !data?.tasks?.ready_to_publish) ||
               ((data?.tasks?.completed?.length || 0) === 0 && (data?.tasks?.ready_to_publish?.length || 0) === 0) ? (
                 <div className="bg-[#0B111C]/60 border border-dashed border-[#2A3446] rounded-xl p-4 text-center">
@@ -414,7 +439,7 @@ export function PodTaskBoardPage() {
                       <p className="text-[9.5px] text-[#97A0B3] font-medium mt-0.5">Delivered to client vault</p>
                     </div>
                     <div className="flex items-center justify-between pt-1.5 border-t border-[#2A3446] text-[9.5px] font-bold text-[#F1F5F9]">
-                      <span>{task.assignee_name || "Specialist"}</span>
+                      <span>{task.assignee?.full_name || task.assignee_name || "Specialist"}</span>
                       <span className="text-emerald-400">● Accepted</span>
                     </div>
                   </div>
@@ -438,22 +463,10 @@ export function PodTaskBoardPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => setWorkloadModalOpen(true)}
-              className="px-3.5 py-2 rounded-xl bg-[#0B111C] hover:bg-[#1E2D42] border border-[#2A3446] hover:border-[#7FA0D6] text-[#F1F5F9] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-            >
-              <ArrowLeftRight className="size-3.5 text-[#7FA0D6]" /> Balance Workload
-            </button>
-            <button
               onClick={() => setRerouteModalOpen(true)}
-              className="px-3.5 py-2 rounded-xl bg-[#0B111C] hover:bg-[#1E2D42] border border-[#2A3446] hover:border-[#7FA0D6] text-[#F1F5F9] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+              className="px-3.5 py-2 rounded-xl bg-[#0B111C] hover:bg-[#161F2D] border border-[#2A3446] hover:border-[#7FA0D6] text-[#F1F5F9] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
             >
               <RefreshCw className="size-3.5 text-[#7FA0D6]" /> Re-route Blocked
-            </button>
-            <button
-              onClick={handleExportSprintCSV}
-              className="px-3.5 py-2 rounded-xl bg-[#0B111C] hover:bg-[#1E2D42] border border-[#2A3446] hover:border-[#7FA0D6] text-[#F1F5F9] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-            >
-              <FileCheck className="size-3.5 text-[#7FA0D6]" /> Export CSV
             </button>
           </div>
         </div>
@@ -483,17 +496,17 @@ export function PodTaskBoardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Content Format</label>
-                  <select
+                  <NativeSelect
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white"
                   >
                     <option value="Reel">Reel</option>
                     <option value="Story">Story</option>
                     <option value="Post">Post</option>
-                  </select>
+                  </NativeSelect>
                 </div>
                 <div>
                   <label className="font-bold text-[#F1F5F9] block mb-1">Client</label>
-                  <select
+                  <NativeSelect
                     value={newCardClient}
                     onChange={(e) => setNewCardClient(e.target.value)}
                     className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white"
@@ -505,82 +518,45 @@ export function PodTaskBoardPage() {
                         <option key={c.id} value={c.name}>{c.name}</option>
                       ))
                     )}
-                  </select>
+                  </NativeSelect>
                 </div>
+              </div>
+              <div>
+                <label className="font-bold text-[#F1F5F9] block mb-1">Specialist / Assignee</label>
+                <NativeSelect
+                  value={newCardAssignee}
+                  onChange={(e) => setNewCardAssignee(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-[#2A3446] bg-[#0B111C] font-medium text-white"
+                >
+                  <option value="">Leave unassigned (Backlog)</option>
+                  {(data?.members || []).map((m) => (
+                    <option key={m.id} value={memberValue(m)}>{memberLabel(m)}</option>
+                  ))}
+                </NativeSelect>
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-3">
               <button
                 onClick={() => setAssignModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#0B111C] text-[#F1F5F9] text-xs font-bold hover:bg-[#1E2D42] border border-[#2A3446] transition"
+                className="px-4 py-2 rounded-xl bg-[#0B111C] text-[#F1F5F9] text-xs font-bold hover:bg-[#161F2D] border border-[#2A3446] transition"
               >
                 Cancel
               </button>
               <button
                 onClick={() => {
-                  showToast(`Added "${newCardTitle || "New Task"}" to Sprint Board`, "success");
+                  showToast(
+                    newCardAssignee
+                      ? `Added "${newCardTitle || "New Task"}" to Sprint Board, assigned to ${newCardAssignee}`
+                      : `Added "${newCardTitle || "New Task"}" to Sprint Board as unassigned backlog`,
+                    "success",
+                  );
                   setAssignModalOpen(false);
                   setNewCardTitle("");
+                  setNewCardAssignee("");
                 }}
                 className="px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition"
               >
                 Add Card
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Interactive Workload Balancing Modal */}
-      {workloadModalOpen && (
-        <div className="fixed inset-0 w-screen h-screen z-[9999] bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
-          <div className="w-full max-w-lg bg-[#161F2D] rounded-3xl p-6 shadow-2xl border border-[#2A3446] space-y-4">
-            <div className="flex items-center justify-between border-b border-[#2A3446] pb-3">
-              <div className="flex items-center gap-2">
-                <ArrowLeftRight className="size-5 text-[#7FA0D6]" />
-                <h3 className="text-base font-black text-white">Pod Workload Auto-Balancer</h3>
-              </div>
-              <button onClick={() => setWorkloadModalOpen(false)} className="text-[#97A0B3] hover:text-white">
-                <X className="size-5" />
-              </button>
-            </div>
-            <p className="text-xs text-[#97A0B3] font-medium">
-              Analyze capacity across {podName} specialists and balance sprint backlog allocation evenly.
-            </p>
-            <div className="space-y-2 text-xs">
-              {(!data?.members || data.members.length === 0) ? (
-                <div className="p-4 rounded-xl bg-[#0B111C] border border-dashed border-[#2A3446] text-center text-[#97A0B3]">
-                  No specialists registered in this pod.
-                </div>
-              ) : (
-                data.members.map((m) => (
-                  <div key={m.id} className="p-3 rounded-xl bg-[#0B111C] border border-[#2A3446] flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-white block">{m.full_name} ({m.role})</span>
-                      <span className="text-[10px] font-extrabold text-emerald-400">Available</span>
-                    </div>
-                    <span className="text-xs font-black text-white bg-[#161F2D] px-3 py-1 rounded-lg border border-[#2A3446]">
-                      Active
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="flex justify-end gap-3 pt-3 border-t border-[#2A3446]">
-              <button
-                onClick={() => setWorkloadModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-[#F1F5F9] text-xs font-bold hover:bg-[#1E2D42] transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  showToast("Workload distribution verified across specialists.", "success");
-                  setWorkloadModalOpen(false);
-                }}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-600 text-white text-xs font-bold transition shadow-md shadow-blue-500/20"
-              >
-                Apply Re-balance
               </button>
             </div>
           </div>
@@ -600,13 +576,54 @@ export function PodTaskBoardPage() {
                 <X className="size-5" />
               </button>
             </div>
-            <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/50 space-y-1 text-xs">
-              <span className="font-extrabold text-amber-300 block">Blocked Task Re-allocation</span>
-              <p className="text-[11px] text-amber-300/80">Pending client feedback or technical blocker. Re-assign task specialist to unblock workflow.</p>
-            </div>
             <div className="space-y-2 text-xs">
-              <label className="font-bold text-[#F1F5F9] block">Select Target Specialist for Re-routing</label>
-              <select
+              <label className="font-bold text-[#F1F5F9] block">Blocked task</label>
+              <NativeSelect
+                value={rerouteTaskId || rerouteTask?.id || ""}
+                onChange={(e) => setRerouteTaskId(e.target.value)}
+                className="w-full p-3 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold"
+              >
+                {activeTasks.length === 0 ? (
+                  <option value="">No active tasks to re-route</option>
+                ) : (
+                  activeTasks.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.blueprint?.concept_name || `${t.client_name || "Client"} ${t.deliverable_type}`}
+                    </option>
+                  ))
+                )}
+              </NativeSelect>
+            </div>
+            {rerouteTask ? (
+              <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/50 space-y-1.5 text-xs">
+                <span className="font-extrabold text-amber-300 block">
+                  {rerouteTask.blueprint?.concept_name ||
+                    `${rerouteTask.client_name || "Client"} ${rerouteTask.deliverable_type}`}
+                </span>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-amber-300/80">
+                  <dt className="font-bold">Client</dt>
+                  <dd className="truncate">{rerouteTask.client_name || "Unassigned client"}</dd>
+                  <dt className="font-bold">Format</dt>
+                  <dd className="truncate">{rerouteTask.deliverable_type}</dd>
+                  <dt className="font-bold">Current owner</dt>
+                  <dd className="truncate">
+                    {rerouteTask.assignee?.full_name || rerouteTask.assignee_name || "Unassigned"}
+                  </dd>
+                  <dt className="font-bold">Blocker</dt>
+                  <dd className="truncate">
+                    {rerouteTask.blueprint?.blocker_note ||
+                      (rerouteTask.is_near_sla ? "At risk of breaching SLA" : "Pending client feedback or technical blocker")}
+                  </dd>
+                </dl>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-[#0B111C] border border-dashed border-[#2A3446] text-[11px] text-[#97A0B3]">
+                Nothing is in production or QA right now, so there is no task to re-route.
+              </div>
+            )}
+            <div className="space-y-2 text-xs">
+              <label className="font-bold text-[#F1F5F9] block">Re-route to specialist</label>
+              <NativeSelect
                 value={rerouteTarget}
                 onChange={(e) => setRerouteTarget(e.target.value)}
                 className="w-full p-3 rounded-xl border border-[#2A3446] bg-[#0B111C] text-white font-bold"
@@ -615,24 +632,28 @@ export function PodTaskBoardPage() {
                   <option value="">No specialists registered</option>
                 ) : (
                   data.members.map((m) => (
-                    <option key={m.id} value={m.full_name}>{m.full_name} ({m.role})</option>
+                    <option key={m.id} value={memberValue(m)}>{memberLabel(m)}</option>
                   ))
                 )}
-              </select>
+              </NativeSelect>
             </div>
             <div className="flex justify-end gap-3 pt-3 border-t border-[#2A3446]">
               <button
                 onClick={() => setRerouteModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-[#F1F5F9] text-xs font-bold hover:bg-[#1E2D42] transition"
+                className="px-4 py-2 rounded-xl bg-[#0B111C] border border-[#2A3446] text-[#F1F5F9] text-xs font-bold hover:bg-[#161F2D] transition"
               >
                 Cancel
               </button>
               <button
                 onClick={() => {
-                  showToast(`Re-routed blocked task to ${rerouteTarget || "assigned specialist"}. Slack alert sent!`, "success");
+                  const name =
+                    rerouteTask?.blueprint?.concept_name ||
+                    `${rerouteTask?.client_name || "Blocked"} ${rerouteTask?.deliverable_type || "task"}`;
+                  showToast(`Re-routed "${name}" to ${rerouteTarget || "assigned specialist"}. Slack alert sent!`, "success");
                   setRerouteModalOpen(false);
+                  setRerouteTaskId("");
                 }}
-                className="px-5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-600 text-white text-xs font-bold transition shadow-md shadow-blue-500/20"
+                className="px-5 py-2 rounded-xl bg-[#7FA0D6] hover:bg-blue-600 text-white text-xs font-bold transition shadow-md shadow-blue-500/20"
               >
                 Re-route Task Now
               </button>
