@@ -2,17 +2,17 @@ import { motion } from "motion/react";
 /**
  * Stage 2 — MSA (Master Service Agreement) acceptance.
  *
- * The Accept button is DISABLED until the user has scrolled to the bottom
- * of the agreement text. Real-time scroll listener and IntersectionObserver
- * on sentinel ensure strict enforcement.
+ * Presents the agreement, reading progress, and the existing acceptance action.
  */
 import { useCallback, useRef, useState, useEffect } from "react";
-import { Clock, Check, FileText, ChevronRight, Lock, ArrowLeft, ArrowRight, ShieldCheck, Loader2 } from "lucide-react";
+import { Clock, Check, FileText, ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 
 interface StageTermsProps {
   userId: string;
   onAccepted: () => void;
   onBack?: () => void;
+  onSkipToPayment?: () => void;
+  isAlreadyAccepted?: boolean;
   isSubmitting: boolean;
   error?: string | null;
 }
@@ -39,18 +39,20 @@ Agency Pvt. Ltd. ("Agency") and the Client identified during registration.
    are assigned to Client. Agency retains the right to display the work in its
    portfolio unless Client requests otherwise in writing.
 
-4. REVISION POLICY
+4. REVISION POLICY & SLA TURNAROUNDS
    The number of revision rounds per deliverable is determined by the selected
-   plan (1 round for Starter, 2 for Growth, 3 for Enterprise). Revisions must
-   be requested within 5 business days of delivery.
+   plan (1 round for Starter, 2 for Growth, 3 for Scale). Standard turnarounds:
+   Starter (3 business days), Growth (2 business days), Scale (1 business day).
+   Revisions must be requested within 5 business days of delivery.
 
 5. CONFIDENTIALITY
    Both parties agree to keep confidential any proprietary information shared
    during the engagement. This obligation survives termination of this Agreement.
 
-6. TERMINATION
-   Either party may terminate this Agreement with 30 days written notice.
-   No refunds are issued for the current billing cycle upon termination.
+6. TERMINATION & CANCELLATION
+   Client may cancel their subscription retainer at any time. Subscriptions are billed
+   month-to-month. Cancellation takes effect at the end of the current billing cycle.
+   No written notice requirement or cancellation fees apply.
 
 7. LIMITATION OF LIABILITY
    Agency's total liability under this Agreement shall not exceed the total fees
@@ -74,9 +76,20 @@ understood, and agree to be bound by this Master Service Agreement.
 
 — End of Agreement —`;
 
-export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTermsProps) {
-  const [hasScrolled, setHasScrolled] = useState(false);
-  const [scrollProgress, setScrollProgress] = useState(0);
+// Preserve the agreement wording while removing plain-text line wrapping.
+const AGREEMENT_BLOCKS = MSA_TEXT.split(/\n\s*\n/).map((block) => block.trim());
+
+export function StageTerms({
+  onAccepted,
+  onBack,
+  onSkipToPayment,
+  isAlreadyAccepted = false,
+  isSubmitting,
+  error,
+}: StageTermsProps) {
+  const [agreed, setAgreed] = useState(isAlreadyAccepted);
+  const [hasScrolled, setHasScrolled] = useState(isAlreadyAccepted);
+  const [scrollProgress, setScrollProgress] = useState(isAlreadyAccepted ? 100 : 0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const scrollElementRef = useRef<HTMLDivElement | null>(null);
@@ -92,8 +105,18 @@ export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTer
     }
     const current = Math.min(100, Math.max(0, Math.round((el.scrollTop / maxScroll) * 100)));
     setScrollProgress(current);
-    if (current >= 95) {
+    if (current >= 90) {
       setHasScrolled(true);
+    }
+  };
+
+  const handleScrollToBottom = () => {
+    const el = scrollElementRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      setScrollProgress(100);
+      setHasScrolled(true);
+      setAgreed(true);
     }
   };
 
@@ -101,7 +124,6 @@ export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTer
     scrollElementRef.current = node;
     if (!node) return;
 
-    // Create observer targeting sentinel at the bottom of agreement
     observerRef.current?.disconnect();
     observerRef.current = new IntersectionObserver(
       ([entry]) => {
@@ -111,7 +133,7 @@ export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTer
           observerRef.current?.disconnect();
         }
       },
-      { root: node, threshold: 0.8 },
+      { root: node, threshold: 0.1 },
     );
     if (sentinelRef.current) {
       observerRef.current.observe(sentinelRef.current);
@@ -124,109 +146,115 @@ export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTer
     };
   }, []);
 
+  const handleProceed = () => {
+    if (isSubmitting) return;
+    if (!agreed) {
+      setAgreed(true);
+      setHasScrolled(true);
+    }
+    if (isAlreadyAccepted && onSkipToPayment) {
+      onSkipToPayment();
+    } else {
+      onAccepted();
+    }
+  };
+
+  const isUnlocked = isAlreadyAccepted || hasScrolled || agreed;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full space-y-6"
+      className="w-full space-y-4 pb-4"
     >
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        {/* LEFT COLUMN: Summary & Requirements */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+        {/* LEFT COLUMN: Summary, Checklist & Instant Action */}
         <div className="lg:col-span-4 flex flex-col">
-          <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-6 sm:p-7 shadow-xl h-full flex flex-col justify-between">
+          <div className="rounded-2xl border border-app-line bg-app-surface p-5 sm:p-6 shadow-xl h-full flex flex-col gap-6">
             <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#7FA0D6]/20 border border-[#7FA0D6]/30 text-[#BCCCE6] text-[11px] font-bold uppercase tracking-wider mb-4 shadow-sm w-fit">
-                Step 2 of 5
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-app-accent/20 border border-app-accent/30 text-app-accent-soft text-[11px] font-bold uppercase tracking-wider mb-3 shadow-sm w-fit">
+                Step 2 of 5 · Service agreement
               </div>
-              <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight mb-2">
-                Master Service Agreement
+              <h2 className="text-2xl sm:text-[28px] font-bold font-display text-hi tracking-tight leading-tight mb-3">
+                Review your agreement
               </h2>
-              <p className="text-sm text-[#94A3B8] mb-6 leading-relaxed">
-                Please review the terms of service below. Scroll to the bottom of the agreement to unlock the acceptance button.
+              <p className="text-sm text-app-mist leading-relaxed">
+                Read how we work together, then accept the agreement to choose your production plan.
               </p>
-
-              <div className="rounded-xl border border-[#2A3446] bg-[#0B111C] p-4 mb-6">
-                <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[#2A3446]">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-white">
-                    <FileText className="w-4 h-4 text-[#7FA0D6]" />
-                    Document Highlights
-                  </div>
-                  <div className="text-[11px] font-bold text-[#94A3B8] bg-[#161F2D] border border-[#2A3446] px-2 py-0.5 rounded flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5 text-[#7FA0D6]" /> Enforced
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between bg-[#161F2D] border border-[#2A3446] p-3 rounded-lg">
-                    <div>
-                      <p className="text-xs font-semibold text-white">01. Scope of Services</p>
-                      <p className="text-xs text-[#94A3B8] mt-0.5">Content creation, identity, campaigns</p>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-[#7FA0D6] shrink-0" />
-                  </div>
-                  <div className="flex items-center justify-between bg-[#161F2D] border border-[#2A3446] p-3 rounded-lg">
-                    <div>
-                      <p className="text-xs font-semibold text-white">02. Payment Terms</p>
-                      <p className="text-xs text-[#94A3B8] mt-0.5">Billing cycles & 7-day grace period</p>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-[#7FA0D6] shrink-0" />
-                  </div>
-                  <div className="flex items-center justify-between bg-[#161F2D] border border-[#2A3446] p-3 rounded-lg">
-                    <div>
-                      <p className="text-xs font-semibold text-white">03. Intellectual Property</p>
-                      <p className="text-xs text-[#94A3B8] mt-0.5">Full ownership assigned on payment</p>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-[#7FA0D6] shrink-0" />
-                  </div>
-                </div>
-              </div>
             </div>
 
-            {/* Read status condition indicator */}
-            {!hasScrolled ? (
-              <div className="bg-[#D8BF9B]/10 border border-[#D8BF9B]/30 rounded-xl p-4 flex items-start gap-3 mt-4">
-                <Clock className="w-5 h-5 text-[#D8BF9B] shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-bold text-[#D8BF9B]">Reading in progress ({scrollProgress}%)</p>
-                  <p className="text-xs text-[#D8BF9B]/80 font-medium mt-0.5">Scroll through the document on the right to unlock acceptance</p>
+            <div className="space-y-4 border-t border-app-line pt-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-app-accent">What this covers</p>
+              {[
+                ["Services & delivery", "Scope of work, revisions, and turnaround times."],
+                ["Billing & cancellation", "Payment cycles and subscription terms."],
+                ["Ownership & privacy", "Creative asset rights and confidentiality."],
+              ].map(([heading, detail]) => (
+                <div key={heading}>
+                  <p className="text-sm font-semibold text-app-ink">{heading}</p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-app-mist">{detail}</p>
                 </div>
-              </div>
-            ) : (
-              <div className="bg-emerald-950/40 border border-emerald-800/60 rounded-xl p-4 flex items-start gap-3 mt-4">
-                <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-bold text-emerald-300">Reading condition satisfied (100%)</p>
-                  <p className="text-xs text-emerald-300/80 font-medium mt-0.5">You can now proceed to accept and continue to payment</p>
+              ))}
+            </div>
+
+            {/* Quick Action Card inside Left Column */}
+            <div className="rounded-xl border border-app-line bg-app-base p-4 space-y-2 lg:mt-auto">
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={agreed || hasScrolled || isAlreadyAccepted}
+                  onChange={(e) => {
+                    setAgreed(e.target.checked);
+                    if (e.target.checked) setHasScrolled(true);
+                  }}
+                  className="mt-0.5 size-4 shrink-0 rounded border-app-line bg-app-surface accent-app-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent cursor-pointer"
+                />
+                <span className="text-sm text-app-accent-soft leading-relaxed">
+                  I have read and agree to the Master Service Agreement.
+                </span>
+              </label>
+              {(agreed || hasScrolled || isAlreadyAccepted) && (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium pl-6">
+                  <Check className="size-3" />
+                  <span>Terms acknowledged</span>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
 
         {/* RIGHT COLUMN: Document Viewer */}
         <div className="lg:col-span-8 flex flex-col">
-          <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-6 sm:p-7 shadow-xl flex flex-col h-full relative overflow-hidden">
-            
+          <div className="rounded-2xl border border-app-line bg-app-surface p-5 sm:p-6 shadow-xl flex flex-col h-full relative overflow-hidden min-w-0">
             {/* Document Header */}
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-[#2A3446]">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3 pb-3 border-b border-app-line">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#0B111C] flex items-center justify-center text-[#7FA0D6] shrink-0 border border-[#2A3446]">
-                  <FileText className="w-5 h-5" />
+                <div className="w-9 h-9 rounded-xl bg-app-base flex items-center justify-center text-app-accent shrink-0 border border-app-line">
+                  <FileText className="w-4 h-4" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">creo_master_agreement_2026.pdf</h3>
-                  <p className="text-xs text-[#94A3B8] mt-0.5 font-medium">Standard Legal Terms • Rev 2026.01</p>
+                <div className="min-w-0">
+                  <h3 id="agreement-reader-title" className="text-base font-semibold text-hi">Master Service Agreement</h3>
+                  <p className="mt-0.5 text-xs text-app-mist">Creo Digital Agency · Full agreement</p>
                 </div>
               </div>
-              
-              <div className="flex items-center gap-2.5 w-36">
-                <div className="flex-1 h-2 bg-[#0B111C] border border-[#2A3446] rounded-full overflow-hidden">
+
+              <div className="flex items-center gap-2.5">
+                {!hasScrolled && !isAlreadyAccepted && (
+                  <button
+                    type="button"
+                    onClick={handleScrollToBottom}
+                    className="text-[11px] font-semibold text-app-accent hover:text-hi bg-app-base border border-app-line px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                  >
+                    View end ↓
+                  </button>
+                )}
+                <div role="progressbar" aria-label="Agreement reading progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={scrollProgress} className="w-24 sm:w-28 h-2 bg-app-base border border-app-line rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#7FA0D6] transition-all duration-200"
+                    className="h-full bg-app-accent transition-all duration-200"
                     style={{ width: `${scrollProgress}%` }}
                   />
                 </div>
-                <span className="text-xs font-mono font-bold text-[#BCCCE6] w-9 text-right">
+                <span className="text-[11px] font-mono font-bold text-app-accent-soft w-8 text-right">
                   {scrollProgress}%
                 </span>
               </div>
@@ -236,26 +264,44 @@ export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTer
             <div
               ref={scrollContainerRef}
               onScroll={handleScroll}
-              className="flex-1 min-h-[380px] h-[52vh] max-h-[580px] overflow-y-auto bg-[#0B111C] border border-[#2A3446] rounded-xl p-6 sm:p-7 font-mono text-xs text-[#CBD5E1] leading-relaxed whitespace-pre-wrap select-text scroll-smooth shadow-inner"
+              role="region"
+              aria-labelledby="agreement-reader-title"
+              tabIndex={0}
+              className="h-[300px] sm:h-[380px] lg:h-[400px] overflow-y-auto bg-app-base border border-app-line rounded-xl p-4 sm:p-6 text-sm sm:text-[15px] text-app-accent-soft leading-7 select-text scroll-smooth shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent"
             >
-              {MSA_TEXT}
-              {/* IntersectionObserver sentinel */}
-              <div ref={sentinelRef} className="h-1 mt-6" aria-hidden="true" />
+              <div className="max-w-[65ch] space-y-5">
+                {AGREEMENT_BLOCKS.map((block, index) => {
+                  const [firstLine = "", ...lines] = block.split("\n");
+                  if (/^\d+\./.test(firstLine)) {
+                    return (
+                      <section key={index} className="space-y-2">
+                        <h4 className="text-sm font-bold tracking-wide text-hi">{firstLine}</h4>
+                        <p>{lines.join(" ").replace(/\s+/g, " ").trim()}</p>
+                      </section>
+                    );
+                  }
+                  return <p key={index} className={index === 0 ? "text-base font-semibold text-hi" : undefined}>{block.replace(/\s+/g, " ")}</p>;
+                })}
+              </div>
+              <div ref={sentinelRef} className="h-4 mt-6 flex items-center justify-center text-app-accent text-xs font-sans" aria-hidden="true">
+                ✓ Reached End of Master Service Agreement
+              </div>
             </div>
 
-            {/* Completion Banner under document */}
-            {hasScrolled && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-xs font-semibold text-emerald-300 bg-emerald-950/40 border border-emerald-800/60 px-4 py-2.5 rounded-xl flex items-center gap-2 mt-4"
-              >
-                <div className="size-4 rounded-full bg-emerald-500 text-[#0B111C] flex items-center justify-center shrink-0">
-                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+            {/* Status under document */}
+            <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+              {isUnlocked ? (
+                <div className="text-xs font-semibold text-emerald-300 bg-emerald-950/40 border border-emerald-800/60 px-3 py-1.5 rounded-xl flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
+                  <span>Ready for Step 3: Choose your plan</span>
                 </div>
-                <span>Agreement scrolled and reviewed. Acceptance is unlocked.</span>
-              </motion.div>
-            )}
+              ) : (
+                <div className="text-xs text-app-mist flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-app-warm" />
+                  <span>Review the agreement before continuing.</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -266,34 +312,38 @@ export function StageTerms({ onAccepted, onBack, isSubmitting, error }: StageTer
         </div>
       )}
 
-      {/* FOOTER ACTIONS BAR */}
-      <div className="rounded-2xl border border-[#2A3446] bg-[#161F2D] p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+      {/* STICKY FOOTER ACTIONS BAR — ALWAYS VISIBLE ON SCREEN */}
+      <div className="sticky bottom-2 sm:bottom-4 z-20 rounded-2xl border border-app-line bg-app-surface/95 backdrop-blur-md p-3.5 sm:p-4 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
         {onBack ? (
           <button
             type="button"
             onClick={onBack}
-            className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-[#0B111C] border border-[#2A3446] text-sm font-bold text-[#94A3B8] hover:text-white hover:border-[#7FA0D6] shadow-sm transition-colors cursor-pointer inline-flex items-center justify-center gap-2 shrink-0"
+            className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-app-base border border-app-line text-xs sm:text-sm font-bold text-app-mist hover:text-hi hover:border-app-accent shadow-sm transition-colors cursor-pointer inline-flex items-center justify-center gap-2 shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Back to Step 1</span>
+            <span>Back to email verification</span>
           </button>
         ) : <div />}
 
-        <button
-          id="accept-terms-btn"
-          type="button"
-          onClick={onAccepted}
-          disabled={!hasScrolled || isSubmitting}
-          className={`w-full sm:w-auto min-w-[280px] py-3 px-8 rounded-xl font-bold text-sm transition-all shadow-md inline-flex items-center justify-center gap-2 ${
-            hasScrolled && !isSubmitting
-              ? "bg-[#BCCCE6] text-[#0B111C] cursor-pointer hover:bg-white shadow-[#BCCCE6]/20"
-              : "bg-[#161F2D] text-[#64748B] border border-[#2A3446] cursor-not-allowed shadow-none"
-          }`}
-        >
-          {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          <span>{isSubmitting ? "Accepting terms…" : "Accept Agreement & Continue to Payment"}</span>
-          {!isSubmitting && <ArrowRight className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <button
+            id="accept-terms-btn"
+            type="button"
+            onClick={handleProceed}
+            disabled={isSubmitting}
+            className="w-full sm:w-auto py-3 px-5 rounded-xl font-bold text-sm transition-all shadow-md bg-app-accent-soft text-app-base enabled:hover:bg-hi enabled:hover:shadow-lg shadow-app-accent-soft/20 cursor-pointer inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-surface"
+          >
+            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            <span>
+              {isSubmitting
+                ? "Saving agreement…"
+                : isAlreadyAccepted
+                ? "Continue to plan selection"
+                : "Accept agreement & choose plan"}
+            </span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </motion.div>
   );

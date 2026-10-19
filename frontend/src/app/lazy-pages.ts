@@ -1,3 +1,4 @@
+import { recoverStaleChunk } from "../lib/chunk-recovery";
 import { type ComponentType, type LazyExoticComponent, lazy } from "react";
 
 // biome-ignore lint/suspicious/noExplicitAny: page components take arbitrary props
@@ -11,11 +12,20 @@ export type PreloadableComponent<T extends AnyComponent> = LazyExoticComponent<T
  * React.lazy plus a `preload()` handle so layouts can warm route chunks during
  * idle time. The browser caches the module, so a later render resolves instantly.
  */
-function lazyPage<T extends AnyComponent>(factory: () => Promise<T>): PreloadableComponent<T> {
-  const load = () => factory().then((component) => ({ default: component }));
+export function lazyModule<T extends AnyComponent>(factory: () => Promise<{ default: T }>): PreloadableComponent<T> {
+  let pending: Promise<{ default: T }> | undefined;
+  const load = () => pending ??= factory().catch(error => {
+    if (recoverStaleChunk(error)) return new Promise<{ default: T }>(() => {});
+    pending = undefined;
+    throw error;
+  });
   const component = lazy(load) as PreloadableComponent<T>;
   component.preload = load;
   return component;
+}
+
+function lazyPage<T extends AnyComponent>(factory: () => Promise<T>): PreloadableComponent<T> {
+  return lazyModule(() => factory().then(component => ({ default: component })));
 }
 
 /** Run work once the browser is idle so it never competes with the current page. */
@@ -42,7 +52,9 @@ export const ClientsPage = lazyPage(() =>
 export const AboutPage = lazyPage(() =>
   import("../pages/public/AboutPage").then((m) => m.AboutPage),
 );
-export const FaqPage = lazyPage(() => import("../pages/public/FaqPage").then((m) => m.FaqPage));
+export const FaqPage = lazyPage(() =>
+  import("../pages/public/FaqPage").then((m) => m.FaqPage),
+);
 export const TermsPage = lazyPage(() =>
   import("../pages/public/TermsPrivacyPages").then((m) => m.TermsPage),
 );
@@ -71,9 +83,6 @@ export const PortalDeliverablesPage = lazyPage(() =>
 export const PortalCalendarPage = lazyPage(() =>
   import("../pages/portal/PortalCalendarPage").then((m) => m.PortalCalendarPage),
 );
-export const PortalCreativePodPage = lazyPage(() =>
-  import("../pages/portal/PortalCreativePodPage").then((m) => m.PortalCreativePodPage),
-);
 export const PortalPaymentsPage = lazyPage(() =>
   import("../pages/portal/PortalPaymentsPage").then((m) => m.PortalPaymentsPage),
 );
@@ -83,23 +92,27 @@ export const PortalSupportPage = lazyPage(() =>
 export const PortalAccountPage = lazyPage(() =>
   import("../pages/portal/PortalAccountPage").then((m) => m.PortalAccountPage),
 );
+export const PortalBrandDNAPage = lazyPage(() =>
+  import("../pages/portal/PortalBrandDNAPage").then((m) => m.PortalBrandDNAPage),
+);
 export const PortalLibraryPage = lazyPage(() =>
   import("../pages/portal/PortalLibraryPage").then((m) => m.PortalLibraryPage),
 );
 
-const PORTAL_PAGES = [
+const PORTAL_CORE_PAGES = [
   PortalDashboardPage,
   PortalDeliverablesPage,
   PortalCalendarPage,
-  PortalCreativePodPage,
   PortalPaymentsPage,
-  PortalSupportPage,
-  PortalAccountPage,
-  PortalLibraryPage,
 ];
 
-/** Warm every portal page chunk (and the onboarding flow) so sidebar navigation is instant. */
+/** Warm common portal routes without downloading the entire application after login. */
 export function preloadPortalPages(options: { includeOnboarding?: boolean } = {}): void {
-  for (const page of PORTAL_PAGES) void page.preload().catch(() => {});
-  if (options.includeOnboarding) void OnboardingView.preload().catch(() => {});
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+  if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
+  if (options.includeOnboarding) {
+    void OnboardingView.preload().catch(() => {});
+    return;
+  }
+  for (const page of PORTAL_CORE_PAGES) void page.preload().catch(() => {});
 }

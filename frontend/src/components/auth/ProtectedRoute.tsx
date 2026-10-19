@@ -4,6 +4,7 @@ import { useAuth } from "../../lib/auth-context";
 
 export const ROLE_HOMES: Record<string, string> = {
   client: "/portal",
+  client_owner: "/portal",
   team_member: "/workstation",
   team_lead: "/admin/pod-dashboard",
   editor: "/workstation",
@@ -16,7 +17,10 @@ export const ROLE_HOMES: Record<string, string> = {
 
 export function getRoleHome(role?: string | null): string {
   if (!role) return "/portal";
-  return ROLE_HOMES[role] || "/portal";
+  const r = role.toLowerCase();
+  if (r === "admin" || r === "super_admin" || r.includes("admin")) return "/admin";
+  if (r === "client" || r === "client_owner" || r.includes("client")) return "/portal";
+  return ROLE_HOMES[r] || ROLE_HOMES[role] || "/portal";
 }
 
 interface ProtectedRouteProps {
@@ -40,6 +44,8 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     return <Navigate to={`/login?redirectedFrom=${returnUrl}`} replace />;
   }
 
+  if (user.must_reset_password) return null;
+
   // Role check: Admin and super_admin have universal access
   if (allowedRoles && allowedRoles.length > 0) {
     const isSuperOrAdmin = user.role === "admin" || user.role === "super_admin";
@@ -53,16 +59,16 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
 
       // Fallback Access Restricted UI if user is already at their targetHome
       return (
-        <div className="flex min-h-screen items-center justify-center bg-[#0B111C] text-[#F8FAFC] p-6">
-          <div className="w-full max-w-md rounded-3xl border border-[#2A3446] bg-[#161F2D] p-8 shadow-2xl text-center space-y-6">
-            <div className="size-14 mx-auto rounded-2xl bg-[#0B111C] border border-[#2A3446] flex items-center justify-center text-2xl text-[#D8BF9B]">
+        <div className="flex min-h-screen items-center justify-center bg-app-base text-app-ink p-6">
+          <div className="w-full max-w-md rounded-3xl border border-app-line bg-app-surface p-8 shadow-2xl text-center space-y-6">
+            <div className="size-14 mx-auto rounded-2xl bg-app-base border border-app-line flex items-center justify-center text-2xl text-app-warm">
               🔒
             </div>
             <div className="space-y-2">
-              <h2 className="text-xl font-bold text-white">Access Restricted</h2>
-              <p className="text-xs text-[#97A0B3] leading-relaxed">
-                This operations portal requires <span className="font-semibold text-white">Admin or Staff</span> permissions.
-                You are currently signed in as <span className="font-mono text-[#7FA0D6] font-semibold">{user.email}</span> ({user.role}).
+              <h2 className="text-xl font-bold text-hi">Access Restricted</h2>
+              <p className="text-xs text-app-mist leading-relaxed">
+                This operations portal requires <span className="font-semibold text-hi">Admin or Staff</span> permissions.
+                You are currently signed in as <span className="font-mono text-app-accent font-semibold">{user.email}</span> ({user.role}).
               </p>
             </div>
             <div className="space-y-2.5 pt-2">
@@ -71,7 +77,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
                 onClick={() => {
                   window.location.href = getRoleHome(user.role);
                 }}
-                className="w-full py-2.5 px-4 rounded-xl bg-[#BCCCE6] text-[#0B111C] text-xs font-bold hover:bg-white transition-colors shadow-xs cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-xl bg-app-accent-soft text-app-base text-xs font-bold hover:bg-hi transition-colors shadow-xs cursor-pointer"
               >
                 Go to Your Portal ({getRoleHome(user.role)})
               </button>
@@ -81,7 +87,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
                   const returnUrl = encodeURIComponent(location.pathname + location.search);
                   window.location.href = `/login?redirectedFrom=${returnUrl}`;
                 }}
-                className="w-full py-2.5 px-4 rounded-xl border border-[#2A3446] text-[#97A0B3] hover:text-white text-xs font-bold hover:bg-[#1F2C3F] transition-colors cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-xl border border-app-line text-app-mist hover:text-hi text-xs font-bold hover:bg-app-surface transition-colors cursor-pointer"
               >
                 Sign In with Admin Account
               </button>

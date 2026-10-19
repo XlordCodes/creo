@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { NativeSelect } from "../../ui/NativeSelect";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   PhoneCall,
   X,
@@ -10,11 +12,13 @@ import {
 } from "lucide-react";
 import { request } from "../../lib/http";
 import { useAuth } from "../../lib/auth-context";
+import { useConfirm } from "../ui/ConfirmDialog";
 
 interface PlanBargainCallModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  initialTopic?: string;
 }
 
 const TOPICS = [
@@ -26,34 +30,68 @@ const TOPICS = [
 
 const TIME_SLOTS = [
   "Immediate / ASAP (Next 30 mins)",
-  "Today Afternoon (2:00 PM – 5:00 PM)",
-  "Today Evening (6:00 PM – 9:00 PM)",
-  "Tomorrow Morning (10:00 AM – 1:00 PM)",
+  "Today Afternoon (2:00 PM - 5:00 PM)",
+  "Today Evening (6:00 PM - 9:00 PM)",
+  "Tomorrow Morning (10:00 AM - 1:00 PM)",
 ];
 
-export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargainCallModalProps) {
+export function PlanBargainCallModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  initialTopic,
+}: PlanBargainCallModalProps) {
   const { user } = useAuth();
-  const [targetTopic, setTargetTopic] = useState(TOPICS[0]);
+  const confirm = useConfirm();
+  const [targetTopic, setTargetTopic] = useState(initialTopic || TOPICS[0] || "Plan Consultation");
   const [proposedOffer, setProposedOffer] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [preferredTime, setPreferredTime] = useState(TIME_SLOTS[0]);
+  const [preferredTime, setPreferredTime] = useState(TIME_SLOTS[0] || "Immediate / ASAP");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (initialTopic) {
+      setTargetTopic(initialTopic);
+    }
+  }, [initialTopic]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loading) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, loading, onClose]);
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   const clientName = user?.full_name || user?.email?.split("@")[0] || "Client";
   const clientEmail = user?.email || "";
 
   // WhatsApp Pre-composed Direct Link
   const waText = encodeURIComponent(
-    `Hi Creo Admin, I am ${clientName} (${clientEmail}). I would like to negotiate a custom plan/pricing for my brand.\n` +
-      `• Target Topic: ${targetTopic}\n` +
-      (proposedOffer ? `• Proposed Scope / Budget: ${proposedOffer}\n` : "") +
-      (phoneNumber ? `• Contact Phone: ${phoneNumber}\n` : "") +
-      `• Preferred Time: ${preferredTime}\n` +
+    `Hi Creo Admin, I am ${clientName} (${clientEmail}). I would like to negotiate a custom plan/pricing for my brand.
+` +
+      `• Target Topic: ${targetTopic}
+` +
+      (proposedOffer ? `• Proposed Scope / Budget: ${proposedOffer}
+` : "") +
+      (phoneNumber ? `• Contact Phone: ${phoneNumber}
+` : "") +
+      `• Preferred Time: ${preferredTime}
+` +
       (notes ? `• Notes: ${notes}` : "")
   );
   const waUrl = `https://wa.me/919941999415?text=${waText}`;
@@ -61,9 +99,20 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneNumber.trim()) {
-      setError("Please provide a contact phone number so our Agency Director can reach you.");
+      setError("Please provide a contact phone number so your agency team can reach you.");
       return;
     }
+
+    const shouldSendRequest = await confirm({
+      title: "Send this call request?",
+      description: "Your agency’s responsible team will receive the plan consultation details.",
+      details: [targetTopic, `Contact: ${phoneNumber}`, `Preferred time: ${preferredTime}`],
+      confirmText: "Send call request",
+      cancelText: "Review details",
+      tone: "info",
+      icon: "info",
+    });
+    if (!shouldSendRequest) return;
 
     try {
       setLoading(true);
@@ -93,15 +142,28 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
-      <div className="relative w-full max-w-lg rounded-3xl bg-[#161F2D] p-6 sm:p-7 shadow-2xl border border-[#2A3446] max-h-[92vh] overflow-y-auto text-[#F8FAFC]">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[99999] grid place-items-center p-4 sm:p-6 overflow-y-auto bg-black/80 animate-[fadeIn_0.15s_ease-out]"
+      style={{
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !loading) onClose();
+      }}
+    >
+      <div
+        className="relative w-full max-w-lg rounded-3xl bg-app-surface p-6 sm:p-7 shadow-[0_25px_60px_-15px_rgb(var(--shadow-rgb)/calc(0.85*var(--shadow-k)))] border border-app-line max-h-[90vh] overflow-y-auto text-app-ink m-auto animate-[zoomIn_0.2s_cubic-bezier(0.16,1,0.3,1)]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Close button */}
         <button
           type="button"
           onClick={onClose}
           disabled={loading}
-          className="absolute top-5 right-5 size-8 rounded-full bg-[#0B111C] border border-[#2A3446] text-[#97A0B3] hover:bg-[#2A3446] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+          aria-label="Close modal"
+          className="absolute top-5 right-5 size-8 rounded-full bg-app-base border border-app-line text-app-mist hover:bg-app-line hover:text-hi flex items-center justify-center transition-colors cursor-pointer"
         >
           <X className="size-4" />
         </button>
@@ -111,25 +173,25 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
             <div className="size-14 rounded-full bg-emerald-950/50 border border-emerald-800/60 text-emerald-400 mx-auto flex items-center justify-center shadow-sm">
               <CheckCircle2 className="size-7" />
             </div>
-            <h3 className="text-lg font-bold text-[#F8FAFC]">Call Request Confirmed!</h3>
-            <p className="text-xs text-[#97A0B3] max-w-xs mx-auto leading-relaxed">
-              Our Agency Director has received your plan negotiation request. We will connect with you at{" "}
-              <strong className="text-white">{phoneNumber}</strong> ({preferredTime}).
+            <h3 className="text-lg font-bold text-app-ink">Call request sent</h3>
+            <p className="text-xs text-app-mist max-w-xs mx-auto leading-relaxed">
+              Your agency team has received the plan consultation request. They will contact you at{" "}
+              <strong className="text-hi">{phoneNumber}</strong> ({preferredTime}).
             </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Header */}
-            <div className="flex items-start gap-3.5 pb-3 border-b border-[#2A3446]">
-              <div className="size-10 rounded-2xl bg-[#0B111C] border border-[#2A3446] text-[#7FA0D6] flex items-center justify-center shrink-0 shadow-sm">
+            <div className="flex items-start gap-3.5 pb-3 border-b border-app-line">
+              <div className="size-10 rounded-2xl bg-app-base border border-app-line text-app-accent flex items-center justify-center shrink-0 shadow-sm">
                 <PhoneCall className="size-5" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-[#F8FAFC] tracking-tight">
-                  Book a Plan Negotiation Call
+                <h3 className="text-lg font-bold text-app-ink tracking-tight">
+                  Book a Plan Consultation Call
                 </h3>
-                <p className="text-xs text-[#97A0B3] mt-0.5">
-                  Bargain custom rates, adjust deliverable quotas, or create a tailored retainer with our Executive Director.
+                <p className="text-xs text-app-mist mt-0.5">
+                  Discuss custom video deliverables or negotiate a tailored plan with our executive team.
                 </p>
               </div>
             </div>
@@ -142,25 +204,28 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
 
             {/* Negotiation Topic */}
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-[#F8FAFC]">
+              <label className="block text-xs font-semibold text-app-ink">
                 What would you like to negotiate?
               </label>
-              <select
+              <NativeSelect
                 value={targetTopic}
                 onChange={(e) => setTargetTopic(e.target.value)}
-                className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]"
+                className="w-full rounded-xl border border-app-line bg-app-base px-3 py-2 text-xs text-app-ink focus:outline-none focus:border-app-accent focus:ring-1 focus:ring-app-accent"
               >
+                {targetTopic && !TOPICS.includes(targetTopic) && (
+                  <option value={targetTopic}>{targetTopic}</option>
+                )}
                 {TOPICS.map((topic) => (
-                  <option key={topic} value={topic} className="bg-[#0B111C] text-[#F8FAFC]">
+                  <option key={topic} value={topic} className="bg-app-base text-app-ink">
                     {topic}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
 
             {/* Proposed Budget or Offer */}
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-[#F8FAFC]">
+              <label className="block text-xs font-semibold text-app-ink">
                 Your Proposed Budget / Scope Target (Optional)
               </label>
               <div className="relative">
@@ -169,14 +234,14 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
                   value={proposedOffer}
                   onChange={(e) => setProposedOffer(e.target.value)}
                   placeholder="e.g. Looking for 10 reels at ₹35,000/mo or 15% startup discount"
-                  className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]"
+                  className="w-full rounded-xl border border-app-line bg-app-base px-3 py-2 text-xs text-app-ink placeholder-app-mist/50 focus:outline-none focus:border-app-accent focus:ring-1 focus:ring-app-accent"
                 />
               </div>
             </div>
 
             {/* Phone Number */}
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-[#F8FAFC]">
+              <label className="block text-xs font-semibold text-app-ink">
                 Contact Phone / WhatsApp Number <span className="text-rose-400">*</span>
               </label>
               <input
@@ -185,31 +250,31 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 placeholder="e.g. +91 98765 43210"
-                className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]"
+                className="w-full rounded-xl border border-app-line bg-app-base px-3 py-2 text-xs text-app-ink placeholder-app-mist/50 focus:outline-none focus:border-app-accent focus:ring-1 focus:ring-app-accent"
               />
             </div>
 
             {/* Preferred Call Time */}
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-[#F8FAFC]">
+              <label className="block text-xs font-semibold text-app-ink">
                 Preferred Call Window
               </label>
-              <select
+              <NativeSelect
                 value={preferredTime}
                 onChange={(e) => setPreferredTime(e.target.value)}
-                className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6]"
+                className="w-full rounded-xl border border-app-line bg-app-base px-3 py-2 text-xs text-app-ink focus:outline-none focus:border-app-accent focus:ring-1 focus:ring-app-accent"
               >
                 {TIME_SLOTS.map((slot) => (
-                  <option key={slot} value={slot} className="bg-[#0B111C] text-[#F8FAFC]">
+                  <option key={slot} value={slot} className="bg-app-base text-app-ink">
                     {slot}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
 
             {/* Notes */}
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-[#F8FAFC]">
+              <label className="block text-xs font-semibold text-app-ink">
                 Additional Notes / Deliverable Needs (Optional)
               </label>
               <textarea
@@ -217,7 +282,7 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Share any context about your brand cadence, team size, or turnaround needs..."
-                className="w-full rounded-xl border border-[#2A3446] bg-[#0B111C] px-3 py-2 text-xs text-[#F8FAFC] placeholder-[#97A0B3]/50 focus:outline-none focus:border-[#7FA0D6] focus:ring-1 focus:ring-[#7FA0D6] resize-none"
+                className="w-full rounded-xl border border-app-line bg-app-base px-3 py-2 text-xs text-app-ink placeholder-app-mist/50 focus:outline-none focus:border-app-accent focus:ring-1 focus:ring-app-accent resize-none"
               />
             </div>
 
@@ -242,19 +307,19 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
             </div>
 
             {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#2A3446]">
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-app-line">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={loading}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#97A0B3] hover:bg-[#0B111C] hover:text-white transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-app-mist hover:bg-app-base hover:text-hi transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={loading}
-                className="px-5 py-2 rounded-xl bg-[#BCCCE6] hover:bg-white text-[#0B111C] text-xs font-bold transition-all shadow-md shadow-[#BCCCE6]/20 inline-flex items-center gap-1.5 cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-app-accent-soft hover:bg-hi text-app-base text-xs font-bold transition-all shadow-md shadow-app-accent-soft/20 inline-flex items-center gap-1.5 cursor-pointer"
               >
                 {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
                 <span>Submit Call Request</span>
@@ -263,6 +328,7 @@ export function PlanBargainCallModal({ isOpen, onClose, onSuccess }: PlanBargain
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

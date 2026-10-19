@@ -176,3 +176,42 @@ def current_period() -> tuple[date, date]:
     last_day = calendar.monthrange(today.year, today.month)[1]
     end = today.replace(day=last_day)
     return start, end
+
+
+async def initialize_quotas_for_client(db: AsyncSession, client_id: uuid.UUID) -> None:
+    """Initialize usage counters for a client, called during onboarding completion."""
+    from app.services.subscription_guard import check_client_subscription
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.models.billing import UsageCounter
+    from datetime import timedelta
+
+    sub_check = await check_client_subscription(db, client_id)
+    if sub_check.get("is_active") and sub_check.get("plan"):
+        plan = sub_check["plan"]
+        today = date.today()
+        period_start = today.replace(day=1)
+        if period_start.month == 12:
+            period_end = date(period_start.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            period_end = date(period_start.year, period_start.month + 1, 1) - timedelta(days=1)
+
+        for k, q in [
+            (DeliverableType.REEL, plan.reel_quota),
+            (DeliverableType.CAROUSEL, plan.story_quota),
+            (DeliverableType.STATIC_POST, plan.poster_quota),
+        ]:
+            c_stmt = (
+                pg_insert(UsageCounter)
+                .values(
+                    id=uuid.uuid4(),
+                    client_id=client_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                    kind=k,
+                    quota=q,
+                    used=0,
+                )
+                .on_conflict_do_nothing(index_elements=["client_id", "period_start", "kind"])
+            )
+            await db.execute(c_stmt)
+

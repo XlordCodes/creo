@@ -2,7 +2,6 @@ import { Link, useLocation } from "react-router";
 import {
   LayoutDashboard,
   CreditCard,
-  Sparkles,
   CalendarDays,
   CheckSquare,
   LifeBuoy,
@@ -15,7 +14,6 @@ export function PortalBottomNav() {
   const navItems = [
     { label: "Home", href: "/portal", icon: LayoutDashboard, exact: true },
     { label: "Plans", href: "/portal/payments", icon: CreditCard },
-    { label: "Pod", href: "/portal/creative-pod", icon: Sparkles },
     { label: "Calendar", href: "/portal/calendar", icon: CalendarDays },
     { label: "Work", href: "/portal/deliverables", icon: CheckSquare },
     { label: "Support", href: "/portal/support", icon: LifeBuoy },
@@ -25,7 +23,7 @@ export function PortalBottomNav() {
   return (
     <nav
       aria-label="Portal Navigation"
-      className="xl:hidden fixed bottom-0 inset-x-0 z-50 bg-[#0B111C]/97 backdrop-blur-xl border-t border-[#2A3446]/70 px-1.5 py-1.5 shadow-[0_-4px_25px_rgba(0,0,0,0.4)]"
+      className="xl:hidden fixed bottom-0 inset-x-0 z-50 bg-app-base/97 backdrop-blur-xl border-t border-app-line/70 px-1.5 py-1.5 shadow-[0_-4px_25px_rgb(var(--shadow-rgb)/calc(0.4*var(--shadow-k)))]"
     >
       <div className="max-w-lg mx-auto flex items-center justify-around">
         {navItems.map((item) => {
@@ -40,14 +38,14 @@ export function PortalBottomNav() {
               to={item.href}
               className={`flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all duration-200 min-w-[44px] sm:min-w-[52px] ${
                 isActive
-                  ? "text-[#0052FF] font-bold"
+                  ? "text-app-accent font-bold"
                   : "text-slate-500 hover:text-slate-900 font-medium"
               }`}
             >
               <div className="relative">
                 <div
                   className={`p-1 rounded-xl transition-all ${
-                    isActive ? "bg-blue-50 text-[#0052FF]" : ""
+                    isActive ? "bg-blue-50 text-app-accent" : ""
                   }`}
                 >
                   <Icon
@@ -57,7 +55,7 @@ export function PortalBottomNav() {
                   />
                 </div>
                 {isActive && (
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 size-1 rounded-full bg-[#0052FF]" />
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 size-1 rounded-full bg-app-accent" />
                 )}
               </div>
               <span className="text-[9.5px] sm:text-[10px] mt-0.5 tracking-tight line-clamp-1">

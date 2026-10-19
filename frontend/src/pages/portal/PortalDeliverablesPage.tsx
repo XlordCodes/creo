@@ -1,390 +1,594 @@
-import { useState, useEffect } from "react";
+import { PublishingPanel } from "../../components/ops/PublishingPanel";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Check, Clock, Download, Film, ImageIcon, Loader2, RefreshCw } from "lucide-react";
 import { useAuth } from "../../lib/auth-context";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchPortalDeliverables, approveDeliverable, requestChanges } from "../../lib/deliverables-api";
-import { Check, Play, Loader2 } from "lucide-react";
+import {
+  approveDeliverable,
+  fetchPortalDeliverable,
+  fetchPortalDeliverables,
+  requestChanges,
+} from "../../lib/deliverables-api";
+import { HttpError } from "../../lib/http";
 import { useOnboardingGate } from "../../lib/useOnboardingGate";
 import { SubscriptionLockedState } from "../../components/portal/SubscriptionLockedState";
+
+import type { DeliverableItem } from "../../types/api";
+
+type Filter = "all" | "needs_you" | "revision" | "approved";
+
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "needs_you", label: "Needs you" },
+  { key: "revision", label: "In revision" },
+  { key: "approved", label: "Approved" },
+];
+
+const APPROVED_STATUSES = new Set(["approved", "scheduled", "publishing", "published", "publish_failed"]);
+
+function matchesFilter(item: DeliverableItem, filter: Filter): boolean {
+  if (filter === "needs_you") return item.status === "pending_approval";
+  if (filter === "revision") return item.status === "revision_requested";
+  if (filter === "approved") return APPROVED_STATUSES.has(item.status);
+  return true;
+}
+
+function isTall(item: DeliverableItem): boolean {
+  return item.deliverable_type === "reel" || item.deliverable_type === "story" || item.is_video;
+}
+
+function StatusBadge({ item }: { item: DeliverableItem }) {
+  const tone =
+    item.status === "pending_approval"
+      ? "bg-app-warm/15 text-app-warm"
+      : item.status === "revision_requested"
+        ? "bg-hi/[0.06] text-app-ink-2"
+        : "bg-app-accent/15 text-app-accent-soft";
+  const label = item.status === "pending_approval" ? "Needs you" : item.status_label;
+  return <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold ${tone}`}>{label}</span>;
+}
+
+/**
+ * Keep the first signed URL for a deliverable while it works. The list refetches
+ * every two minutes with fresh links; swapping them in would restart playback.
+ * After a load error (e.g. an expired link) the newest URL is used instead.
+ */
+function useStableSrc(id: string, url: string | null) {
+  const [src, setSrc] = useState(url);
+  const [failed, setFailed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a different deliverable resets the source
+  useEffect(() => {
+    setSrc(url);
+    setFailed(false);
+  }, [id]);
+  useEffect(() => {
+    if (failed && url && url !== src) {
+      setSrc(url);
+      setFailed(false);
+    }
+  }, [failed, url, src]);
+  return { src, failed, onError: () => setFailed(true) };
+}
+
+function Thumbnail({ item }: { item: DeliverableItem }) {
+  const { src, failed, onError } = useStableSrc(item.id, item.file_url);
+  if (!src || failed) {
+    return item.is_video ? <Film className="w-5 h-5 text-app-mist" /> : <ImageIcon className="w-5 h-5 text-app-mist" />;
+  }
+  if (item.is_video) {
+    return <video src={`${src}#t=0.5`} muted playsInline preload="metadata" onError={onError} className="w-full h-full object-cover" />;
+  }
+  return <img src={src} alt="" loading="lazy" onError={onError} className="w-full h-full object-cover" />;
+}
+
+/** Full preview with a loading skeleton and a recoverable error (signed links expire). */
+function MediaPreview({ item, onRefresh }: { item: DeliverableItem; onRefresh: () => void }) {
+  const { src, failed, onError } = useStableSrc(item.id, item.file_url);
+  const [ready, setReady] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: show the skeleton again whenever the source changes
+  useEffect(() => setReady(false), [src]);
+
+  const frame = isTall(item) ? "aspect-[9/16] max-w-[300px]" : "aspect-[4/5] max-w-[380px]";
+
+  return (
+    <div className={`relative w-full ${frame} bg-black rounded-[28px] overflow-hidden shadow-2xl border-4 border-app-surface flex items-center justify-center`}>
+      {!ready && src && !failed && (
+        <div className="absolute inset-0 animate-pulse bg-hi/[0.04]" aria-hidden="true" />
+      )}
+      {!src || failed ? (
+        <div className="text-center p-6 space-y-3">
+          <p className="text-hi text-sm font-semibold">Preview unavailable</p>
+          <p className="text-xs text-app-mist">The secure preview link may have expired.</p>
+          <button
+            onClick={onRefresh}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-app-line text-xs font-bold text-hi hover:bg-hi/[0.04]"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Reload preview
+          </button>
+        </div>
+      ) : item.is_video ? (
+        <video
+          key={src}
+          src={src}
+          controls
+          playsInline
+          preload="metadata"
+          onLoadedMetadata={() => setReady(true)}
+          onError={onError}
+          className="w-full h-full object-contain bg-black"
+        />
+      ) : (
+        <img
+          key={src}
+          src={src}
+          alt={item.title}
+          onLoad={() => setReady(true)}
+          onError={onError}
+          className="w-full h-full object-contain bg-black"
+        />
+      )}
+    </div>
+  );
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof HttpError) {
+    if (error.code === "REVISION_LIMIT_REACHED") {
+      return "You've used all revision rounds included in your plan for this piece. Approve it as-is, or contact support to add more revisions.";
+    }
+    return error.message || fallback;
+  }
+  return fallback;
+}
+
+function DeliverablesLoading() {
+  return <section role="status" aria-live="polite" className="space-y-5 animate-page-in"><div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[0, 1, 2].map(i => <div key={i} className="rounded-2xl p-5 bg-app-surface border border-app-line space-y-4 motion-safe:animate-pulse"><div className="aspect-video rounded-xl bg-app-line" /><div className="h-4 w-2/3 rounded bg-app-line" /><div className="h-3 w-1/2 rounded bg-app-line" /></div>)}</div></section>;
+}
 
 export function PortalDeliverablesPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const gate = useOnboardingGate();
-  const clientId = user?.id || "00000000-0000-0000-0000-000000000001";
+  const navigate = useNavigate();
+  const { deliverableId } = useParams<{ deliverableId?: string }>();
+  const clientId = user?.id || "";
 
-  // Query deliverables (only once the workspace is unlocked)
-  const { data: deliverablesData, isLoading } = useQuery({
+  const listQuery = useQuery({
     queryKey: ["portal", "deliverables", clientId],
     queryFn: () => fetchPortalDeliverables(clientId),
-    enabled: gate.isComplete,
-    refetchInterval: 30000,
+    enabled: gate.isComplete && !!clientId,
+    retry: false,
+    // Signed preview links last 15 minutes; refresh well within that.
+    refetchInterval: 2 * 60_000,
+  });
+  const deliverables = listQuery.data?.items ?? [];
+
+  const [filter, setFilter] = useState<Filter>("all");
+  const [viewVersionId, setViewVersionId] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+
+  // A link may name an older version; the detail endpoint resolves it to the current one.
+  const detailQuery = useQuery({
+    queryKey: ["portal", "deliverable", deliverableId],
+    queryFn: () => fetchPortalDeliverable(deliverableId as string),
+    enabled: gate.isComplete && !!deliverableId,
+    refetchInterval: 2 * 60_000,
+    retry: false,
   });
 
-  const deliverables = deliverablesData?.items || [];
-  const countAwaiting = deliverables.filter((d: any) => d.status === "pending_approval").length;
-
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [commentText, setCommentText] = useState("");
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Auto-select first pending deliverable, or just first one
-  useEffect(() => {
-    if (deliverables.length > 0 && !selectedId) {
-      const firstPending = deliverables.find((d: any) => d.status === "pending_approval");
-      setSelectedId(firstPending ? firstPending.id : (deliverables[0]?.id || null));
+  const selectedItem: DeliverableItem | undefined = useMemo(() => {
+    if (deliverableId) {
+      const direct = deliverables.find((d) => d.id === deliverableId);
+      if (direct) return direct;
+      const detail = detailQuery.data;
+      if (detail) return deliverables.find((d) => d.root_id === detail.root_id) ?? detail;
+      return undefined;
     }
-  }, [deliverables, selectedId]);
+    return deliverables.find((d) => d.status === "pending_approval") ?? deliverables[0];
+  }, [deliverableId, deliverables, detailQuery.data]);
 
-  if (!gate.isComplete) {
-    return (
-      <div className="flex items-center justify-center py-6 sm:py-10">
-        <SubscriptionLockedState
-          title="Deliverables Queue Locked"
-          description="Your creative deliverables queue and sign-off docks will activate as soon as your workspace setup is complete."
-        />
-      </div>
-    );
-  }
+  const versions = detailQuery.data && selectedItem && detailQuery.data.root_id === selectedItem.root_id
+    ? detailQuery.data.versions
+    : [];
+  const shownItem = (viewVersionId && versions.find((v) => v.id === viewVersionId)) || selectedItem;
+  const viewingOlder = !!shownItem && !!selectedItem && shownItem.id !== selectedItem.id;
 
-  const selectedItem: any = deliverables.find((d: any) => d.id === selectedId);
+  const select = (id: string) => {
+    setViewVersionId(null);
+    setCommentText("");
+    setActionError(null);
+    navigate(`/portal/deliverables/${id}`, { replace: !!deliverableId });
+  };
+
+  // Keep the URL on the item being shown so it can be shared or reopened.
+  useEffect(() => {
+    if (!deliverableId && selectedItem) {
+      navigate(`/portal/deliverables/${selectedItem.id}`, { replace: true });
+    }
+  }, [deliverableId, selectedItem, navigate]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["portal", "deliverables", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["portal", "deliverable"] });
+    queryClient.invalidateQueries({ queryKey: ["portal", "dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["portal-dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["portal-dashboard-deliverables"] });
+    queryClient.invalidateQueries({ queryKey: ["portal-library"] });
+    queryClient.invalidateQueries({ queryKey: ["publishing"] });
+  };
+
+  const [publishingReview, setPublishingReview] = useState<{ id: string; fingerprint: string } | null>(null);
   const approveMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const idempotencyKey = crypto.randomUUID();
-      return await approveDeliverable(id, clientId, idempotencyKey);
-    },
+    mutationFn: (id: string) => approveDeliverable(id, clientId, crypto.randomUUID(), publishingReview?.id === id ? publishingReview.fingerprint : undefined),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["portal", "deliverables", clientId] });
-      showToast("Approved! Assets synced.");
+      refresh();
+      setActionError(null);
+      showToast("Approved — your download is ready.");
     },
+    onError: (error) => setActionError(errorMessage(error, "Approval failed. Please retry.")),
   });
 
   const requestChangesMutation = useMutation({
-    mutationFn: async ({ id, comment }: { id: string; comment: string }) => {
-      return await requestChanges(id, clientId, comment);
-    },
+    mutationFn: ({ id, comment }: { id: string; comment: string }) => requestChanges(id, clientId, comment),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["portal", "deliverables", clientId] });
-      showToast("Revision requested.");
+      refresh();
       setCommentText("");
+      setActionError(null);
+      showToast("Revision requested — your pod has been notified.");
     },
+    onError: (error) => setActionError(errorMessage(error, "Revision request failed. Please retry.")),
   });
 
-  const handleApprove = () => {
-    if (selectedId) approveMutation.mutate(selectedId);
+  const pendingItems = deliverables.filter((d) => d.status === "pending_approval");
+
+  const handleApproveAll = async () => {
+    let done = 0;
+    let failed = 0;
+    for (const item of pendingItems) {
+      setBulkProgress(`Approving ${done + failed + 1} of ${pendingItems.length}…`);
+      try {
+        await approveDeliverable(item.id, clientId, crypto.randomUUID());
+        done += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkProgress(null);
+    refresh();
+    showToast(failed ? `Approved ${done}; ${failed} could not be approved — please retry.` : `Approved ${done} deliverables.`);
   };
 
-  const handleRequestChange = () => {
-    if (selectedId) requestChangesMutation.mutate({ id: selectedId, comment: commentText });
-  };
+  if (gate.error) return <div role="alert">{gate.error.message} <button onClick={() => void gate.refetch()}>Retry</button></div>;
+  if (!gate.isReady || (gate.isComplete && listQuery.isLoading)) {
+    return <DeliverablesLoading />;
+  }
 
-  const handleApproveAll = () => {
-    const pendingIds = deliverables.filter((d: any) => d.status === "pending_approval").map((d: any) => d.id);
-    pendingIds.forEach((id: string) => approveMutation.mutate(id));
-    showToast(`Approving ${pendingIds.length} items...`);
-  };
-
-  const itemComments = selectedItem?.rejection_comment
-    ? [
-        {
-          id: "rev-note",
-          author: "You",
-          timestamp: selectedItem.created_at ? new Date(selectedItem.created_at).toLocaleDateString() : "Latest review",
-          text: selectedItem.rejection_comment,
-          fixed: (selectedItem.revision_round || 1) > 1,
-        },
-      ]
-    : [];
-
-  if (isLoading && deliverables.length === 0) {
+  if (!gate.isComplete) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#7E889C]" />
+      <div className="w-full">
+        <SubscriptionLockedState
+          title="Deliverables Queue Locked"
+          description="Complete setup to review and approve your deliverables."
+        />
       </div>
     );
   }
 
+  if (listQuery.isError) {
+    return (
+      <div role="alert" className="p-6 text-hi">
+        {listQuery.error.message || "Could not load deliverables."}{" "}
+        <button className="underline" onClick={() => listQuery.refetch()}>Retry</button>
+      </div>
+    );
+  }
+
+  if (listQuery.data?.subscription_active === false) {
+    return (
+      <div className="w-full">
+        <SubscriptionLockedState
+          title="Subscription inactive"
+          description="Your subscription has lapsed. Renew to review and download your deliverables."
+        />
+      </div>
+    );
+  }
+
+  const visible = deliverables.filter((d) => matchesFilter(d, filter));
+  const allowed = shownItem?.revisions_allowed ?? listQuery.data?.revisions_allowed ?? null;
+  const used = shownItem?.revisions_used ?? 0;
+  const canDecide = !!shownItem && !viewingOlder && shownItem.status === "pending_approval";
+  const lastRoundUsed = allowed !== null && used >= allowed;
+
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-500 overflow-hidden">
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between mb-8 shrink-0">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#7E889C] mb-2">
-            {deliverables.length > 0 ? `CYCLE DELIVERABLES · ${countAwaiting} WAITING FOR YOU` : "NO DELIVERABLES PENDING"}
-          </p>
-          <h1 className="text-3xl font-bold text-white">Review</h1>
-        </div>
-        {countAwaiting > 0 && (
-          <button onClick={handleApproveAll} className="text-[13px] text-[#97A0B3] hover:text-white transition-colors">
-            Approve everything in one tap: <span className="font-bold text-white cursor-pointer hover:underline">Approve all {countAwaiting}</span>
-          </button>
-        )}
-      </div>
-
-      {/* ── Main Workspace ── */}
-      <div className="grid grid-cols-12 gap-6 flex-1 min-h-0 pb-6">
-        
-        {/* Left Column: Batch List */}
-        <div className="col-span-3 bg-[#161F2D] rounded-[24px] border border-[#2A3446] p-4 flex flex-col overflow-hidden">
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#7E889C] mb-4 pl-3 pt-2">
-            THIS BATCH
-          </h3>
-          <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
-            {deliverables.length === 0 ? (
-              <div className="p-4 text-center text-sm text-[#7E889C]">
-                No deliverables in this batch.
-              </div>
-            ) : (
-              deliverables.map((d: any, idx: number) => {
-                const isSelected = selectedId === d.id;
-                const isApproved = d.status === "approved" || d.status === "scheduled";
-                const isNeedsYou = d.status === "pending_approval";
-                
-                // Fallbacks mimicking design
-                const title = d.title || `Asset ${idx + 1}`;
-                const meta = `${d.asset_type || "Reel"} · v${d.revision_round || 1}`;
-                const thumb = d.thumbnail_url || d.file_url;
-
-                return (
-                  <button
-                    key={d.id}
-                    onClick={() => setSelectedId(d.id)}
-                    className={`w-full flex items-center gap-4 p-3 rounded-2xl border text-left transition-all ${
-                      isSelected 
-                        ? "bg-[#1F2C3F] border-white/[0.1] shadow-lg" 
-                        : "border-transparent hover:bg-white/[0.02]"
-                    }`}
-                  >
-                    <div className="w-14 h-14 rounded-xl bg-black overflow-hidden shrink-0 border border-[#2A3446] flex items-center justify-center">
-                      {thumb ? (
-                        <img src={thumb} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <Play className="w-5 h-5 text-[#7E889C]" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className={`text-[13px] font-bold truncate ${isSelected ? 'text-white' : 'text-[#F8FAFC]'}`}>
-                        {title}
-                      </h4>
-                      <p className="text-xs text-[#97A0B3] truncate mb-2">{meta}</p>
-                      
-                      {isNeedsYou ? (
-                        <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold bg-[#D8BF9B]/15 text-[#D8BF9B]">
-                          Needs you
-                        </span>
-                      ) : isApproved ? (
-                        <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold bg-[#7FA0D6]/15 text-[#BCCCE6]">
-                          Approved
-                        </span>
-                      ) : (
-                        <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold bg-white/[0.05] text-[#97A0B3]">
-                          In production
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })
+      {/* ── Actions Row ── */}
+      {pendingItems.length > 1 && (
+        <div className="flex justify-end mb-4 shrink-0">
+          <button
+            onClick={handleApproveAll}
+            disabled={!!bulkProgress}
+            className="text-xs sm:text-[13px] text-app-mist hover:text-hi transition-colors text-left sm:text-right disabled:opacity-60"
+          >
+            {bulkProgress ?? (
+              <>
+                Approve everything in one tap: <span className="font-bold text-hi hover:underline">Approve all {pendingItems.length}</span>
+              </>
             )}
-          </div>
+          </button>
         </div>
+      )}
 
-        {/* Middle Column: Player */}
-        <div className="col-span-5 bg-[#161F2D] rounded-[24px] border border-[#2A3446] flex flex-col relative overflow-hidden">
-          {/* Version Switcher */}
-          {selectedItem && (
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex p-1 bg-[#0B111C]/80 backdrop-blur-md rounded-full border border-[#2A3446]">
-              {Array.from({ length: selectedItem.revision_round || 1 }).map((_, i) => {
-                const isLatest = i + 1 === (selectedItem.revision_round || 1);
+      {deliverables.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center bg-app-surface rounded-[24px] border border-app-line p-10">
+          <div className="w-12 h-12 rounded-2xl bg-hi/[0.03] border border-app-line flex items-center justify-center mb-4">
+            <Film className="w-5 h-5 text-app-mist" />
+          </div>
+          <h3 className="text-base font-semibold text-hi mb-1">No content yet — your team is working on your first batch.</h3>
+          <p className="text-sm text-app-mist max-w-md">
+            Each piece appears here after your pod lead's quality check. We'll notify you in the portal and by email when something is ready for your review.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0 pb-6">
+          {/* Left Column: Batch List */}
+          <div className="col-span-1 lg:col-span-3 bg-app-surface rounded-[24px] border border-app-line p-4 flex flex-col overflow-hidden max-h-[420px] lg:max-h-none">
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-app-base/80 rounded-xl border border-app-line mb-3" role="tablist" aria-label="Filter deliverables">
+              {FILTERS.map((f) => {
+                const isActive = filter === f.key;
                 return (
                   <button
-                    key={i}
-                    className={`px-4 py-1.5 rounded-full text-[13px] font-bold transition-colors ${
-                      isLatest 
-                        ? "bg-[#1F2C3F] text-white shadow-sm border border-[#2A3446]" 
-                        : "text-[#97A0B3] hover:text-white"
+                    key={f.key}
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setFilter(f.key)}
+                    className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-semibold transition-all text-center flex items-center justify-center cursor-pointer ${
+                      isActive
+                        ? "bg-app-surface text-hi border border-app-line shadow-xs font-bold"
+                        : "text-app-mist hover:text-hi hover:bg-hi/[0.03]"
                     }`}
                   >
-                    v{i + 1} {isLatest && "· latest"}
+                    {f.label}
                   </button>
                 );
               })}
             </div>
-          )}
-
-          <div className="flex-1 flex items-center justify-center p-8 bg-[#0B111C]/30 relative">
-            {selectedItem ? (
-              <div className="relative w-full max-w-[280px] aspect-[9/16] bg-black rounded-[32px] overflow-hidden shadow-2xl border-4 border-[#1F2C3F] flex items-center justify-center">
-                {selectedItem.file_url && (selectedItem.file_type?.includes("video") || selectedItem.file_url.endsWith(".mp4") || selectedItem.file_url.endsWith(".webm") || selectedItem.file_url.endsWith(".mov")) ? (
-                  <video
-                    src={selectedItem.file_url}
-                    controls
-                    className="w-full h-full object-cover"
-                  />
-                ) : selectedItem.file_url ? (
-                  <img 
-                    src={selectedItem.file_url} 
-                    alt={selectedItem.title || "Deliverable"} 
-                    className="w-full h-full object-cover" 
-                  />
-                ) : (
-                  <div className="text-center p-4">
-                    <p className="text-white text-xs font-semibold mb-1">Asset in production</p>
-                    <p className="text-xs text-[#7E889C]">Preview will appear once uploaded by your pod</p>
-                  </div>
-                )}
-                
-                <div className="absolute bottom-6 inset-x-0 text-center pointer-events-none">
-                  <p className="text-white text-[13px] font-bold drop-shadow-md px-2 truncate">
-                    {selectedItem.title || "Deliverable preview"}
-                  </p>
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-hide">
+              {visible.length === 0 ? (
+                <div className="p-4 text-center text-sm text-app-mist">
+                  No {FILTERS.find((f) => f.key === filter)?.label.toLowerCase()} deliverables match your filter.{" "}
+                  <button className="underline text-hi" onClick={() => setFilter("all")}>Clear filter</button>
                 </div>
+              ) : (
+                visible.map((d) => {
+                  const isSelected = selectedItem?.id === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => select(d.id)}
+                      className={`w-full flex items-center gap-4 p-3 rounded-2xl border text-left transition-all ${
+                        isSelected ? "bg-app-base/40 border-hi/[0.1] shadow-lg" : "border-transparent hover:bg-hi/[0.02]"
+                      }`}
+                    >
+                      <div className="w-14 h-14 rounded-xl bg-black overflow-hidden shrink-0 border border-app-line flex items-center justify-center">
+                        <Thumbnail item={d} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-[13px] font-bold truncate text-hi">{d.title}</h4>
+                        <p className="text-xs text-app-mist truncate mb-2">{d.type_label} · v{d.version}</p>
+                        <StatusBadge item={d} />
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Middle Column: Player */}
+          <div className="col-span-1 lg:col-span-5 bg-app-surface rounded-[24px] border border-app-line flex flex-col relative overflow-hidden min-h-[420px] sm:min-h-[500px]">
+            {versions.length > 1 && selectedItem && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex p-1 bg-app-base/80 backdrop-blur-md rounded-full border border-app-line">
+                {[...versions].reverse().map((v) => {
+                  const active = shownItem?.id === v.id;
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => setViewVersionId(v.id === selectedItem.id ? null : v.id)}
+                      className={`px-3 sm:px-4 py-1.5 rounded-full text-[12px] sm:text-[13px] font-bold transition-colors ${
+                        active ? "bg-app-surface text-hi shadow-sm border border-app-line" : "text-app-mist hover:text-hi"
+                      }`}
+                    >
+                      v{v.version}{v.id === selectedItem.id ? " · latest" : ""}
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <div className="text-sm text-[#7E889C]">Select an asset to view</div>
             )}
-          </div>
-          
-          {/* Asset Meta Bar */}
-          <div className="h-[72px] shrink-0 border-t border-[#2A3446] px-6 flex items-center justify-between bg-[#0B111C]/30">
-            <span className="text-[13px] text-[#97A0B3]">
-              {selectedItem ? `Format: ${(selectedItem.file_type || selectedItem.asset_type || "Media").toUpperCase()}` : "No asset selected"}
-            </span>
-            <span className="text-xs font-medium text-[#7E889C] tabular-nums shrink-0">
-              {selectedItem?.created_at ? `Created ${new Date(selectedItem.created_at).toLocaleDateString()}` : ""}
-            </span>
-          </div>
-        </div>
 
-        {/* Right Column: Details & Actions */}
-        <div className="col-span-4 bg-[#161F2D] rounded-[24px] border border-[#2A3446] p-6 flex flex-col h-full overflow-hidden">
-          {selectedItem ? (
-            <div className="flex-1 overflow-y-auto pr-2 scrollbar-hide space-y-6">
-              {/* Header Info */}
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#7E889C] mb-2">
-                  {(selectedItem.asset_type || selectedItem.file_type || "REEL").toUpperCase()} · {selectedItem.scheduled_at ? `PUBLISHES ${new Date(selectedItem.scheduled_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase()}` : "SCHEDULED IN CALENDAR"}
-                </p>
-                <h2 className="text-2xl font-normal text-white">{selectedItem.title || selectedItem.file_url?.split("/").pop()?.replace(/[-_.]/g, " ") || "Deliverable"}</h2>
-              </div>
-
-              {/* What changed */}
-              {(selectedItem.revision_round || 1) > 1 && (
-                <div className="bg-[#1F2C3F] rounded-xl p-4 border border-white/[0.03]">
-                  <h4 className="text-[13px] font-bold text-white mb-1.5">What changed in v{selectedItem.revision_round}</h4>
-                  <p className="text-[13px] text-[#97A0B3] leading-relaxed">
-                    {selectedItem.rejection_comment || "Updated revision based on client feedback."}
-                  </p>
+            <div className="flex-1 flex items-center justify-center p-6 pt-16 bg-app-base/30">
+              {shownItem ? (
+                <MediaPreview item={shownItem} onRefresh={refresh} />
+              ) : deliverableId && detailQuery.isLoading ? (
+                <Loader2 className="w-6 h-6 animate-spin text-app-mist" />
+              ) : (
+                <div className="text-sm text-app-mist text-center px-6">
+                  {deliverableId ? "This deliverable isn't available. It may still be in production." : "Select an asset to view"}
                 </div>
               )}
-
-              {/* Revision rounds */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[13px] font-bold text-white">Revision rounds</span>
-                  <span className="text-xs text-[#97A0B3]">{selectedItem.revision_round || 1} of 2 used</span>
-                </div>
-                <div className="h-1.5 w-full bg-white/[0.08] rounded-full flex gap-1">
-                  <div className="h-full flex-1 bg-[#7FA0D6] rounded-full" />
-                  <div className={`h-full flex-1 rounded-full ${(selectedItem.revision_round || 1) > 1 ? "bg-[#7FA0D6]" : ""}`} />
-                </div>
-              </div>
-
-              {/* Comments */}
-              <div>
-                <h4 className="text-[13px] font-bold text-white mb-4">Comments</h4>
-                <div className="space-y-4">
-                  {itemComments.length === 0 ? (
-                    <p className="text-[13px] text-[#7E889C] italic">No revision comments yet for this deliverable.</p>
-                  ) : (
-                    itemComments.map((c) => (
-                      <div key={c.id} className="flex gap-3">
-                        <div className="size-6 rounded-full bg-[#E2E8F0] shrink-0 flex items-center justify-center text-[11px] font-bold text-black border border-white/[0.1]">
-                          1
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#97A0B3] mb-1">
-                            <span className="font-bold text-white">{c.author}</span> - {c.timestamp}
-                          </p>
-                          <p className="text-[13px] text-[#97A0B3] leading-relaxed mb-1">
-                            {c.text}
-                          </p>
-                          {c.fixed && (
-                            <p className="text-xs font-bold text-[#97A0B3] flex items-center gap-1">
-                              <Check className="w-3 h-3" /> Addressed in v{selectedItem.revision_round}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Interaction Form */}
-              <div className="pt-2">
-                <h4 className="text-[13px] font-bold text-white mb-3">Asking for a change?</h4>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {["Less text", "Different music", "Stronger hook", "Colour feels off-brand", "Wrong product"].map(tag => (
-                    <button 
-                      key={tag}
-                      onClick={() => setCommentText(prev => prev ? `${prev} · ${tag}` : tag)}
-                      className="px-3 py-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] border border-[#2A3446] text-xs font-bold text-[#97A0B3] transition-colors"
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                <textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="Tell your creative pod what to change..."
-                  className="w-full bg-[#0B111C]/50 border border-[#2A3446] rounded-xl p-4 text-[13px] text-white placeholder:text-[#7E889C] resize-none focus:outline-none focus:border-white/[0.2] transition-colors h-24 mb-4"
-                />
-                
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={handleRequestChange}
-                    disabled={requestChangesMutation.isPending || !commentText}
-                    className="flex-1 px-4 py-3 rounded-full border border-[#2A3446] text-[13px] font-bold text-white hover:bg-[#1F2C3F] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {requestChangesMutation.isPending ? "Sending..." : "Request change"}
-                  </button>
-                  <button
-                    onClick={handleApprove}
-                    disabled={approveMutation.isPending || selectedItem.status === "approved"}
-                    className="flex-1 px-4 py-3 rounded-full bg-[#BCCCE6] text-[#0B111C] text-[13px] font-bold hover:bg-white transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Check className="w-4 h-4" />
-                    {approveMutation.isPending ? "Approving..." : "Approve"}
-                  </button>
-                </div>
-              </div>
-
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-[#7E889C]">
-              <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-[#2A3446] flex items-center justify-center mb-3">
-                <Play className="w-5 h-5 text-[#7E889C]" />
-              </div>
-              <h3 className="text-sm font-semibold text-white mb-1">No Deliverable Selected</h3>
-              <p className="text-xs text-[#7E889C] max-w-xs leading-relaxed">
-                When your creative pod submits deliverables for review, select an item to inspect versions, leave timestamps or comments, and approve for scheduling.
-              </p>
+
+            <div className="h-[64px] shrink-0 border-t border-app-line px-6 flex items-center justify-between bg-app-base/30 gap-3">
+              <span className="text-[13px] text-app-mist truncate">
+                {shownItem ? `${shownItem.type_label} · v${shownItem.version}${viewingOlder ? " · earlier version" : ""}` : "No asset selected"}
+              </span>
+              <span className="text-xs font-medium text-app-mist tabular-nums shrink-0">
+                {shownItem?.created_at ? `Delivered ${new Date(shownItem.created_at).toLocaleDateString()}` : ""}
+              </span>
             </div>
-          )}
+          </div>
+
+          {/* Right Column: Details & Actions */}
+          <div className="col-span-1 lg:col-span-4 bg-app-surface rounded-[24px] border border-app-line p-5 sm:p-6 flex flex-col overflow-hidden">
+            {shownItem ? (
+              <div className="flex-1 overflow-y-auto pr-1 scrollbar-hide space-y-6">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-app-mist mb-2">
+                    {shownItem.type_label} ·{" "}
+                    {shownItem.scheduled_at
+                      ? `Publishes ${new Date(shownItem.scheduled_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`
+                      : shownItem.due_date
+                        ? `Planned for ${new Date(shownItem.due_date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`
+                        : "In your content calendar"}
+                  </p>
+                  <h2 className="text-2xl font-normal text-hi break-words">{shownItem.title}</h2>
+                  <PublishingPanel key={shownItem.id} deliverableId={shownItem.id} onReview={setPublishingReview} />
+                  <div className="mt-2"><StatusBadge item={shownItem} /></div>
+                </div>
+
+                {viewingOlder && (
+                  <div className="bg-app-base/50 rounded-xl p-4 border border-app-line text-[13px] text-app-mist">
+                    You're viewing an earlier version.{" "}
+                    <button className="underline text-hi" onClick={() => setViewVersionId(null)}>Back to latest</button>
+                  </div>
+                )}
+
+                {allowed !== null && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[13px] font-bold text-hi">Revision rounds</span>
+                      <span className="text-xs text-app-mist">{Math.min(used, allowed)} of {allowed} used</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full flex gap-1">
+                      {Array.from({ length: Math.max(allowed, 1) }).map((_, i) => (
+                        <div key={i} className={`h-full flex-1 rounded-full ${used > i ? "bg-app-accent" : "bg-hi/[0.08]"}`} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {shownItem.rejection_comment && (
+                  <div>
+                    <h4 className="text-[13px] font-bold text-hi mb-2">Your requested changes</h4>
+                    <p className="text-[13px] text-app-mist leading-relaxed bg-app-base/50 rounded-xl p-4 border border-app-line whitespace-pre-wrap">
+                      {shownItem.rejection_comment}
+                    </p>
+                  </div>
+                )}
+
+                {actionError && (
+                  <div role="alert" className="flex gap-2 text-[13px] text-app-warm bg-app-warm/10 border border-app-warm/30 rounded-xl p-3">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{actionError}</span>
+                  </div>
+                )}
+
+                {canDecide && (
+                  <div className="pt-1">
+                    <h4 className="text-[13px] font-bold text-hi mb-3">Asking for a change?</h4>
+                    {lastRoundUsed ? (
+                      <p className="text-[13px] text-app-mist mb-4">
+                        All revision rounds included in your plan have been used for this piece.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {["Less text", "Different music", "Stronger hook", "Colour feels off-brand", "Wrong product"].map((tag) => (
+                            <button
+                              key={tag}
+                              onClick={() => setCommentText((prev) => (prev ? `${prev} · ${tag}` : tag))}
+                              className="px-3 py-1.5 rounded-lg bg-hi/[0.03] hover:bg-hi/[0.08] border border-app-line text-xs font-bold text-app-mist transition-colors"
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                        <label htmlFor="change-request" className="sr-only">Describe the changes you need</label>
+                        <textarea
+                          id="change-request"
+                          value={commentText}
+                          onChange={(e) => setCommentText(e.target.value)}
+                          placeholder="Tell your creative pod what to change (required)…"
+                          className="w-full bg-app-base/50 border border-app-line rounded-xl p-4 text-[13px] text-hi placeholder:text-app-mist resize-none focus:outline-none focus:border-hi/[0.2] transition-colors h-24 mb-4"
+                        />
+                      </>
+                    )}
+                    <div className="flex items-center gap-3">
+                      {!lastRoundUsed && (
+                        <button
+                          onClick={() => requestChangesMutation.mutate({ id: shownItem.id, comment: commentText.trim() })}
+                          disabled={requestChangesMutation.isPending || !commentText.trim()}
+                          className="flex-1 px-4 py-3 rounded-full border border-app-line text-[13px] font-bold text-hi hover:bg-app-base transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {requestChangesMutation.isPending ? "Sending..." : "Request change"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => approveMutation.mutate(shownItem.id)}
+                        disabled={approveMutation.isPending}
+                        className="flex-1 px-4 py-3 rounded-full bg-app-accent-soft text-app-base text-[13px] font-bold hover:bg-hi transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Check className="w-4 h-4" />
+                        {approveMutation.isPending ? "Approving..." : "Approve"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {!viewingOlder && shownItem.status === "revision_requested" && (
+                  <div className="flex gap-3 bg-app-base/50 rounded-xl p-4 border border-app-line">
+                    <Clock className="w-4 h-4 text-app-mist shrink-0 mt-0.5" />
+                    <p className="text-[13px] text-app-mist leading-relaxed">
+                      Your pod is working on the revision. The new version will appear here after a quality check, and we'll notify you.
+                    </p>
+                  </div>
+                )}
+
+                {APPROVED_STATUSES.has(shownItem.status) && (
+                  <div className="space-y-3">
+                    <p className="text-[13px] text-app-mist">
+                      Approved{shownItem.approved_at ? ` on ${new Date(shownItem.approved_at).toLocaleDateString()}` : ""}. The final file is ready to download.
+                    </p>
+                    {shownItem.download_url ? (
+                      <a
+                        href={shownItem.download_url}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full px-4 py-3 rounded-full bg-app-accent-soft text-app-base text-[13px] font-bold hover:bg-hi transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Download className="w-4 h-4" /> Download
+                      </a>
+                    ) : (
+                      <button onClick={refresh} className="w-full px-4 py-3 rounded-full border border-app-line text-[13px] font-bold text-hi">
+                        Refresh download link
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-app-mist">
+                <h3 className="text-sm font-semibold text-hi mb-1">No deliverable selected</h3>
+                <p className="text-xs max-w-xs leading-relaxed">Select a piece to preview it, compare versions, and approve or request changes.</p>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Toast */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#161F2D] text-white px-5 py-3 rounded-xl shadow-2xl border border-white/[0.1] text-sm font-medium flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#6EE7B7]" />
+        <div role="status" className="fixed bottom-6 right-6 z-50 bg-app-surface text-hi px-5 py-3 rounded-xl shadow-2xl border border-hi/[0.1] text-sm font-medium flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-app-accent-soft" />
           {toastMessage}
         </div>
       )}

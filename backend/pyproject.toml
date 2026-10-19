@@ -29,8 +29,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3.2",
-    "pytest-asyncio>=0.24.0",
     "ruff>=0.6.5",
     "mypy>=1.11.2",
     "types-redis>=4.6.0.20240425",
@@ -64,9 +62,5 @@ disallow_untyped_defs = true
 module = "app.core.*"
 strict = true
 
-[tool.pytest.ini_options]
-minversion = "8.0"
-asyncio_mode = "auto"
-pythonpath = ["."]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
+[tool.setuptools.package-data]
+app = ["prompts/*.md"]

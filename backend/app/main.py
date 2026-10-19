@@ -12,6 +12,7 @@ import urllib.parse
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from app.db.session import engine, get_db
 
 from app.config import settings
 from app.core.errors import AppError, app_error_handler
+from app.core.build_info import get_build_revision
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import RequestIdMiddleware
 from app.db.session import engine
@@ -34,10 +36,15 @@ from app.routers import (
     plans,
     platform,
     portal_dashboard,
+    public,
     tasks,
     tenant,
     tickets,
     webhooks,
+    chat,
+    negotiations,
+    instagram,
+    publishing,
 )
 
 logger = get_logger("app.main")
@@ -62,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         async with AsyncSessionLocal() as db:
             res = await db.execute(select(User).where(User.email == "admin@creo.agency"))
             admin = res.scalar_one_or_none()
-            if not admin:
+            if not admin and settings.ENVIRONMENT == "development":
                 admin = User(
                     email="admin@creo.agency",
                     auth_id="auth_admin_001",
@@ -73,11 +80,50 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
                 db.add(admin)
                 await db.commit()
-            else:
-                admin.hashed_password = hash_password("Admin123!")
-                admin.role = UserRole.SUPER_ADMIN
-                admin.account_status = AccountStatus.ACTIVE
-                await db.commit()
+
+            # Ensure plan_negotiations table exists
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS plan_negotiations (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    client_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    client_email VARCHAR(255) NOT NULL,
+                    client_name VARCHAR(255),
+                    proposed_budget VARCHAR(255),
+                    contact_phone VARCHAR(50) NOT NULL,
+                    preferred_window VARCHAR(100) NOT NULL,
+                    target_topic VARCHAR(255),
+                    notes TEXT,
+                    status VARCHAR(50) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+                    agreed_amount INTEGER,
+                    razorpay_custom_plan_id VARCHAR(255),
+                    order_id VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+                );
+            """))
+            await db.execute(text("CREATE INDEX IF NOT EXISTS idx_negotiations_client_id ON plan_negotiations(client_id);"))
+            await db.execute(text("CREATE INDEX IF NOT EXISTS idx_negotiations_status ON plan_negotiations(status);"))
+            # Ensure manual_payment_requests table exists
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS manual_payment_requests (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    client_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+                    payment_method VARCHAR(50) NOT NULL DEFAULT 'cash',
+                    amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                    reference_note TEXT,
+                    status VARCHAR(50) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+                    reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                    reviewed_at TIMESTAMP WITH TIME ZONE,
+                    admin_notes TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+                );
+            """))
+            await db.execute(text("CREATE INDEX IF NOT EXISTS idx_manual_payments_client_id ON manual_payment_requests(client_id);"))
+            await db.execute(text("CREATE INDEX IF NOT EXISTS idx_manual_payments_status ON manual_payment_requests(status);"))
+            await db.execute(text("CREATE INDEX IF NOT EXISTS idx_manual_payments_created_at ON manual_payment_requests(created_at);"))
+            await db.commit()
     except Exception as e:
         logger.warning("admin_bootstrap_warning", error=str(e))
     yield
@@ -91,6 +137,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Compress large JSON responses, leaving streaming responses to Starlette.
+app.add_middleware(GZipMiddleware, minimum_size=1200, compresslevel=4)
+
 # Request ID tracking middleware
 app.add_middleware(RequestIdMiddleware)
 
@@ -100,8 +149,10 @@ app.add_middleware(
     allow_origins=settings.CORS_ORIGINS,
     allow_origin_regex=r"^https:\/\/([a-zA-Z0-9\-_]+\.)*(vercel\.app|pages\.dev|workers\.dev|onrender\.com)$|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
+    max_age=3600,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-Id", "Server-Timing"],
 )
 
 # Standardized application error handler
@@ -175,6 +226,12 @@ async def security_and_rate_limit_middleware(
         timestamps.append(now)
         _ip_request_timestamps[client_ip] = timestamps
 
+    # Invalidate both sides of a write: reads during the mutation must not
+    # republish an older snapshot after its transaction commits.
+    invalidates_dashboard = request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.url.path.startswith("/api/v1/auth/")
+    if invalidates_dashboard:
+        from app.core.dashboard_cache import invalidate_dashboard_cache
+        await invalidate_dashboard_cache()
     try:
         response = await call_next(request)
     except Exception as exc:
@@ -191,6 +248,10 @@ async def security_and_rate_limit_middleware(
                 },
             )
         )
+
+    finally:
+        if invalidates_dashboard:
+            await invalidate_dashboard_cache()
 
     # 3. Comprehensive OWASP Recommended Security Headers (Excluding CSP which breaks cross-origin SPA APIs)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -258,6 +319,8 @@ async def global_unhandled_exception_handler(request: Request, exc: Exception) -
 
 # API v1 feature routers
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(instagram.router, prefix="/api/v1")
+app.include_router(publishing.router, prefix="/api/v1")
 app.include_router(plans.router, prefix="/api/v1")
 app.include_router(portal_dashboard.router, prefix="/api/v1")
 app.include_router(calendar.router, prefix="/api/v1")
@@ -272,10 +335,14 @@ app.include_router(deliverables.portal_router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
 app.include_router(tasks.router)
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(negotiations.router, prefix="/api/v1/negotiations")
 app.include_router(admin.router)
 app.include_router(platform.router, prefix="/api/v1")
 app.include_router(tenant.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
+app.include_router(public.router, prefix="/api/v1")
+app.include_router(public.router)
 
 
 import os
@@ -312,6 +379,7 @@ async def root(
         "name": "Creo API",
         "status": "online",
         "version": settings.VERSION,
+        "build_revision": get_build_revision(),
         "docs": "/docs",
         "health": "/health",
     }
@@ -381,6 +449,7 @@ async def health_check() -> JSONResponse:
         "db": db_status,
         "redis": redis_status,
         "version": settings.VERSION,
+        "build_revision": get_build_revision(),
     }
     if errors:
         payload["details"] = errors

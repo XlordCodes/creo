@@ -21,15 +21,24 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
-from sqlalchemy import delete, func, or_, select, text
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
+from pydantic import BaseModel, Field
+from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from app.core.cache import invalidate_user_session
+from app.core.dashboard_cache import dashboard_cached
 from app.core.errors import Conflict, Forbidden, NotFound
-from app.core.rbac import Actor, AdminActor, InvestorActor, SalesActor, StaffActor, TeamLeadActor
+from app.core.rbac import (
+    Actor,
+    AdminActor,
+    InvestorActor,
+    SalesActor,
+    StaffActor,
+    TeamLeadActor,
+    get_admin_actor,
+)
 from app.db.session import get_db
 from app.models.billing import Plan, Subscription, UsageCounter
 from app.models.enums import (
@@ -45,6 +54,7 @@ from app.models.enums import (
 from app.models.ops import Announcement, AuditLog, LeaveRequest, Notification
 from app.models.support import Ticket, TicketMessage
 from app.models.user import ClientProfile, StaffProfile, User
+from app.models.questionnaire import Questionnaire
 from app.models.work import ClientAssignment, ContentCalendar, Deliverable, Task
 from app.services import deliverable_state, storage_service
 
@@ -79,7 +89,69 @@ class PlanUpdateRequest(BaseModel):
 # --- Routes ---
 
 
+@router.get("/performance/runtime")
+async def get_performance_runtime(actor: Actor = AdminActor) -> dict[str, Any]:
+    """Non-secret deployment hints for diagnosing database round-trip latency.
+
+    This performs no SQL. Authentication still checks session revocation, so its
+    Server-Timing provides a baseline independent of the database path.
+    """
+    import re
+    from app.config import settings
+    from app.db.session import engine
+
+    host = engine.url.host or ""
+    region = re.search(r"\b((?:ap|eu|us|sa|ca|me|af|il)-[a-z]+-\d+)\b", host)
+    return {
+        "api_region_hint": os.environ.get("RENDER_REGION"),
+        "database_region_hint": region.group(1) if region else None,
+        "database_provider": "supabase" if "supabase" in host else "postgresql",
+        "database_pool": type(engine.pool).__name__,
+        "configured_pool_size": settings.DB_POOL_SIZE,
+        "configured_max_overflow": settings.DB_MAX_OVERFLOW,
+    }
+
+
+@router.get("/performance/probe")
+async def get_performance_probe(actor: Actor = AdminActor) -> dict[str, Any]:
+    """Bounded, read-only dependency probe; excludes credentials and business data."""
+    import asyncio
+    from time import perf_counter
+    from app.core.cache import get_redis
+    from app.db.session import engine
+
+    try:
+        async with asyncio.timeout(5):
+            started = perf_counter()
+            redis = await get_redis()
+            await redis.ping()
+            redis_ms = (perf_counter() - started) * 1000
+            started = perf_counter()
+            async with engine.connect() as connection:
+                checkout_ms = (perf_counter() - started) * 1000
+                started = perf_counter()
+                await connection.execute(text("SELECT 1"))
+                first_query_ms = (perf_counter() - started) * 1000
+                started = perf_counter()
+                await connection.execute(text("SELECT 1"))
+                warm_query_ms = (perf_counter() - started) * 1000
+                explanation = await connection.execute(text("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1"))
+                plan = explanation.scalar_one()[0]
+            return {
+                "redis_ping_ms": round(redis_ms, 2),
+                "database_checkout_ms": round(checkout_ms, 2),
+                "database_first_query_ms": round(first_query_ms, 2),
+                "database_warm_query_ms": round(warm_query_ms, 2),
+                "database_server_execution_ms": plan["Execution Time"],
+                "database_server_planning_ms": plan["Planning Time"],
+                "note": "First query includes transaction/RLS setup; warm query includes driver and network time. SELECT 1 does not benchmark business queries.",
+            }
+    except Exception:
+        raise HTTPException(status_code=503, detail="Dependency probe unavailable") from None
+
+
 @router.get("/kpis", response_model=KPIResponse)
+@dashboard_cached()
 async def get_kpis(
     timeframe: str = "30d",
     db: AsyncSession = Depends(get_db),
@@ -95,9 +167,20 @@ async def get_kpis(
     interval_str = interval_map.get(timeframe, "30 days")
 
     sql = text(f"""
+        WITH active_subs AS (
+            SELECT DISTINCT ON (s.client_id)
+                s.client_id,
+                COALESCE(s.amount * 100, p.price_minor) AS effective_mrr_minor
+            FROM subscriptions s
+            JOIN plans p ON p.id = s.plan_id
+            JOIN users u ON u.id = s.client_id
+            WHERE s.status = 'active'
+              AND u.account_status = 'active'
+            ORDER BY s.client_id, s.created_at DESC
+        )
         SELECT
-            COALESCE(SUM(p.price_minor), 0)::BIGINT AS mrr_minor,
-            COUNT(DISTINCT s.client_id) FILTER (WHERE u.account_status = 'active')::INT AS active_clients,
+            COALESCE(SUM(effective_mrr_minor), 0)::BIGINT AS mrr_minor,
+            COUNT(DISTINCT client_id)::INT AS active_clients,
             (
                 SELECT COUNT(DISTINCT sub.client_id)::INT
                 FROM subscriptions sub
@@ -113,19 +196,16 @@ async def get_kpis(
                 ),
                 0.0
             )::NUMERIC AS avg_turnaround_hours
-        FROM subscriptions s
-        JOIN plans p ON p.id = s.plan_id
-        JOIN users u ON u.id = s.client_id
-        WHERE s.status IN ('trialing', 'active');
+        FROM active_subs;
     """)
     res = await db.execute(sql)
     row = res.fetchone()
 
-    mrr_minor = row[0] if row else 0
-    active_clients = row[1] if row else 0
-    churned_last_30d = row[2] if row else 0
+    mrr_minor = int(row[0]) if row and row[0] else 0
+    active_clients = int(row[1]) if row and row[1] else 0
+    churned_last_30d = int(row[2]) if row and row[2] else 0
     avg_turnaround_hours = round(float(row[3] or 0.0), 2) if row else 0.0
-    formatted_mrr = f"₹{mrr_minor / 100:,.2f}"
+    formatted_mrr = f"₹{mrr_minor / 100:,.2f}" if mrr_minor > 0 else " — "
 
     return KPIResponse(
         refreshed_at=now_ist.isoformat(),
@@ -149,6 +229,41 @@ async def refresh_kpis(
     except Exception:
         pass
     return {"status": "ok", "message": "KPIs calculated live in real time"}
+
+
+@router.get("/export-report")
+async def export_admin_report(
+    report_type: str = "kpis",
+    db: AsyncSession = Depends(get_db),
+    actor: Actor = Depends(get_admin_actor),
+):
+    """Export system metrics, client roster, or SLA data as a CSV download."""
+    from fastapi.responses import Response
+    import io, csv
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    if report_type == "clients":
+        writer.writerow(["Client ID", "Email", "Company", "Status", "Plan"])
+        res = await db.execute(text("SELECT u.id, u.email, cp.company_name, u.account_status, p.name FROM users u LEFT JOIN client_profiles cp ON cp.user_id = u.id LEFT JOIN subscriptions s ON s.client_id = u.id LEFT JOIN plans p ON p.id = s.plan_id WHERE u.role = 'client'"))
+        for row in res.fetchall():
+            writer.writerow([str(row[0]), row[1], row[2] or "N/A", row[3], row[4] or "N/A"])
+    else:
+        writer.writerow(["Metric", "Value"])
+        res = await db.execute(text("SELECT COUNT(*) FROM users WHERE role = 'client'"))
+        total_clients = res.scalar() or 0
+        res = await db.execute(text("SELECT COUNT(*) FROM tasks WHERE status != 'completed'"))
+        active_tasks = res.scalar() or 0
+        writer.writerow(["Total Clients", total_clients])
+        writer.writerow(["Active Tasks in Pipeline", active_tasks])
+
+    csv_data = output.getvalue()
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=creo_{report_type}_report.csv"},
+    )
 
 
 @router.get("/revenue-trend")
@@ -179,26 +294,23 @@ async def get_revenue_trend(
     trunc = cfg["trunc"]
     label_fmt = cfg["label_fmt"]
 
-    sql = text(f"""
-        WITH buckets AS (
-            SELECT
-                date_trunc(:trunc, s.created_at) AS bucket,
-                COALESCE(SUM(p.price_minor), 0)::BIGINT AS revenue
+    # We want to show a cumulative MRR curve (Total MRR at each point in time).
+    # Fetch all active subscriptions with their created_at date.
+    subs_sql = text("""
+        WITH active_subs AS (
+            SELECT DISTINCT ON (s.client_id)
+                s.client_id,
+                COALESCE(s.amount * 100, p.price_minor) AS effective_mrr_minor,
+                s.created_at
             FROM subscriptions s
             JOIN plans p ON p.id = s.plan_id
-            WHERE s.status IN ('trialing', 'active')
-              AND s.created_at >= NOW() - INTERVAL '{days_back} days'
-            GROUP BY bucket
-            ORDER BY bucket
+            WHERE s.status IN ('active', 'trialing')
+            ORDER BY s.client_id, s.created_at DESC
         )
-        SELECT
-            to_char(bucket, :label_fmt) AS label,
-            revenue
-        FROM buckets;
+        SELECT created_at, effective_mrr_minor FROM active_subs ORDER BY created_at;
     """)
-
-    res = await db.execute(sql, {"trunc": trunc, "label_fmt": label_fmt})
-    rows = res.fetchall()
+    res = await db.execute(subs_sql)
+    all_subs = res.fetchall()
 
     # Generate full sequence of buckets for fluid curve with variations
     import math
@@ -208,44 +320,56 @@ async def get_revenue_trend(
     
     if timeframe in ("7d", "7D"):
         num_points = 7
-        labels = [(now - timedelta(days=6 - i)).strftime("%b %d") for i in range(7)]
+        dates = [now - timedelta(days=6 - i) for i in range(7)]
+        labels = [d.strftime("%b %d") for d in dates]
     elif timeframe in ("30d", "30D"):
         num_points = 30
-        labels = [(now - timedelta(days=29 - i)).strftime("%b %d") for i in range(30)]
+        dates = [now - timedelta(days=29 - i) for i in range(30)]
+        labels = [d.strftime("%b %d") for d in dates]
     elif timeframe in ("90d", "quarter", "Quarter"):
         num_points = 13
-        labels = [(now - timedelta(weeks=12 - i)).strftime("%b %d") for i in range(13)]
+        dates = [now - timedelta(weeks=12 - i) for i in range(13)]
+        labels = [d.strftime("%b %d") for d in dates]
     elif timeframe in ("custom", "Custom"):
         num_points = 10
-        labels = [(now - timedelta(days=6 * (9 - i))).strftime("%b %d") for i in range(10)]
+        dates = [now - timedelta(days=6 * (9 - i)) for i in range(10)]
+        labels = [d.strftime("%b %d") for d in dates]
     else: # 365d, year
         num_points = 12
-        labels = [(now - timedelta(days=30 * (11 - i))).strftime("%b %Y") for i in range(12)]
+        dates = [now - timedelta(days=30 * (11 - i)) for i in range(12)]
+        labels = [d.strftime("%b %Y") for d in dates]
 
-    # Fetch total base revenue
+    # Fetch total base revenue from active (non-trialing) subscriptions
     total_sql = text("""
-        SELECT COALESCE(SUM(p.price_minor), 0)::BIGINT AS total_revenue,
-               COUNT(DISTINCT s.client_id)::INT AS total_clients
-        FROM subscriptions s
-        JOIN plans p ON p.id = s.plan_id
-        WHERE s.status IN ('trialing', 'active');
+        WITH active_subs AS (
+            SELECT DISTINCT ON (s.client_id)
+                s.client_id,
+                COALESCE(s.amount * 100, p.price_minor) AS effective_mrr_minor
+            FROM subscriptions s
+            JOIN plans p ON p.id = s.plan_id
+            WHERE s.status = 'active'
+            ORDER BY s.client_id, s.created_at DESC
+        )
+        SELECT COALESCE(SUM(effective_mrr_minor), 0)::BIGINT AS total_revenue,
+               COUNT(DISTINCT client_id)::INT AS total_clients
+        FROM active_subs;
     """)
     total_res = await db.execute(total_sql)
+    total_row = total_res.first()
     total_revenue = int(total_row[0]) if total_row and total_row[0] else 0
     total_clients = int(total_row[1]) if total_row and total_row[1] else 0
 
-    # Map database bucket values if present
-    db_map = {r[0].strip(): int(r[1]) for r in rows if r[0]}
-
-    for lbl in labels:
-        val = db_map.get(lbl, 0)
+    # Calculate cumulative MRR for each point in time
+    for dt, lbl in zip(dates, labels):
+        # A subscription is active on `dt` if it was created before `dt`
+        val = sum(int(sub.effective_mrr_minor) for sub in all_subs if sub.created_at <= dt)
         points.append({"label": lbl, "value": val})
 
     return {
         "timeframe": timeframe,
         "points": points,
         "total_revenue": total_revenue,
-        "total_revenue_formatted": f"₹{total_revenue / 100:,.2f}",
+        "total_revenue_formatted": f"₹{total_revenue / 100:,.0f}" if total_revenue > 0 else " — ",
         "total_clients": total_clients,
     }
 
@@ -354,38 +478,32 @@ async def get_dashboard(
         "trend_points": [0.2, 0.4, 0.35, 0.5, 0.65, 0.8, 1.0] # Mocked trend points for SVG sparkline
     }
 
-    # 2. Pipeline status counts
-    pipeline_res = await db.execute(
-        text("""
-        SELECT status, COUNT(id)
-        FROM tasks
-        GROUP BY status;
-    """)
-    )
-    status_counts = {r[0]: r[1] for r in pipeline_res.fetchall()}
-
-    # 3. Open SLA breaches
-    sla_res = await db.execute(
-        text("""
-        SELECT COUNT(id)
-        FROM tasks
-        WHERE sla_due_at < NOW()
-          AND status NOT IN ('ready_to_publish', 'completed');
-    """)
-    )
-    open_sla_breaches = sla_res.scalar() or 0
+    # Count the pipeline and open breaches in one scan and one round trip.
+    pipeline_res = await db.execute(text("""
+        SELECT status, COUNT(id),
+               COUNT(id) FILTER (WHERE sla_due_at < NOW()
+                   AND status NOT IN ('ready_to_publish', 'completed'))
+        FROM tasks GROUP BY status
+    """))
+    pipeline_rows = pipeline_res.fetchall()
+    status_counts = {row[0]: row[1] for row in pipeline_rows}
+    open_sla_breaches = sum(row[2] for row in pipeline_rows)
 
     # 4. Staff capacity summary
     staff_res = await db.execute(
         text("""
+        WITH staff_wip AS (
+            SELECT assigned_to, COUNT(*) AS active_wip
+            FROM tasks
+            WHERE status IN ('in_production', 'internal_qa')
+            GROUP BY assigned_to
+        )
         SELECT
             COUNT(sp.user_id) AS total_staff,
             COALESCE(SUM(sp.daily_capacity), 0) AS total_capacity,
-            COALESCE(
-                COUNT(t.id) FILTER (WHERE t.status IN ('in_production', 'internal_qa')), 0
-            ) AS active_wip
+            COALESCE(SUM(w.active_wip), 0) AS active_wip
         FROM staff_profiles sp
-        LEFT JOIN tasks t ON t.assigned_to = sp.user_id;
+        LEFT JOIN staff_wip w ON w.assigned_to = sp.user_id;
     """)
     )
     staff_summary = staff_res.fetchone()
@@ -438,6 +556,7 @@ async def get_client_roster(
         SELECT
             u.id AS client_id,
             u.email,
+            u.full_name,
             u.account_status,
             cp.company_name,
             cp.instagram_username,
@@ -450,6 +569,7 @@ async def get_client_roster(
             END AS derived_onboarding_stage,
             p.name AS plan_name,
             p.display_name AS plan_display_name,
+            p.monthly_price AS monthly_price,
             s.status AS subscription_status,
             COALESCE(
                 json_agg(
@@ -460,43 +580,144 @@ async def get_client_roster(
                     )
                 ) FILTER (WHERE uc.id IS NOT NULL),
                 '[]'::json
-            ) AS quota_usage
+            ) AS quota_usage,
+            cp.timezone,
+            cp.brand_summary,
+            cp.brand_dna,
+            q.answers AS quest_answers,
+            cp.onboarding_completed_at
         FROM users u
         LEFT JOIN client_profiles cp ON cp.user_id = u.id
         LEFT JOIN subscriptions s ON s.client_id = u.id AND s.status IN ('trialing', 'active')
         LEFT JOIN plans p ON p.id = s.plan_id
         LEFT JOIN usage_counters uc ON uc.client_id = u.id
+        LEFT JOIN questionnaires q ON q.user_id = u.id
         WHERE u.role = 'client'
         GROUP BY
-            u.id, u.email, u.account_status, cp.company_name, cp.instagram_username,
+            u.id, u.email, u.full_name, u.account_status, cp.company_name, cp.instagram_username,
             cp.onboarding_completed_at, cp.terms_accepted_at, u.email_verified_at,
-            p.name, p.display_name, s.status, s.id
+            p.name, p.display_name, p.monthly_price, s.status, s.id,
+            cp.timezone, cp.brand_summary, cp.brand_dna, q.answers
         ORDER BY u.created_at DESC;
     """)
 
     res = await db.execute(sql)
     rows = res.fetchall()
 
+    curated_palettes = [
+        ["#0F172A", "#2563EB", "#38BDF8", "#F8FAFC"],
+        ["#18181B", "#D97706", "#FBBF24", "#FAFAFA"],
+        ["#1E1B4B", "#7C3AED", "#C084FC", "#F5F3FF"],
+        ["#064E3B", "#059669", "#34D399", "#ECFDF5"],
+        ["#831843", "#DB2777", "#F472B6", "#FDF2F8"],
+        ["#1E293B", "#0D9488", "#2DD4BF", "#F0FDFA"],
+    ]
+
     clients = []
     for r in rows:
-        quota_raw = r[9]
+        quota_raw = r[11]
         if isinstance(quota_raw, str):
             quota_usage = json.loads(quota_raw)
         else:
             quota_usage = list(quota_raw or [])
 
+        dna_raw = r[14] if len(r) > 14 and r[14] else {}
+        if isinstance(dna_raw, str):
+            try:
+                dna_dict = json.loads(dna_raw)
+            except Exception:
+                dna_dict = {}
+        else:
+            dna_dict = dict(dna_raw or {})
+
+        quest_raw = r[15] if len(r) > 15 and r[15] else {}
+        if isinstance(quest_raw, str):
+            try:
+                q_dict = json.loads(quest_raw)
+            except Exception:
+                q_dict = {}
+        else:
+            q_dict = dict(quest_raw or {})
+
+        # Extract authentic questionnaire colors
+        q_colors = []
+        raw_cands = q_dict.get("hex_codes") or q_dict.get("colours") or q_dict.get("color_palette") or []
+        if isinstance(raw_cands, list):
+            for c in raw_cands:
+                if isinstance(c, str) and c.strip().startswith("#"):
+                    q_colors.append(c.strip().upper())
+                elif isinstance(c, dict) and c.get("hex"):
+                    q_colors.append(str(c["hex"]).strip().upper())
+
+        # Canonical fallback tokens matching client portal tokens
+        default_tokens = ["#161F2D", "#7FA0D6", "#3E5A74", "#BCCCE6"]
+
+        # Base colors priority: explicit brand_dna palette -> questionnaire answers -> visual_direction
+        base_palette = []
+        if isinstance(dna_dict.get("palette"), list) and dna_dict["palette"]:
+            base_palette = [
+                (c.get("hex") if isinstance(c, dict) else c).strip().upper()
+                for c in dna_dict["palette"]
+                if (isinstance(c, str) and c.strip().startswith("#")) or (isinstance(c, dict) and c.get("hex"))
+            ]
+        elif q_colors:
+            base_palette = q_colors
+        elif isinstance(dna_dict.get("visual_direction"), dict) and isinstance(dna_dict["visual_direction"].get("primary_colors"), list):
+            base_palette = [
+                (c.get("hex") if isinstance(c, dict) else c).strip().upper()
+                for c in dna_dict["visual_direction"]["primary_colors"]
+                if (isinstance(c, str) and c.strip().startswith("#")) or (isinstance(c, dict) and c.get("hex"))
+            ]
+
+        if not base_palette:
+            cid_int = abs(int(uuid.UUID(str(r[0])).int)) % len(curated_palettes)
+            base_palette = curated_palettes[cid_int]
+
+        # Always pad to 4 tokens minimum to match Client Portal
+        padded_palette = list(base_palette)
+        for i in range(len(padded_palette), 4):
+            padded_palette.append(default_tokens[i])
+
+        dna_dict["palette"] = padded_palette
+        vis = dna_dict.get("visual_direction")
+        if not isinstance(vis, dict):
+            vis = {}
+        vis["primary_colors"] = padded_palette
+        dna_dict["visual_direction"] = vis
+
+        ind_val = (
+            dna_dict.get("industry")
+            or dna_dict.get("category")
+            or q_dict.get("niche")
+            or "Digital Growth & Direct-to-Consumer"
+        )
+        dna_dict["industry"] = ind_val
+        dna_dict["category"] = ind_val
+
+        onboarding_completed_val = (
+            r[16].isoformat() if len(r) > 16 and r[16] else None
+        )
+
         clients.append(
             {
                 "client_id": str(r[0]),
                 "email": r[1],
-                "account_status": r[2],
-                "company_name": r[3],
-                "instagram_username": r[4],
-                "onboarding_stage": r[5],
-                "plan_name": r[6],
-                "plan_display_name": r[7],
-                "subscription_status": r[8],
+                "full_name": r[2],
+                "phone": dna_dict.get("phone", ""),
+                "account_status": r[3],
+                "company_name": r[4],
+                "instagram_username": r[5],
+                "onboarding_stage": r[6],
+                "plan_name": r[7],
+                "plan_display_name": r[8],
+                "monthly_price": float(r[9]) if r[9] is not None else 0.0,
+                "subscription_status": r[10],
                 "quota_usage": quota_usage,
+                "timezone": r[12] or "Asia/Kolkata",
+                "brand_summary": r[13] or dna_dict.get("summary_line") or "",
+                "brand_dna": dna_dict,
+                "industry": ind_val,
+                "onboarding_completed_at": onboarding_completed_val,
             }
         )
     return clients
@@ -615,9 +836,9 @@ async def get_client_brand_profile(
     task_stats_sql = text("""
         SELECT
             COUNT(*)::INT AS total,
-            COUNT(*) FILTER (WHERE status IN ('pending', 'in_progress'))::INT AS pending,
+            COUNT(*) FILTER (WHERE status IN ('backlog', 'in_production'))::INT AS pending,
             COUNT(*) FILTER (WHERE status = 'completed')::INT AS completed,
-            COUNT(*) FILTER (WHERE status = 'review')::INT AS in_review
+            COUNT(*) FILTER (WHERE status IN ('internal_qa', 'client_review'))::INT AS in_review
         FROM tasks
         WHERE client_id = :cid
     """)
@@ -638,7 +859,104 @@ async def get_client_brand_profile(
     ]
 
     # 8. Build response
-    brand_dna = profile.brand_dna if profile and profile.brand_dna else {}
+    brand_dna = dict(profile.brand_dna or {}) if profile else {}
+
+    # Check questionnaire for client's actual onboarding answers
+    q_stmt = select(Questionnaire).where(Questionnaire.user_id == client_uuid)
+    quest = (await db.execute(q_stmt)).scalar_one_or_none()
+
+    # Extract authentic colors chosen by the client
+    chosen_palette: list[str] = []
+    if quest:
+        q_ans = quest.answers or {}
+        sec_d = quest.section_d or q_ans.get("d") or {}
+        raw_candidates = (
+            q_ans.get("hex_codes")
+            or sec_d.get("colours")
+            or sec_d.get("color_palette")
+            or q_ans.get("color_palette")
+            or q_ans.get("colours")
+            or []
+        )
+        if isinstance(raw_candidates, list):
+            for c in raw_candidates:
+                if isinstance(c, str) and c.strip().startswith("#"):
+                    chosen_palette.append(c.strip().upper())
+                elif isinstance(c, dict) and c.get("hex"):
+                    chosen_palette.append(str(c["hex"]).strip().upper())
+
+        # Also extract niche / industry if not already set
+        if not brand_dna.get("industry") and not brand_dna.get("category"):
+            niche = q_ans.get("niche") or (quest.section_a or {}).get("category")
+            if niche:
+                brand_dna["industry"] = str(niche)
+                brand_dna["category"] = str(niche)
+
+        # Also extract content pillars if not present
+        if not brand_dna.get("content_pillars") and q_ans.get("pillars"):
+            brand_dna["content_pillars"] = [
+                {"name": str(p), "funnel_stage": "authority", "rationale": f"Core pillar covering {p}"}
+                for p in q_ans.get("pillars")
+            ]
+
+    # Base colors priority:
+    # 1. Direct palette from brand_dna if explicitly set by client or admin
+    # 2. Questionnaire's explicit hex_codes/colours chosen during onboarding
+    # 3. visual_direction.primary_colors
+    base_palette: list[str] = []
+    if isinstance(brand_dna.get("palette"), list) and brand_dna["palette"]:
+        for c in brand_dna["palette"]:
+            if isinstance(c, str) and c.strip().startswith("#"):
+                base_palette.append(c.strip().upper())
+            elif isinstance(c, dict) and c.get("hex"):
+                base_palette.append(str(c["hex"]).strip().upper())
+    elif chosen_palette:
+        base_palette = chosen_palette
+    elif isinstance(brand_dna.get("visual_direction"), dict) and isinstance(brand_dna["visual_direction"].get("primary_colors"), list):
+        for c in brand_dna["visual_direction"]["primary_colors"]:
+            if isinstance(c, str) and c.strip().startswith("#"):
+                base_palette.append(c.strip().upper())
+            elif isinstance(c, dict) and c.get("hex"):
+                base_palette.append(str(c["hex"]).strip().upper())
+
+    if not base_palette:
+        hash_val = abs(int(uuid.UUID(str(client_uuid)).int)) % 6
+        curated_palettes = [
+            ["#0F172A", "#2563EB", "#38BDF8", "#F8FAFC"],
+            ["#18181B", "#D97706", "#FBBF24", "#FAFAFA"],
+            ["#1E1B4B", "#7C3AED", "#C084FC", "#F5F3FF"],
+            ["#064E3B", "#059669", "#34D399", "#ECFDF5"],
+            ["#831843", "#DB2777", "#F472B6", "#FDF2F8"],
+            ["#1E293B", "#0D9488", "#2DD4BF", "#F0FDFA"],
+        ]
+        base_palette = curated_palettes[hash_val]
+
+    # Canonical 4 tokens matching client portal tokens:
+    # [0] Primary Brand, [1] Accent / Secondary, [2] Surface / Canvas, [3] Glow / Highlight
+    default_tokens = ["#161F2D", "#7FA0D6", "#3E5A74", "#BCCCE6"]
+    final_palette = list(base_palette)
+    for i in range(len(final_palette), 4):
+        final_palette.append(default_tokens[i])
+
+    # Ensure brand_dna has both palette and visual_direction aligned to final_palette
+    brand_dna["palette"] = final_palette
+    vis = brand_dna.get("visual_direction")
+    if not isinstance(vis, dict):
+        vis = {}
+    vis["primary_colors"] = final_palette
+
+    # Synchronize typography system with Client Portal tokens
+    if "typography" not in brand_dna or not isinstance(brand_dna.get("typography"), dict):
+        brand_dna["typography"] = {
+            "headline": vis.get("headings_font") or "Inter Display · 700 Bold",
+            "body": vis.get("body_font") or "Inter Sans · 400 Regular",
+            "mono": "JetBrains Mono",
+        }
+    typo_headline = brand_dna["typography"].get("headline") or "Inter Display · 700 Bold"
+    typo_body = brand_dna["typography"].get("body") or "Inter Sans · 400 Regular"
+    vis["headings_font"] = typo_headline
+    vis["body_font"] = typo_body
+    brand_dna["visual_direction"] = vis
 
     # Derive onboarding stage
     has_sub = subscription_data is not None
@@ -653,13 +971,21 @@ async def get_client_brand_profile(
     else:
         onboarding_stage = 1
 
+    industry_val = "Digital Growth & Direct-to-Consumer"
+    if brand_dna and isinstance(brand_dna, dict):
+        raw_ind = brand_dna.get("industry") or brand_dna.get("category")
+        if raw_ind:
+            industry_val = str(raw_ind)
+
     return {
         "client_id": str(client_uuid),
         "full_name": client_user.full_name,
         "email": client_user.email,
+        "phone": brand_dna.get("phone") or (getattr(profile, "phone", None) if profile else None) or "",
         "account_status": client_user.account_status,
         "company_name": profile.company_name if profile else None,
         "instagram_username": profile.instagram_username if profile else None,
+        "industry": industry_val,
         "onboarding_stage": onboarding_stage,
         "onboarding_completed_at": (
             profile.onboarding_completed_at.isoformat()
@@ -679,7 +1005,145 @@ async def get_client_brand_profile(
     }
 
 
+class UpdateClientProfileRequest(BaseModel):
+    company_name: str | None = None
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    instagram_username: str | None = None
+    timezone: str | None = None
+    industry: str | None = None
+    brand_summary: str | None = None
+    palette: list[str] | None = None
+    colors: list[str] | None = None
+    brand_dna: dict[str, Any] | None = None
+
+
+@router.patch("/clients/{client_id}")
+async def update_client_profile(
+    client_id: str,
+    payload: UpdateClientProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    actor: Actor = TeamLeadActor,
+) -> dict[str, Any]:
+    """Update client profile attributes (company name, signer, brand summary, timezone, colors, etc.)."""
+    from app.core.client_scope import ensure_client_access
+    from app.core.dashboard_cache import invalidate_dashboard_cache
+
+    target_uuid: uuid.UUID | None = None
+    try:
+        target_uuid = uuid.UUID(client_id)
+    except (ValueError, AttributeError):
+        pass
+
+    if target_uuid:
+        client_user = await db.get(User, target_uuid)
+    else:
+        clean_slug = client_id.lower().replace("client-", "").strip()
+        search_stmt = (
+            select(User)
+            .join(ClientProfile, ClientProfile.user_id == User.id, isouter=True)
+            .where(
+                User.role == "client",
+                or_(
+                    User.email.ilike(f"%{clean_slug}%"),
+                    ClientProfile.company_name.ilike(f"%{clean_slug}%"),
+                    ClientProfile.instagram_username.ilike(f"%{clean_slug}%"),
+                ),
+            )
+            .limit(1)
+        )
+        res = await db.execute(search_stmt)
+        client_user = res.scalar_one_or_none()
+
+    if not client_user or client_user.role != "client":
+        raise NotFound(f"Client {client_id} not found", code="CLIENT_NOT_FOUND")
+
+    client_uuid = client_user.id
+    await ensure_client_access(db, actor, client_uuid, write=True, allow_client=False)
+
+    # 1. Update user fields
+    if payload.full_name is not None and payload.full_name.strip():
+        client_user.full_name = payload.full_name.strip()
+    if payload.email is not None and payload.email.strip():
+        new_email = payload.email.strip().lower()
+        if new_email != client_user.email:
+            existing_email = (
+                await db.execute(select(User.id).where(User.email == new_email, User.id != client_uuid))
+            ).scalar_one_or_none()
+            if existing_email:
+                raise Conflict(f"Email {new_email} is already taken by another account", code="EMAIL_TAKEN")
+            client_user.email = new_email
+
+    # 2. Update profile
+    profile_stmt = select(ClientProfile).where(ClientProfile.user_id == client_uuid)
+    profile = (await db.execute(profile_stmt)).scalar_one_or_none()
+    if not profile:
+        profile = ClientProfile(user_id=client_uuid, brand_dna={})
+        db.add(profile)
+
+    if payload.company_name is not None:
+        profile.company_name = payload.company_name.strip()
+    if payload.instagram_username is not None:
+        profile.instagram_username = payload.instagram_username.strip().lstrip("@")
+    if payload.timezone is not None and payload.timezone.strip():
+        profile.timezone = payload.timezone.strip()
+    if payload.brand_summary is not None:
+        profile.brand_summary = payload.brand_summary.strip()
+
+    brand_dna_data = dict(profile.brand_dna or {})
+    if payload.phone is not None:
+        brand_dna_data["phone"] = payload.phone.strip()
+    if payload.industry is not None:
+        brand_dna_data["category"] = payload.industry.strip()
+        brand_dna_data["industry"] = payload.industry.strip()
+
+    new_colors = payload.palette or payload.colors
+    if new_colors is not None and isinstance(new_colors, list) and len(new_colors) > 0:
+        clean_colors = [str(c).strip().upper() for c in new_colors if str(c).strip().startswith("#")]
+        if clean_colors:
+            # Pad to 4 tokens if fewer than 4 provided
+            default_tokens = ["#161F2D", "#7FA0D6", "#3E5A74", "#BCCCE6"]
+            padded_colors = list(clean_colors)
+            for i in range(len(padded_colors), 4):
+                padded_colors.append(default_tokens[i])
+            brand_dna_data["palette"] = padded_colors
+            vis = brand_dna_data.get("visual_direction")
+            if not isinstance(vis, dict):
+                vis = {}
+            vis["primary_colors"] = padded_colors
+            brand_dna_data["visual_direction"] = vis
+
+    if payload.brand_dna is not None:
+        brand_dna_data.update(payload.brand_dna)
+
+    profile.brand_dna = brand_dna_data
+
+    # Also sync questionnaire if present
+    q_stmt = select(Questionnaire).where(Questionnaire.user_id == client_uuid)
+    quest = (await db.execute(q_stmt)).scalar_one_or_none()
+    if quest:
+        q_ans = dict(quest.answers or {})
+        if new_colors:
+            clean_colors = [str(c).strip().upper() for c in new_colors if str(c).strip().startswith("#")]
+            if clean_colors:
+                q_ans["hex_codes"] = clean_colors
+        if payload.industry:
+            q_ans["niche"] = payload.industry.strip()
+        quest.answers = q_ans
+
+    await db.commit()
+    await db.refresh(profile)
+    await db.refresh(client_user)
+    await invalidate_dashboard_cache()
+
+    return await get_client_brand_profile(str(client_uuid), db=db, actor=actor)
+
+    return await get_client_brand_profile(str(client_uuid), db=db, actor=actor)
+
+
 @router.get("/queue")
+@dashboard_cached()
 async def get_dispatch_queue(
     db: AsyncSession = Depends(get_db),
     actor: Actor = StaffActor,
@@ -692,6 +1156,12 @@ async def get_dispatch_queue(
                cp.company_name AS client_company,
                c.email AS client_email,
                u.full_name AS assignee_name,
+               jsonb_build_object(
+                   'id', u.id,
+                   'full_name', u.full_name,
+                   'email', u.email,
+                   'role', u.role
+               ) AS assignee,
                u.email AS assignee_email,
                u.role AS assignee_role,
                cp.brand_summary,
@@ -720,15 +1190,16 @@ async def get_dispatch_queue(
             "created_at": r[6].isoformat() if r[6] else None,
             "client_company": r[7] or (r[8].split("@")[0].capitalize() if r[8] else "Client"),
             "client_email": r[8],
-            "assignee_name": r[9] or (r[10].split("@")[0].capitalize() if r[10] else "Unassigned"),
-            "assignee_email": r[10],
-            "assignee_role": r[11],
-            "brand_summary": r[12],
-            "brand_dna": r[13] if isinstance(r[13], dict) else (json.loads(r[13]) if isinstance(r[13], str) else None),
-            "blueprint": r[14] if isinstance(r[14], dict) else (json.loads(r[14]) if isinstance(r[14], str) else None),
-            "concept_status": r[15],
-            "effort_points": r[16],
-            "instagram_username": r[17],
+            "assignee": r[10] if isinstance(r[10], dict) else (json.loads(r[10]) if isinstance(r[10], str) else None) if r[10] else None,
+            "assignee_name": r[9] or (r[11].split("@")[0].capitalize() if r[11] else "Unassigned"),
+            "assignee_email": r[11],
+            "assignee_role": r[12],
+            "brand_summary": r[13],
+            "brand_dna": r[14] if isinstance(r[14], dict) else (json.loads(r[14]) if isinstance(r[14], str) else None),
+            "blueprint": r[15] if isinstance(r[15], dict) else (json.loads(r[15]) if isinstance(r[15], str) else None),
+            "concept_status": r[16],
+            "effort_points": r[17],
+            "instagram_username": r[18],
         }
         for r in active_rows
     ]
@@ -738,6 +1209,17 @@ async def get_dispatch_queue(
     # 2. Staff capacity overview
     staff_res = await db.execute(
         text("""
+        WITH staff_wip AS (
+            SELECT
+                assigned_to,
+                COUNT(id) AS active_wip,
+                COUNT(id) FILTER (WHERE deliverable_type::text IN ('poster', 'post', 'static')) AS wip_posters,
+                COUNT(id) FILTER (WHERE deliverable_type::text IN ('story', 'carousel')) AS wip_stories,
+                COUNT(id) FILTER (WHERE deliverable_type::text = 'reel') AS wip_reels
+            FROM tasks
+            WHERE status IN ('in_production', 'internal_qa')
+            GROUP BY assigned_to
+        )
         SELECT
             sp.user_id,
             u.full_name,
@@ -746,7 +1228,10 @@ async def get_dispatch_queue(
             sp.skills,
             sp.daily_capacity,
             sp.is_accepting_work,
-            COUNT(t.id) FILTER (WHERE t.status IN ('in_production', 'internal_qa')) AS active_wip,
+            COALESCE(w.active_wip, 0) AS active_wip,
+            COALESCE(w.wip_posters, 0) AS wip_posters,
+            COALESCE(w.wip_stories, 0) AS wip_stories,
+            COALESCE(w.wip_reels, 0) AS wip_reels,
             EXISTS(
                 SELECT 1 FROM leave_requests l
                 WHERE l.user_id = sp.user_id
@@ -755,10 +1240,7 @@ async def get_dispatch_queue(
             ) AS on_leave_today
         FROM staff_profiles sp
         JOIN users u ON u.id = sp.user_id
-        LEFT JOIN tasks t ON t.assigned_to = sp.user_id
-        GROUP BY
-            sp.user_id, u.full_name, u.email, sp.department, sp.skills,
-            sp.daily_capacity, sp.is_accepting_work
+        LEFT JOIN staff_wip w ON w.assigned_to = sp.user_id
         ORDER BY active_wip DESC;
     """)
     )
@@ -772,7 +1254,15 @@ async def get_dispatch_queue(
             "daily_capacity": r[5],
             "is_accepting_work": r[6],
             "active_wip": r[7],
-            "on_leave_today": r[8],
+            "wip_posters": r[8],
+            "wip_stories": r[9],
+            "wip_reels": r[10],
+            "on_leave_today": r[11],
+            "capacity_by_type": {
+                "posters": {"wip": r[8], "max": max(1, r[5])},
+                "stories": {"wip": r[9], "max": max(1, r[5] * 2)},
+                "reels": {"wip": r[10], "max": max(1, int(r[5] / 2) or 1)},
+            },
         }
         for r in staff_res.fetchall()
     ]
@@ -823,17 +1313,24 @@ async def get_sla_breaches(
     ]
 
 
-@router.patch("/plans/{plan_id}")
+@router.patch("/plans/{plan_id_or_name}")
 async def update_plan(
-    plan_id: uuid.UUID,
+    plan_id_or_name: str,
     payload: PlanUpdateRequest,
     db: AsyncSession = Depends(get_db),
     actor: Actor = AdminActor,
 ) -> dict[str, Any]:
     """Modify scarcity slots, pricing, and active status for a plan."""
-    plan = await db.get(Plan, plan_id)
+    try:
+        plan_id = uuid.UUID(plan_id_or_name)
+        plan = await db.get(Plan, plan_id)
+    except ValueError:
+        # Not a UUID, search by name
+        stmt = select(Plan).where(Plan.name == plan_id_or_name.lower())
+        plan = (await db.execute(stmt)).scalar_one_or_none()
+
     if not plan:
-        raise NotFound(f"Plan {plan_id} not found", code="PLAN_NOT_FOUND")
+        raise NotFound(f"Plan {plan_id_or_name} not found", code="PLAN_NOT_FOUND")
 
     changes: dict[str, Any] = {}
     if payload.price_minor is not None:
@@ -929,6 +1426,73 @@ class RemoveClientPlanRequest(BaseModel):
     reason: str | None = "Admin removed plan / refund request"
 
 
+@router.post("/clients/{client_id}/offboard")
+async def offboard_client(
+    client_id: str,
+    db: AsyncSession = Depends(get_db),
+    actor: Actor = TeamLeadActor,
+) -> dict[str, Any]:
+    """Persist offboarding without deleting billing or content history."""
+    from app.core.client_scope import ensure_client_access
+    from app.core.dashboard_cache import invalidate_dashboard_cache
+
+    target_uuid: uuid.UUID | None = None
+    try:
+        target_uuid = uuid.UUID(client_id)
+    except (ValueError, AttributeError):
+        pass
+
+    if target_uuid:
+        client = (await db.execute(select(User).where(User.id == target_uuid).with_for_update())).scalar_one_or_none()
+    else:
+        clean_slug = client_id.lower().replace("client-", "").strip()
+        search_stmt = (
+            select(User)
+            .join(ClientProfile, ClientProfile.user_id == User.id, isouter=True)
+            .where(
+                User.role == "client",
+                or_(
+                    User.email.ilike(f"%{clean_slug}%"),
+                    ClientProfile.company_name.ilike(f"%{clean_slug}%"),
+                ),
+            )
+            .with_for_update()
+            .limit(1)
+        )
+        res = await db.execute(search_stmt)
+        client = res.scalar_one_or_none()
+
+    if not client or client.role != "client":
+        raise NotFound(f"Client {client_id} not found", code="CLIENT_NOT_FOUND")
+
+    client_id_uuid = client.id
+    await ensure_client_access(db, actor, client_id_uuid, write=True, allow_client=False)
+
+    subscriptions = (await db.execute(select(Subscription).where(
+        Subscription.client_id == client_id_uuid,
+        Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]),
+    ))).scalars().all()
+    for subscription in subscriptions:
+        subscription.status = SubscriptionStatus.CANCELED
+    counters = (await db.execute(select(UsageCounter).where(UsageCounter.client_id == client_id_uuid))).scalars().all()
+    for counter in counters:
+        counter.quota = 0
+    already_offboarded = client.account_status == AccountStatus.SUSPENDED
+    client.account_status = AccountStatus.SUSPENDED
+    if not already_offboarded:
+        client.token_version += 1
+    await db.execute(delete(ClientAssignment).where(ClientAssignment.client_id == client_id_uuid))
+    if not already_offboarded or subscriptions:
+        actor_role_str = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
+        db.add(AuditLog(actor_id=actor.user_id, actor_role=actor_role_str, entity="client",
+                        entity_id=client_id_uuid, action="client_offboarded",
+                        to_value={"account_status": "suspended", "cancelled_subscriptions": len(subscriptions)}))
+    await db.commit()
+    await invalidate_user_session(client_id_uuid, agency_id=client.agency_id)
+    await invalidate_dashboard_cache()
+    return {"status": "offboarded", "client_id": str(client_id_uuid), "cancelled_subscriptions": len(subscriptions)}
+
+
 @router.post("/clients/{client_id}/remove-plan")
 async def remove_client_plan(
     client_id: uuid.UUID,
@@ -1016,23 +1580,30 @@ async def fix_client_plan(
     2. Validates custom price and quotas for negotiated packages.
     3. Activates/updates subscription with the exact negotiated price and plan.
     4. Configures and aligns deliverable monthly quotas (Reels, Static Posters, Carousels/Stories).
-    5. Completes onboarding status (stage 4) and activates account workflow.
+    5. Preserves onboarding prerequisites and recorded monthly usage.
     6. Notifies the client and registers a secure audit trail.
     """
     user = await db.get(User, client_id)
     if not user:
         raise NotFound(f"Client {client_id} not found", code="CLIENT_NOT_FOUND")
+    if user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=400, detail="Subscription plans can only be assigned to clients.")
 
     # Multi-tenant security: agency admins cannot modify clients belonging to other agencies
     if actor.role != "super_admin" and actor.agency_id and user.agency_id:
         if user.agency_id != actor.agency_id:
             raise Forbidden("You do not have permission to manage clients outside your agency.")
 
+    prof_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)
+    prof = (await db.execute(prof_stmt)).scalar_one_or_none()
+
     # Determine if this is a custom negotiated package
     is_custom = (
         payload.is_custom
         or payload.custom_price is not None
         or payload.custom_reel_quota is not None
+        or payload.custom_poster_quota is not None
+        or payload.custom_story_quota is not None
         or payload.plan_name.strip().lower() in ("custom", "customized", "negotiated")
     )
 
@@ -1054,7 +1625,7 @@ async def fix_client_plan(
         reel_q = int(payload.custom_reel_quota if payload.custom_reel_quota is not None else 8)
         poster_q = int(payload.custom_poster_quota if payload.custom_poster_quota is not None else 12)
         story_q = int(payload.custom_story_quota if payload.custom_story_quota is not None else 15)
-        display_name = payload.custom_display_name or f"Custom Retainer ({user.company_name or 'Bargained Package'})"
+        display_name = payload.custom_display_name or f"Custom Retainer ({(prof.company_name if prof else None) or 'Bargained Package'})"
 
         plan_key = f"custom_{client_id.hex[:8]}"
         plan_stmt = select(Plan).where(Plan.name == plan_key)
@@ -1148,6 +1719,7 @@ async def fix_client_plan(
         existing_sub.current_period_end = period_end
     else:
         new_sub = Subscription(
+            agency_id=user.agency_id,
             client_id=client_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE,
@@ -1159,14 +1731,11 @@ async def fix_client_plan(
         )
         db.add(new_sub)
 
-    # 2. Unlock client account workflow and complete onboarding
+    # A plan activates billing; completion still requires terms, questionnaire,
+    # Brand DNA, pod ownership and a generated calendar in complete_onboarding.
     user.account_status = AccountStatus.ACTIVE
-    prof_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)
-    prof = (await db.execute(prof_stmt)).scalar_one_or_none()
-    if prof:
-        prof.onboarding_completed_at = now
-    else:
-        db.add(ClientProfile(user_id=client_id, onboarding_completed_at=now))
+    if not prof:
+        db.add(ClientProfile(agency_id=user.agency_id, user_id=client_id))
 
     # 3. Synchronize monthly deliverable usage counters to the exact negotiated quotas
     period_start_date = now.date().replace(day=1)
@@ -1187,13 +1756,17 @@ async def fix_client_plan(
         )
         uc = (await db.execute(uc_stmt)).scalar_one_or_none()
         if uc:
-            uc.quota = quota
             if uc.used > quota:
-                uc.used = 0
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot lower {kind.value} quota to {quota}: {uc.used} deliverables already used this month.",
+                )
+            uc.quota = quota
             uc.period_end = period_end_date
         else:
             db.add(
                 UsageCounter(
+                    agency_id=user.agency_id,
                     client_id=client_id,
                     period_start=period_start_date,
                     period_end=period_end_date,
@@ -1208,7 +1781,7 @@ async def fix_client_plan(
         Notification(
             user_id=client_id,
             title=f"🎉 Retainer Plan Fixed: {plan.display_name}",
-            message=f"Your subscription plan has been fixed to {plan.display_name} at ₹{float(plan.monthly_price):,.2f}/mo ({plan.reel_quota} Reels, {plan.poster_quota} Posters, {plan.story_quota} Stories). Deliverables and calendar workflows are now active.",
+            message=f"Your subscription plan has been fixed to {plan.display_name} at ₹{float(plan.monthly_price):,.2f}/mo ({plan.reel_quota} Reels, {plan.poster_quota} Posters, {plan.story_quota} Stories). Complete onboarding to activate your production workflow.",
             link="/portal",
         )
     )
@@ -1238,6 +1811,8 @@ async def fix_client_plan(
     )
 
     await db.commit()
+    from app.core.dashboard_cache import invalidate_dashboard_cache
+    await invalidate_dashboard_cache()
 
     return {
         "status": "success",
@@ -1566,6 +2141,17 @@ async def get_team_members(
         params["actor_id"] = actor.user_id
 
     sql = text(f"""
+        WITH staff_wip AS (
+            SELECT
+                assigned_to,
+                COUNT(id) AS active_wip,
+                COUNT(id) FILTER (WHERE deliverable_type::text IN ('poster', 'post', 'static')) AS wip_posters,
+                COUNT(id) FILTER (WHERE deliverable_type::text IN ('story', 'carousel')) AS wip_stories,
+                COUNT(id) FILTER (WHERE deliverable_type::text = 'reel') AS wip_reels
+            FROM tasks
+            WHERE status IN ('in_production', 'internal_qa')
+            GROUP BY assigned_to
+        )
         SELECT
             u.id,
             u.full_name,
@@ -1576,7 +2162,7 @@ async def get_team_members(
             COALESCE(sp.daily_capacity, 4) AS daily_capacity,
             COALESCE(sp.skills, ARRAY[]::varchar[]) AS skills,
             COALESCE(sp.is_accepting_work, true) AS is_accepting_work,
-            COUNT(t.id) FILTER (WHERE t.status IN ('in_production', 'internal_qa')) AS active_wip,
+            COALESCE(w.active_wip, 0) AS active_wip,
             EXISTS(
                 SELECT 1 FROM leave_requests l
                 WHERE l.user_id = u.id
@@ -1584,13 +2170,15 @@ async def get_team_members(
                   AND CURRENT_DATE BETWEEN l.start_date AND l.end_date
             ) AS on_leave_today,
             sp.team_lead_id,
-            tl.full_name AS team_lead_name
+            tl.full_name AS team_lead_name,
+            COALESCE(w.wip_posters, 0) AS wip_posters,
+            COALESCE(w.wip_stories, 0) AS wip_stories,
+            COALESCE(w.wip_reels, 0) AS wip_reels
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users tl ON tl.id = sp.team_lead_id
-        LEFT JOIN tasks t ON t.assigned_to = u.id
+        LEFT JOIN staff_wip w ON w.assigned_to = u.id
         {where_clause}
-        GROUP BY u.id, u.full_name, u.email, u.role, u.account_status, sp.department, sp.daily_capacity, sp.skills, sp.is_accepting_work, sp.team_lead_id, tl.full_name
         ORDER BY u.created_at ASC;
     """)
     res = await db.execute(sql, params)
@@ -1810,15 +2398,19 @@ async def complete_admin_addon_request(
 
 # --- Escalations Endpoints ---
 
-_resolved_escalation_ids: set[str] = set()
-
-
 @router.get("/escalations")
 async def get_sla_escalations(
     db: AsyncSession = Depends(get_db),
     actor: Actor = TeamLeadActor,
 ) -> list[dict[str, Any]]:
-    """Fetch live SLA breach escalations from active production and QA tasks."""
+    """Fetch live SLA breach escalations from active production and QA tasks using sla_service and DB persistence."""
+    from app.models.ops import EscalationState
+    from app.services import sla_service
+
+    # Fetch resolved escalation task IDs from DB
+    res_stmt = select(EscalationState.task_id).where(EscalationState.resolved.is_(True))
+    resolved_task_ids = {str(tid) for tid in (await db.execute(res_stmt)).scalars().all() if tid}
+
     stmt = (
         select(
             Task,
@@ -1836,14 +2428,14 @@ async def get_sla_escalations(
             ])
         )
         .order_by(Task.updated_at.desc())
-        .limit(20)
+        .limit(30)
     )
     rows = (await db.execute(stmt)).all()
 
     escalations: list[dict[str, Any]] = []
     for task, client_email, company_name, staff_id in rows:
         t_id = str(task.id)
-        if t_id in _resolved_escalation_ids:
+        if t_id in resolved_task_ids:
             continue
 
         deliv_type = task.deliverable_type.value.capitalize() if task.deliverable_type else "Deliverable"
@@ -1851,6 +2443,13 @@ async def get_sla_escalations(
         due_str = task.due_date.isoformat() if task.due_date else "Today"
 
         is_breached = bool(task.due_date and task.due_date < date.today())
+        # Check sla_service for breach status
+        if not is_breached and task.sla_due_at and task.sla_due_at < datetime.now(timezone.utc):
+            is_breached = True
+
+        if not is_breached and task.status != TaskStatus.INTERNAL_QA:
+            continue
+
         severity = "Critical" if is_breached else ("High" if task.status == TaskStatus.INTERNAL_QA else "Medium")
         breach_status = "Past Due" if is_breached else "At Risk"
 
@@ -1870,60 +2469,45 @@ async def get_sla_escalations(
             "status": breach_status,
         })
 
-    # Realistic mock alerts if no live tasks breached yet
-    if not escalations:
-        sample_alerts = [
-            {
-                "id": "esc-sample-001",
-                "task_id": "esc-sample-001",
-                "title": "Brand Reel QA Review Pending > 24h",
-                "task_title": "Motion Reel Production · MK Brand",
-                "client": "MK Brand",
-                "client_name": "MK Brand",
-                "deliverable_type": "Reel",
-                "assignee": "Karthik Raja (Senior Video)",
-                "assigned_to_name": "Karthik Raja (Senior Video)",
-                "due_date": date.today().isoformat(),
-                "hours_overdue": 3.5,
-                "severity": "High",
-                "status": "Past Due",
-            },
-            {
-                "id": "esc-sample-002",
-                "task_id": "esc-sample-002",
-                "title": "Static Carousel Client Review Exceeded SLA",
-                "task_title": "Product Carousel · Zenith Retail",
-                "client": "Zenith Retail",
-                "client_name": "Zenith Retail",
-                "deliverable_type": "Carousel",
-                "assignee": "Vikram Malhotra (Lead)",
-                "assigned_to_name": "Vikram Malhotra (Lead)",
-                "due_date": date.today().isoformat(),
-                "hours_overdue": 6.0,
-                "severity": "Critical",
-                "status": "Past Due",
-            },
-        ]
-        for s in sample_alerts:
-            if s["id"] not in _resolved_escalation_ids:
-                escalations.append(s)
-
     return escalations
 
 
 @router.post("/escalations/{escalation_id}/resolve")
 async def resolve_sla_escalation(
     escalation_id: str,
+    db: AsyncSession = Depends(get_db),
     actor: Actor = TeamLeadActor,
 ) -> dict[str, str]:
-    """Resolve an SLA escalation alert."""
-    _resolved_escalation_ids.add(escalation_id)
+    """Resolve an SLA escalation alert and persist in DB."""
+    from app.models.ops import EscalationState
+    try:
+        task_uuid = uuid.UUID(escalation_id)
+        stmt = select(EscalationState).where(EscalationState.task_id == task_uuid)
+        state = (await db.execute(stmt)).scalar_one_or_none()
+        if not state:
+            state = EscalationState(task_id=task_uuid, level="resolved", resolved=True, details={"resolved_by": str(actor.user_id)})
+            db.add(state)
+        else:
+            state.resolved = True
+            state.level = "resolved"
+        await db.commit()
+    except ValueError:
+        # Non-UUID mock string fallback
+        stmt = select(EscalationState).where(EscalationState.level == f"id_{escalation_id}")
+        state = (await db.execute(stmt)).scalar_one_or_none()
+        if not state:
+            state = EscalationState(level=f"id_{escalation_id}", resolved=True, details={"resolved_by": str(actor.user_id)})
+            db.add(state)
+        else:
+            state.resolved = True
+        await db.commit()
+
     return {"status": "resolved", "id": escalation_id}
 
 
-# --- Settings Endpoints ---
+# --- Settings Endpoints (Database-backed) ---
 
-_PLATFORM_SETTINGS: dict[str, Any] = {
+DEFAULT_PLATFORM_SETTINGS: dict[str, Any] = {
     "agency_name": "Creo Studio Operations",
     "support_email": "concierge@creo.agency",
     "sla_delivery_days": 2,
@@ -1938,20 +2522,47 @@ _PLATFORM_SETTINGS: dict[str, Any] = {
 
 @router.get("/settings")
 async def get_admin_settings(
+    db: AsyncSession = Depends(get_db),
     actor: Actor = AdminActor,
 ) -> dict[str, Any]:
-    """Fetch agency platform configuration and gateway toggles."""
-    return _PLATFORM_SETTINGS
+    """Fetch agency platform configuration from DB."""
+    from app.models.ops import PlatformSetting
+    stmt = select(PlatformSetting).where(PlatformSetting.key == "global")
+    record = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not record:
+        record = PlatformSetting(key="global", value=DEFAULT_PLATFORM_SETTINGS)
+        db.add(record)
+        await db.commit()
+        await db.refresh(record)
+
+    merged = dict(DEFAULT_PLATFORM_SETTINGS)
+    merged.update(record.value or {})
+    return merged
 
 
 @router.post("/settings")
 async def update_admin_settings(
     payload: dict[str, Any],
+    db: AsyncSession = Depends(get_db),
     actor: Actor = AdminActor,
 ) -> dict[str, Any]:
-    """Persist agency platform configuration."""
-    _PLATFORM_SETTINGS.update(payload)
-    return {"status": "saved", "settings": _PLATFORM_SETTINGS}
+    """Persist agency platform configuration in database platform_settings table."""
+    from app.models.ops import PlatformSetting
+    stmt = select(PlatformSetting).where(PlatformSetting.key == "global")
+    record = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not record:
+        record = PlatformSetting(key="global", value=payload)
+        db.add(record)
+    else:
+        new_val = dict(record.value or {})
+        new_val.update(payload)
+        record.value = new_val
+
+    await db.commit()
+    await db.refresh(record)
+    return {"status": "saved", "settings": record.value}
 
 
 # --- Sales Pipeline Endpoints ---
@@ -2062,33 +2673,36 @@ async def reject_custom_deal(
 @router.get("/reports")
 async def get_admin_reports(
     db: AsyncSession = Depends(get_db),
-    actor: Actor = InvestorActor,
+    actor: Actor = AdminActor,
 ) -> dict[str, Any]:
     """Provide real-time executive financial metrics, SLA compliance, and asset format breakdown."""
-    # 1. Active Clients & Subscriptions
+    # 1. Real Active Clients count (no artificial flooring)
     client_q = select(func.count(User.id)).where(User.role == UserRole.CLIENT, User.account_status == AccountStatus.ACTIVE)
     active_clients = (await db.execute(client_q)).scalar() or 0
 
-    # 2. Live MRR Calculation
-    sub_q = select(Subscription, Plan).join(Plan, Subscription.plan_id == Plan.id, isouter=True).where(
-        Subscription.status == "active"
+    # 2. Single source of truth query for MRR (Deduplicate clients, exclude trialing)
+    sub_q = (
+        select(
+            Subscription.client_id,
+            func.max(Subscription.amount).label("amount"),
+            func.max(Plan.price_minor).label("price_minor"),
+        )
+        .join(Plan, Subscription.plan_id == Plan.id, isouter=True)
+        .where(Subscription.status == SubscriptionStatus.ACTIVE)
+        .group_by(Subscription.client_id)
     )
     sub_rows = (await db.execute(sub_q)).all()
+
     mrr_total = 0
-    for sub, plan in sub_rows:
-        if plan and plan.price_minor:
-            mrr_total += plan.price_minor // 100
-        else:
-            mrr_total += 49000
+    for row in sub_rows:
+        if row.amount is not None:
+            mrr_total += int(row.amount)
+        elif row.price_minor is not None:
+            mrr_total += int(row.price_minor // 100)
 
-    if mrr_total == 0 and active_clients > 0:
-        mrr_total = active_clients * 49000
-    elif mrr_total == 0:
-        mrr_total = 145000
+    mrr_formatted = f"₹{mrr_total:,}" if mrr_total > 0 else " — "
 
-    mrr_formatted = f"₹{mrr_total:,}"
-
-    # 3. Deliverable format breakdown from Deliverable and Task tables
+    # 3. Deliverable format breakdown from Deliverable table
     deliv_q = select(Deliverable.file_type, func.count(Deliverable.id)).group_by(Deliverable.file_type)
     deliv_rows = (await db.execute(deliv_q)).all()
 
@@ -2111,33 +2725,13 @@ async def get_admin_reports(
             format_counts["Shorts & Stories"] += count
         total_assets += count
 
-    if total_assets < 4:
-        format_counts["Reels / Video"] = max(format_counts["Reels / Video"], 12)
-        format_counts["Static Carousels"] = max(format_counts["Static Carousels"], 8)
-        format_counts["Shorts & Stories"] = max(format_counts["Shorts & Stories"], 6)
-        format_counts["Motion Graphics"] = max(format_counts["Motion Graphics"], 4)
-        total_assets = sum(format_counts.values())
-
     format_distribution = [
         {
             "format": k,
             "count": v,
-            "percentage": round((v / max(1, total_assets)) * 100, 1),
+            "percentage": round((v / max(1, total_assets)) * 100, 1) if total_assets > 0 else 0,
         }
         for k, v in format_counts.items()
-    ]
-
-    sla_compliance = 96.4
-    turnaround_hours = 28.5
-
-    base_m = mrr_total
-    monthly_rev = [
-        {"month": "Apr", "revenue": int(base_m * 0.65)},
-        {"month": "May", "revenue": int(base_m * 0.72)},
-        {"month": "Jun", "revenue": int(base_m * 0.84)},
-        {"month": "Jul", "revenue": int(base_m * 0.91)},
-        {"month": "Aug", "revenue": int(base_m * 0.96)},
-        {"month": "Sep", "revenue": base_m},
     ]
 
     now_ist = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p IST")
@@ -2145,21 +2739,136 @@ async def get_admin_reports(
     return {
         "mrr_total": mrr_total,
         "mrr_formatted": mrr_formatted,
-        "mrr_growth_percentage": 18.4,
-        "delivery_sla_compliance": sla_compliance,
-        "active_clients_count": max(active_clients, 4),
-        "client_retention_rate": 98.2,
-        "turnaround_avg_hours": turnaround_hours,
-        "monthly_revenue_history": monthly_rev,
-        "format_distribution": format_distribution,
+        "mrr_growth_percentage": " — ",
+        "delivery_sla_compliance": " — ",
+        "active_clients_count": active_clients,
+        "client_retention_rate": " — ",
+        "turnaround_avg_hours": " — ",
+        "monthly_revenue_history": [],
+        "format_distribution": format_distribution if total_assets > 0 else [],
         "generated_at_ist": now_ist,
     }
 
 
+@router.get("/transactions")
+async def get_recent_transactions(
+    db: AsyncSession = Depends(get_db),
+    actor: Actor = AdminActor,
+) -> list[dict[str, Any]]:
+    """Return recent subscriptions/transactions for the revenue engine page."""
+    # Query subscriptions combined with user and plan data
+    sql = text("""
+        SELECT 
+            s.id::TEXT as sub_id,
+            u.full_name,
+            cp.company_name,
+            p.display_name,
+            s.amount,
+            p.monthly_price,
+            s.gateway,
+            s.status,
+            s.created_at
+        FROM subscriptions s
+        JOIN users u ON u.id = s.client_id
+        LEFT JOIN client_profiles cp ON cp.user_id = u.id
+        LEFT JOIN plans p ON p.id = s.plan_id
+        ORDER BY s.created_at DESC
+        LIMIT 50
+    """)
+    res = await db.execute(sql)
+    rows = res.fetchall()
+
+    transactions = []
+    for r in rows:
+        client_name = r[2] or r[1] or "Unknown Client"
+        amount = float(r[4] or r[5] or 0)
+        
+        status_raw = r[7]
+        status_map = {
+            "active": "Paid",
+            "trialing": "Paid",
+            "incomplete": "Pending",
+            "canceled": "Refunded/Cancelled",
+            "past_due": "Overdue"
+        }
+        status_display = status_map.get(status_raw, "Pending")
+        
+        method_raw = (r[6] or "").lower()
+        method_display = "Direct Wire / ACH" if "wire" in method_raw else "Cards / Stripe" if "stripe" in method_raw else "Cards / Razorpay"
+        
+        created_at: datetime = r[8]
+
+        transactions.append({
+            "id": f"SUB-{str(r[0])[:8].upper()}",
+            "client": client_name,
+            "scope": f"{r[3] or 'Custom Plan'} Subscription",
+            "amount": amount,
+            "method": method_display,
+            "status": status_display,
+            "date": created_at.strftime("%b %d, %Y") if created_at else "Unknown",
+        })
+
+    return transactions
+
+
+# --- Team Roster & Staff Endpoints ---
+
+@router.get("/team")
+@router.get("/teams")
+async def list_admin_team_roster(
+    db: AsyncSession = Depends(get_db),
+    actor: Actor = Depends(get_admin_actor),
+) -> dict[str, Any]:
+    """Fetch active staff and pod members from DB."""
+    stmt = (
+        select(User, StaffProfile)
+        .join(StaffProfile, StaffProfile.user_id == User.id, isouter=True)
+        .where(User.role.in_([
+            UserRole.SUPER_ADMIN,
+            UserRole.ADMIN,
+            UserRole.TEAM_LEAD,
+            UserRole.EDITOR,
+            UserRole.DESIGNER,
+            UserRole.SALES,
+            UserRole.INVESTOR_RELATIONS,
+        ]))
+        .order_by(User.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    members = []
+    for user_obj, sp in rows:
+        r_str = user_obj.role.value if hasattr(user_obj.role, "value") else str(user_obj.role)
+        dept = sp.department if sp else "creative"
+        craft = sp.craft_role if sp else r_str
+        members.append({
+            "id": str(user_obj.id),
+            "name": user_obj.full_name or user_obj.email.split("@")[0].title(),
+            "email": user_obj.email,
+            "role": r_str,
+            "craft_role": craft,
+            "department": dept,
+            "account_status": user_obj.account_status.value if hasattr(user_obj.account_status, "value") else str(user_obj.account_status),
+            "daily_capacity": sp.daily_capacity if sp else 4,
+            "monthly_points": sp.monthly_points if sp else 100,
+            "is_accepting_work": sp.is_accepting_work if sp else True,
+            "skills": sp.skills if sp and sp.skills else ["Creative Production"],
+        })
+
+    return {
+        "count": len(members),
+        "members": members,
+    }
+
+
 # --- Deliverables Hub Endpoints ---
+# Creative uploads go through /deliverables/tasks/{task_id}/... (deliverable_workflow).
+# These admin endpoints list deliverables and let staff attach an already
+# stored file; every status change still goes through the state machine.
 
 class DeliverableStatusUpdate(BaseModel):
     status: str
+    reason: str | None = None
 
 
 class AdminDeliverableCreate(BaseModel):
@@ -2168,48 +2877,66 @@ class AdminDeliverableCreate(BaseModel):
     title: str | None = None
     file_url: str | None = None
     file_type: str | None = None
-    status: str = "pending_approval"
-    revision_round: int = 1
+    file_size_bytes: int = 0
+    # Accepted for compatibility; every new upload enters internal QA first.
+    status: str = "pending_qa"
     description: str | None = None
-    scheduled_at: datetime | None = None
 
 
-UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "uploads"))
-DELIVERABLES_DIR = os.path.join(UPLOAD_DIR, "deliverables")
-os.makedirs(DELIVERABLES_DIR, exist_ok=True)
+_ADMIN_TYPE_DISPLAY = {
+    "reel": "Reel 9:16",
+    "static_post": "Static Poster",
+    "carousel": "Carousel",
+    "story": "Story 9:16",
+    "shoot_day": "Shoot Day",
+}
 
 
 @router.post("/deliverables/upload")
 async def upload_admin_deliverable_file(
+    request: Request,
     file: UploadFile = File(...),
+    client_id: uuid.UUID | None = Form(default=None),
     actor: Actor = StaffActor,
-) -> dict[str, str]:
-    """Upload deliverable media file (MP4, MOV, PNG, JPG, WEBP) to deliverables folder."""
-    ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "png"
-    safe_name = f"{uuid.uuid4().hex[:12]}_{file.filename}"
-    file_path = os.path.join(DELIVERABLES_DIR, safe_name)
+) -> dict[str, Any]:
+    """Store a deliverable file in the media bucket (never on the server's ephemeral disk).
 
-    content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
+    With client_id the key lives in that client's namespace; otherwise in the
+    uploader's staff namespace until POST /admin/deliverables attaches it.
+    """
+    import asyncio
 
-    file_url = f"/static/uploads/deliverables/{safe_name}"
-    content_type = file.content_type or ("video/mp4" if ext.lower() in ["mp4", "mov"] else f"image/{ext.lower()}")
+    mime_type = (file.content_type or "").lower()
+    size = file.size or 0
+    try:
+        storage_service.validate_media(mime_type, size)
+        if client_id is not None:
+            key = storage_service.make_storage_key(client_id, mime_type)
+        else:
+            key = storage_service.make_storage_key(actor.user_id, mime_type, prefix="staff")
+        stored = await asyncio.to_thread(storage_service.put_object, key, file.file, mime_type, size)
+    except storage_service.StorageError as exc:
+        status_code = 503 if type(exc) is storage_service.StorageError else 409
+        raise HTTPException(status_code=status_code, detail={"code": exc.code, "message": exc.message}) from exc
     return {
-        "file_url": file_url,
-        "filename": file.filename or safe_name,
-        "content_type": content_type,
-        "file_type": content_type,
+        "file_url": stored,
+        "preview_url": storage_service.resolve_media_url(stored, request),
+        "filename": file.filename or key.rsplit("/", 1)[-1],
+        "content_type": mime_type,
+        "file_type": mime_type,
+        "file_size_bytes": size,
     }
 
 
 @router.get("/deliverables")
 async def list_admin_deliverables(
+    request: Request,
+    client_id: uuid.UUID | None = None,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
     actor: Actor = StaffActor,
 ) -> list[dict[str, Any]]:
-    """List all client deliverables with status, real storage URLs, and client brand profiles."""
+    """List deliverables with client, task and specialist context and browser-loadable URLs."""
     StaffUser = aliased(User)
     stmt = (
         select(
@@ -2217,40 +2944,59 @@ async def list_admin_deliverables(
             User.email.label("client_email"),
             User.full_name.label("client_name"),
             ClientProfile.company_name.label("company_name"),
-            StaffUser.full_name.label("assignee_name"),
+            StaffUser,
+            Task,
         )
         .join(User, User.id == Deliverable.client_id)
         .outerjoin(ClientProfile, ClientProfile.user_id == Deliverable.client_id)
         .outerjoin(StaffUser, StaffUser.id == Deliverable.submitted_by)
-        .order_by(Deliverable.created_at.desc())
-        .limit(limit)
+        .outerjoin(Task, Task.id == Deliverable.task_id)
+        .where(Deliverable.status != DeliverableStatus.ARCHIVED)
     )
-    res = await db.execute(stmt)
-    rows = res.fetchall()
+    if client_id:
+        stmt = stmt.where(Deliverable.client_id == client_id)
+    if actor.role != UserRole.SUPER_ADMIN and actor.agency_id:
+        stmt = stmt.where(or_(Deliverable.agency_id == actor.agency_id, Deliverable.agency_id.is_(None)))
+    stmt = stmt.order_by(Deliverable.created_at.desc()).limit(max(1, min(limit, 300)))
+    rows = (await db.execute(stmt)).fetchall()
+
+    from app.services import deliverable_workflow
 
     results = []
-    for d, client_email, client_name, company_name, assignee_name in rows:
+    for d, client_email, client_name, company_name, staff_user, task in rows:
         client_label = company_name or client_name or (client_email.split("@")[0].capitalize() if client_email else "Client")
-        file_type_clean = d.file_type.split("/")[-1].lower() if "/" in d.file_type else d.file_type.lower()
-        type_display = "Reel 9:16" if "mp4" in file_type_clean or "video" in file_type_clean or "reel" in file_type_clean else "Static Poster" if "png" in file_type_clean or "poster" in file_type_clean or "image" in file_type_clean else "Carousel"
-
+        deliv_type = deliverable_workflow.deliverable_type_of(task, d)
+        type_display = _ADMIN_TYPE_DISPLAY.get(deliv_type, "Deliverable")
+        rounds = d.revision_round or 0
         results.append({
             "id": str(d.id),
+            "root_id": str(d.root_id),
             "client_id": str(d.client_id),
             "client": client_label,
-            "title": f"{type_display} · {client_label}",
+            "client_name": client_label,
+            "title": f"{deliverable_workflow.deliverable_title(task, d)} · {client_label}",
             "type": type_display,
+            "deliverable_type": deliv_type,
             "status": d.status.value,
+            "version": d.version,
+            "revision_round": rounds,
             "date": d.scheduled_at.strftime("%b %d, %I:%M %p") if d.scheduled_at else (d.created_at.strftime("%b %d, %Y") if d.created_at else "Today"),
-            "round": f"Round {d.revision_round} of 2" if d.revision_round > 1 else "Draft 1",
-            "file_url": (
-                storage_service.signed_get(d.file_url)
-                if (d.file_url and not (d.file_url.startswith("http://") or d.file_url.startswith("https://") or d.file_url.startswith("/static/")))
-                else d.file_url
-            ),
-            "description": d.rejection_comment or f"High-resolution social media creative formatted for Instagram brand channel.",
-            "assigned_name": assignee_name or "Creative Studio",
+            "round": f"Revision round {rounds}" if rounds else f"Draft v{d.version}",
+            "file_url": storage_service.resolve_media_url(d.file_url, request),
+            "file_type": d.file_type,
+            "is_video": deliverable_workflow.is_video(d.file_type, d.file_url),
+            "description": d.rejection_comment or "",
+            "task_id": str(task.id) if task else None,
+            "task_status": task.status.value if task else None,
+            "assigned_name": staff_user.full_name if staff_user else "Creative Studio",
+            "assignee": {
+                "id": str(staff_user.id),
+                "full_name": staff_user.full_name,
+                "email": staff_user.email,
+                "role": staff_user.role.value if hasattr(staff_user.role, "value") else str(staff_user.role),
+            } if staff_user else None,
             "created_at": d.created_at.isoformat() if d.created_at else None,
+            "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else None,
         })
     return results
 
@@ -2258,80 +3004,62 @@ async def list_admin_deliverables(
 @router.post("/deliverables")
 async def create_admin_deliverable(
     payload: AdminDeliverableCreate,
+    request: Request = None,  # type: ignore[assignment]  # injected by FastAPI; None in direct calls
     db: AsyncSession = Depends(get_db),
     actor: Actor = StaffActor,
 ) -> dict[str, Any]:
-    """Team Lead / Staff / Admin creates a deliverable record for a specified client."""
+    """Attach an already stored file to a client's task; it enters internal QA like any upload."""
+    from app.services import deliverable_workflow
+
+    if not payload.file_url:
+        raise HTTPException(status_code=422, detail="An uploaded media URL is required")
     client = await db.get(User, payload.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client user not found")
 
-    try:
-        deliv_status = DeliverableStatus(payload.status)
-    except ValueError:
-        deliv_status = DeliverableStatus.PENDING_APPROVAL
+    task: Task | None = None
+    if payload.task_id:
+        task = await db.get(Task, payload.task_id)
+        if not task or task.client_id != payload.client_id:
+            raise HTTPException(status_code=422, detail="Task does not belong to the selected client")
+        # Creatives may only upload to their own tasks; leads to their pod's.
+        await deliverable_workflow.ensure_task_access(db, actor, task)
 
-    file_url = payload.file_url or "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop"
+    if client.role != UserRole.CLIENT:
+        raise HTTPException(status_code=404, detail="Client user not found")
+    if storage_service.resolve_media_url(payload.file_url, request) is None:
+        raise HTTPException(status_code=422, detail="file_url must be a stored file, not a placeholder")
+    if payload.file_url.startswith("clients/") and not payload.file_url.startswith(f"clients/{client.id}/"):
+        raise HTTPException(status_code=403, detail="Storage key does not belong to this client")
 
-    if payload.file_type:
-        file_type = payload.file_type
-    elif "mp4" in file_url.lower() or "video" in file_url.lower() or payload.type.lower() == "reel":
-        file_type = "video/mp4"
-    else:
-        file_type = "image/png"
+    if task is None:
+        try:
+            deliv_type = DeliverableType(payload.type.lower())
+        except ValueError:
+            deliv_type = DeliverableType.REEL if "video" in (payload.file_type or "") else DeliverableType.STATIC_POST
+        task = Task(
+            agency_id=client.agency_id,
+            client_id=client.id,
+            deliverable_type=deliv_type,
+            status=TaskStatus.IN_PRODUCTION,
+            assigned_to=actor.user_id if actor.role != UserRole.SUPER_ADMIN else None,
+            blueprint={"concept_name": payload.title} if payload.title else None,
+        )
+        db.add(task)
+        await db.flush()
 
-    # Verify submitted_by foreign key if user exists
-    submitted_by = None
-    if actor and actor.user_id:
-        user_check = await db.execute(select(User.id).where(User.id == actor.user_id))
-        if user_check.scalar():
-            submitted_by = actor.user_id
-
-    new_id = uuid.uuid4()
-    deliverable = Deliverable(
-        id=new_id,
-        root_id=new_id,
-        version=1,
-        client_id=payload.client_id,
-        submitted_by=submitted_by,
-        file_url=file_url,
-        file_type=file_type,
-        file_size_bytes=1024 * 1024,
-        status=deliv_status,
-        revision_round=payload.revision_round or 1,
-        rejection_comment=payload.description,
-        scheduled_at=payload.scheduled_at,
+    file_type = payload.file_type or ("video/mp4" if "video" in payload.type.lower() or payload.type.lower() == "reel" else "image/png")
+    deliverable = await deliverable_workflow.submit_task_deliverable(
+        db, actor, task,
+        file_url=payload.file_url,
+        mime_type=file_type,
+        file_size_bytes=payload.file_size_bytes,
+        notes=payload.description,
     )
-    db.add(deliverable)
-    await db.commit()
-    await db.refresh(deliverable)
-
-    cp_stmt = select(ClientProfile.company_name).where(ClientProfile.user_id == payload.client_id)
-    cp_res = await db.execute(cp_stmt)
-    company_name = cp_res.scalar()
-
-    client_label = company_name or client.full_name or client.email.split("@")[0].capitalize()
-    file_type_clean = deliverable.file_type.lower()
-    type_display = (
-        "Reel 9:16" if ("mp4" in file_type_clean or "video" in file_type_clean or "reel" in payload.type.lower())
-        else "Static Poster" if ("png" in file_type_clean or "poster" in payload.type.lower() or "image" in file_type_clean)
-        else "Carousel"
-    )
-    title = payload.title or f"{type_display} · {client_label}"
-
     return {
-        "id": str(deliverable.id),
-        "client_id": str(deliverable.client_id),
-        "client": client_label,
-        "title": title,
-        "type": type_display,
-        "status": deliverable.status.value,
-        "date": deliverable.scheduled_at.strftime("%b %d, %I:%M %p") if deliverable.scheduled_at else (deliverable.created_at.strftime("%b %d, %Y") if deliverable.created_at else "Today"),
-        "round": f"Round {deliverable.revision_round} of 2" if deliverable.revision_round > 1 else "Draft 1",
-        "file_url": deliverable.file_url,
-        "description": deliverable.rejection_comment or "High-resolution creative deliverable formatted for Instagram.",
-        "assigned_name": actor.user_id and str(actor.user_id)[:8] or "Team Lead",
-        "created_at": deliverable.created_at.isoformat() if deliverable.created_at else None,
+        **deliverable_workflow.serialize_for_team(deliverable, request),
+        "task_id": str(task.id),
+        "client_id": str(client.id),
     }
 
 
@@ -2342,42 +3070,23 @@ async def update_deliverable_status(
     db: AsyncSession = Depends(get_db),
     actor: Actor = StaffActor,
 ) -> dict[str, Any]:
-    """Admin override for deliverable quality and review status with audit logging."""
-    deliverable = await db.get(Deliverable, deliverable_id)
-    if not deliverable:
-        raise HTTPException(status_code=404, detail="Deliverable not found")
+    """Status change for staff, restricted to the state machine's legal, role-permitted edges."""
+    from app.services import deliverable_workflow
 
     try:
         new_status = DeliverableStatus(payload.status)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid status: {payload.status}")
 
-    prev_status = deliverable.status
-    from app.services.deliverable_state import transition
-    try:
-        await transition(
-            db,
-            deliverable,
-            new_status,
-            actor_id=actor.user_id,
-            actor_role=actor.role,
-            reason="Admin/Lead operations override",
-        )
-    except Exception as exc:
-        deliverable.status = new_status
-        audit = AuditLog(
-            actor_id=actor.user_id,
-            actor_role=actor.role,
-            entity="deliverable",
-            entity_id=deliverable.id,
-            action="admin_status_override",
-            from_value={"status": prev_status.value if hasattr(prev_status, "value") else str(prev_status)},
-            to_value={"status": new_status.value, "reason": str(exc)},
-        )
-        db.add(audit)
-        await db.commit()
-
-    await db.refresh(deliverable)
+    deliverable, _task = await deliverable_workflow.get_deliverable_for_review(db, actor, deliverable_id)
+    await deliverable_state.transition(
+        db,
+        deliverable,
+        new_status,
+        actor_id=actor.user_id,
+        actor_role=actor.role,
+        reason=payload.reason or "Status updated from the operations dashboard",
+    )
     return {"status": "updated", "id": str(deliverable_id), "new_status": deliverable.status.value}
 
 
@@ -2447,7 +3156,12 @@ async def list_admin_support_tickets(
             "priority": t.priority.value,
             "status": t.status.value,
             "assigned_to": str(t.assigned_to) if t.assigned_to else None,
-            "assignee_name": t.assignee.full_name or t.assignee.email if t.assignee else None,
+            "assignee": {
+                "id": str(t.assignee.id),
+                "full_name": t.assignee.full_name,
+                "email": t.assignee.email,
+                "role": t.assignee.role.value if hasattr(t.assignee.role, "value") else str(t.assignee.role),
+            } if t.assignee else None,
             "deliverable_id": str(t.deliverable_id) if t.deliverable_id else None,
             "deliverable_title": deliv_title,
             "time": t.created_at.strftime("%b %d, %I:%M %p") if t.created_at else "Recently",
@@ -2961,6 +3675,7 @@ async def cancel_leave_request(
 # --- Content Calendar Endpoints ---
 
 @router.get("/calendar")
+@dashboard_cached(ttl=5)
 async def get_admin_calendar(
     client_id: uuid.UUID | None = None,
     month: int | None = None,
@@ -2970,7 +3685,20 @@ async def get_admin_calendar(
 ) -> list[dict[str, Any]]:
     """Retrieve content calendar scheduled deliverables and publication entries from DB."""
     events: list[dict[str, Any]] = []
-    seen_deliverable_ids = set()
+    if (month is None) != (year is None):
+        raise HTTPException(status_code=400, detail="Provide both month and year.")
+    if month is not None and (not 1 <= month <= 12 or not 1 <= year <= 9998):
+        raise HTTPException(status_code=400, detail="Invalid calendar month or year.")
+
+    def scope_calendar(stmt: Any, client_column: Any) -> Any:
+        if actor.role in (UserRole.SUPER_ADMIN, UserRole.ADMIN, "super_admin", "admin"):
+            return stmt
+        if actor.agency_id:
+            stmt = stmt.where(or_(User.agency_id == actor.agency_id, User.agency_id.is_(None)))
+        if actor.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN, "admin", "super_admin"):
+            assigned_clients = select(ClientAssignment.client_id).where(ClientAssignment.user_id == actor.user_id)
+            stmt = stmt.where(client_column.in_(assigned_clients))
+        return stmt
 
     # 1. Query ContentCalendar entries joined with Client, Profile, Task, Deliverable
     cal_stmt = (
@@ -2987,6 +3715,7 @@ async def get_admin_calendar(
         .outerjoin(Deliverable, Deliverable.id == ContentCalendar.deliverable_id)
         .outerjoin(Task, Task.id == Deliverable.task_id)
     )
+    cal_stmt = scope_calendar(cal_stmt, ContentCalendar.client_id)
     if client_id:
         cal_stmt = cal_stmt.where(ContentCalendar.client_id == client_id)
     if month and year:
@@ -3003,29 +3732,34 @@ async def get_admin_calendar(
     cal_rows = cal_res.fetchall()
 
     for cal, email, company_name, d, deliv_type, brand_summary in cal_rows:
-        if d:
-            seen_deliverable_ids.add(d.id)
-
         client_name = company_name or email.split("@")[0].capitalize()
         event_dt = cal.scheduled_time or datetime.combine(cal.publish_date, datetime.min.time().replace(hour=11), tzinfo=timezone.utc)
         
-        # Determine format label
-        format_label = "Poster"
+        # Determine format label accurately
+        raw_slot_kind = str(cal.slot_kind or "").lower()
         cap = (cal.caption or "").lower()
-        if deliv_type:
+        if raw_slot_kind in {"reel", "carousel", "story", "poster", "static_post"}:
+            format_label = "Reel" if raw_slot_kind == "reel" else "Story" if raw_slot_kind == "story" else "Carousel" if raw_slot_kind == "carousel" else "Poster"
+        elif deliv_type:
             val = str(deliv_type.value if hasattr(deliv_type, "value") else deliv_type).lower()
             if "reel" in val or "video" in val:
                 format_label = "Reel"
-            elif "carousel" in val or "story" in val:
+            elif "carousel" in val:
+                format_label = "Carousel"
+            elif "story" in val:
                 format_label = "Story"
             else:
                 format_label = "Poster"
         elif "reel" in cap or "video" in cap:
             format_label = "Reel"
-        elif "story" in cap or "carousel" in cap:
+        elif "carousel" in cap:
+            format_label = "Carousel"
+        elif "story" in cap:
             format_label = "Story"
-        elif d and ("video" in d.file_type.lower() or "mp4" in d.file_type.lower()):
+        elif d and ("video" in (d.file_type or "").lower() or "mp4" in (d.file_type or "").lower()):
             format_label = "Reel"
+        else:
+            format_label = "Poster"
 
         status_str = "scheduled"
         file_url = None
@@ -3037,21 +3771,26 @@ async def get_admin_calendar(
                 if d.status.value in ["draft", "pending_approval"]
                 else d.status.value
             )
-            file_url = (
-                storage_service.signed_get(d.file_url)
-                if (d.file_url and not (d.file_url.startswith("http://") or d.file_url.startswith("https://") or d.file_url.startswith("/static/")))
-                else d.file_url
-            )
+            file_url = storage_service.resolve_media_url(d.file_url)
 
         title = cal.caption or f"{format_label} · {client_name}"
 
+        bp = cal.blueprint or {}
+        c_status = getattr(cal, "concept_status", "approved")
         events.append({
             "id": str(cal.id),
+            "client_id": str(cal.client_id),
+            "client_email": email,
             "deliverable_id": str(d.id) if d else None,
             "client_name": client_name,
             "title": title,
             "type": format_label,
-            "status": status_str,
+            "status": "pending_approval" if c_status in ["pending_approval", "concept_pending"] else "revision_requested" if c_status == "revision_requested" else status_str,
+            "concept_status": c_status,
+            "story_description": bp.get("story_description") or bp.get("premise") or "",
+            "approval_type": bp.get("approval_type") or "Story Concept & Topic",
+            "team_notes": bp.get("team_notes") or "",
+            "client_feedback": bp.get("client_feedback") or "",
             "date": cal.publish_date.strftime("%Y-%m-%d"),
             "day": cal.publish_date.day,
             "month": cal.publish_date.month,
@@ -3059,9 +3798,14 @@ async def get_admin_calendar(
             "time": event_dt.strftime("%I:%M %p") if event_dt else "11:00 AM",
             "caption": cal.caption or "",
             "file_url": file_url,
+            "file_type": d.file_type if d else ("video/mp4" if format_label == "Reel" else "image/jpeg"),
             "brand_summary": brand_summary,
             "blueprint": cal.blueprint,
             "selected_hook": cal.selected_hook,
+            "is_locked": getattr(cal, "is_locked", False),
+            "slot_kind": cal.slot_kind,
+            "slot_strategy": getattr(cal, "slot_strategy", "anchor"),
+            "concept_status": getattr(cal, "concept_status", "approved"),
         })
 
     # 2. Query standalone deliverables not yet attached to a ContentCalendar row
@@ -3076,8 +3820,17 @@ async def get_admin_calendar(
         .outerjoin(Task, Task.id == Deliverable.task_id)
         .outerjoin(ClientProfile, ClientProfile.user_id == Deliverable.client_id)
     )
-    if seen_deliverable_ids:
-        deliv_stmt = deliv_stmt.where(Deliverable.id.not_in(seen_deliverable_ids))
+    deliv_stmt = scope_calendar(deliv_stmt, Deliverable.client_id)
+    # Exclude every linked deliverable, including links outside the selected month.
+    deliv_stmt = deliv_stmt.where(~select(ContentCalendar.id).where(
+        ContentCalendar.deliverable_id == Deliverable.id
+    ).exists())
+    if month and year:
+        event_date_expr = func.coalesce(Deliverable.scheduled_at, Deliverable.created_at)
+        deliv_stmt = deliv_stmt.where(
+            event_date_expr >= datetime.combine(start_d, datetime.min.time(), tzinfo=timezone.utc),
+            event_date_expr < datetime.combine(end_d, datetime.min.time(), tzinfo=timezone.utc),
+        )
     if client_id:
         deliv_stmt = deliv_stmt.where(Deliverable.client_id == client_id)
     deliv_stmt = (
@@ -3096,14 +3849,16 @@ async def get_admin_calendar(
             val = str(deliv_type.value if hasattr(deliv_type, "value") else deliv_type).lower()
             if "reel" in val or "video" in val:
                 format_label = "Reel"
-            elif "carousel" in val or "story" in val:
+            elif "carousel" in val:
+                format_label = "Carousel"
+            elif "story" in val:
                 format_label = "Story"
             else:
                 format_label = "Poster"
-        elif "video" in d.file_type.lower() or "mp4" in d.file_type.lower():
+        elif "video" in (d.file_type or "").lower() or "mp4" in (d.file_type or "").lower():
             format_label = "Reel"
-        elif "carousel" in d.file_type.lower():
-            format_label = "Story"
+        elif "carousel" in (d.file_type or "").lower():
+            format_label = "Carousel"
         else:
             format_label = "Poster"
 
@@ -3111,6 +3866,8 @@ async def get_admin_calendar(
 
         events.append({
             "id": str(d.id),
+            "client_id": str(d.client_id),
+            "client_email": email,
             "deliverable_id": str(d.id),
             "client_name": client_name,
             "title": title,
@@ -3122,196 +3879,139 @@ async def get_admin_calendar(
             "year": event_date.year if event_date else 2026,
             "time": event_date.strftime("%I:%M %p") if event_date else "11:00 AM",
             "caption": "",
-            "file_url": (
-                storage_service.signed_get(d.file_url)
-                if (d.file_url and not (d.file_url.startswith("http://") or d.file_url.startswith("https://") or d.file_url.startswith("/static/")))
-                else d.file_url
-            ),
+            "file_url": storage_service.resolve_media_url(d.file_url),
+            "file_type": d.file_type,
+            "brand_summary": None,
+            "blueprint": None,
+            "selected_hook": None,
+            "is_locked": False,
+            "slot_kind": "reel" if format_label == "Reel" else "poster",
+            "slot_strategy": "standalone",
+            "concept_status": "approved",
         })
 
     return events
 
 
-# --- Admin Deliverables Management & Automated Task Pipeline Sync ---
-
-class AdminDeliverableCreateRequest(BaseModel):
+class AdminCreateCalendarEventPayload(BaseModel):
     client_id: uuid.UUID
-    title: str = ""
-    type: str = "reel"
-    file_url: str
-    file_type: str = "video/mp4"
-    status: str = "pending_approval"
-    revision_round: int = 1
-    description: str = ""
-    scheduled_at: str | None = None
+    publish_date: date
+    scheduled_time: datetime | None = None
+    format_type: str = Field(default="Reel")  # Reel, Poster, Story, Carousel
+    caption: str | None = None
+    status: str = Field(default="scheduled")
 
 
-class AdminDeliverableStatusUpdate(BaseModel):
-    status: str
-
-
-@router.get("/deliverables")
-async def list_admin_deliverables(
-    client_id: uuid.UUID | None = None,
+@router.post("/calendar/events")
+async def admin_create_calendar_event(
+    payload: AdminCreateCalendarEventPayload,
     db: AsyncSession = Depends(get_db),
-    actor: Actor = StaffActor,
-) -> list[dict[str, Any]]:
-    """List creative deliverables with client information and task links."""
-    stmt = (
-        select(
-            Deliverable,
-            User.email,
-            ClientProfile.company_name,
-            Task.id.label("task_id"),
-            Task.status.label("task_status"),
-        )
-        .join(User, User.id == Deliverable.client_id)
-        .outerjoin(ClientProfile, ClientProfile.user_id == Deliverable.client_id)
-        .outerjoin(Task, Task.id == Deliverable.task_id)
-    )
-    if client_id:
-        stmt = stmt.where(Deliverable.client_id == client_id)
-
-    stmt = stmt.order_by(Deliverable.created_at.desc()).limit(300)
-    res = await db.execute(stmt)
-    rows = res.fetchall()
-
-    results = []
-    for d, email, company, t_id, t_status in rows:
-        c_name = company or email.split("@")[0].capitalize()
-        status_val = d.status.value if hasattr(d.status, "value") else str(d.status)
-        deliv_type = "reel" if ("video" in (d.file_type or "").lower() or "mp4" in (d.file_type or "").lower()) else "static_post"
-
-        results.append({
-            "id": str(d.id),
-            "root_id": str(d.root_id),
-            "client_id": str(d.client_id),
-            "client_name": c_name,
-            "title": f"{deliv_type.replace('_', ' ').capitalize()} · {c_name}",
-            "type": deliv_type,
-            "file_url": (
-                storage_service.signed_get(d.file_url)
-                if (d.file_url and not (d.file_url.startswith("http://") or d.file_url.startswith("https://") or d.file_url.startswith("/uploads/") or d.file_url.startswith("/static/")))
-                else d.file_url
-            ),
-            "file_type": d.file_type,
-            "status": status_val,
-            "version": d.version,
-            "revision_round": d.revision_round,
-            "task_id": str(t_id) if t_id else None,
-            "task_status": t_status.value if hasattr(t_status, "value") else (str(t_status) if t_status else None),
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-            "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else None,
-        })
-    return results
-
-
-@router.post("/deliverables/upload")
-async def upload_admin_deliverable_file(
-    file: UploadFile = File(...),
-    actor: Actor = StaffActor,
-) -> dict[str, str]:
-    """Upload media file directly to local server storage."""
-    import time
-    from app.main import _uploads_dir
-
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    clean_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
-    dest_path = os.path.join(_uploads_dir, clean_name)
-
-    content = await file.read()
-    with open(dest_path, "wb") as f:
-        f.write(content)
-
-    return {
-        "file_url": f"/uploads/{clean_name}",
-        "filename": file.filename or clean_name,
-        "file_type": file.content_type or "application/octet-stream",
-    }
-
-
-@router.post("/deliverables")
-async def create_admin_deliverable(
-    payload: AdminDeliverableCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    actor: Actor = StaffActor,
+    actor: Actor = AdminActor,
 ) -> dict[str, Any]:
-    """Staff uploads/creates a new deliverable. Automates task pipeline progression into Internal QA."""
-    # Validate target status
-    target_status = DeliverableStatus.PENDING_QA
-    try:
-        if payload.status:
-            target_status = DeliverableStatus(payload.status)
-    except ValueError:
-        target_status = DeliverableStatus.PENDING_QA
+    """Admin creates or schedules a new content calendar slot for a client."""
+    client = await db.get(User, payload.client_id)
+    if not client or client.role != UserRole.CLIENT:
+        raise NotFound("Client not found")
 
-    deliverable = Deliverable(
-        id=uuid.uuid4(),
-        root_id=uuid.uuid4(),
-        version=1,
+    fmt = payload.format_type.lower()
+    slot_kind = "reel" if "reel" in fmt else "story" if "story" in fmt else "carousel" if "carousel" in fmt else "poster"
+
+    entry = ContentCalendar(
+        agency_id=client.agency_id or actor.agency_id,
         client_id=payload.client_id,
-        submitted_by=actor.user_id,
-        file_url=payload.file_url,
-        file_type=payload.file_type or "video/mp4",
-        file_size_bytes=1024 * 1024,
-        status=target_status,
-        revision_round=payload.revision_round,
+        publish_date=payload.publish_date,
+        scheduled_time=payload.scheduled_time or datetime.combine(payload.publish_date, datetime.min.time().replace(hour=11), tzinfo=timezone.utc),
+        caption=payload.caption or f"Brand {payload.format_type.capitalize()} · Scheduled Publication",
+        status=payload.status or "scheduled",
+        slot_kind=slot_kind,
+        slot_strategy="anchor",
+        concept_status="approved",
     )
-    if payload.scheduled_at:
-        try:
-            deliverable.scheduled_at = datetime.fromisoformat(payload.scheduled_at)
-        except Exception:
-            pass
-
-    db.add(deliverable)
-    await db.flush()
-
-    # Automate task pipeline progression: upload by team moves task to Internal QA
-    await deliverable_state.sync_task_with_deliverable(db, deliverable, target_status)
-
+    db.add(entry)
     await db.commit()
-    await db.refresh(deliverable)
-
-    return {
-        "id": str(deliverable.id),
-        "status": deliverable.status.value,
-        "task_id": str(deliverable.task_id) if deliverable.task_id else None,
-        "file_url": deliverable.file_url,
-    }
+    await db.refresh(entry)
+    return {"message": "Calendar event scheduled successfully", "id": str(entry.id)}
 
 
-@router.patch("/deliverables/{deliverable_id}/status")
-async def update_admin_deliverable_status(
-    deliverable_id: uuid.UUID,
-    payload: AdminDeliverableStatusUpdate,
+class AdminUpdateCalendarEventPayload(BaseModel):
+    publish_date: date | None = None
+    scheduled_time: datetime | None = None
+    caption: str | None = None
+    status: str | None = None
+    format_type: str | None = None
+
+
+@router.patch("/calendar/events/{event_id}")
+async def admin_update_calendar_event(
+    event_id: uuid.UUID,
+    payload: AdminUpdateCalendarEventPayload,
     db: AsyncSession = Depends(get_db),
-    actor: Actor = StaffActor,
+    actor: Actor = AdminActor,
 ) -> dict[str, Any]:
-    """Update deliverable status. Automatically syncs and moves the corresponding task in the pipeline."""
-    deliverable = await db.get(Deliverable, deliverable_id)
-    if not deliverable:
-        raise HTTPException(status_code=404, detail="Deliverable not found")
+    """Admin updates or reschedules a content calendar event."""
+    entry = await db.get(ContentCalendar, event_id)
+    if entry:
+        if payload.publish_date is not None:
+            entry.publish_date = payload.publish_date
+        if payload.scheduled_time is not None:
+            entry.scheduled_time = payload.scheduled_time
+        if payload.caption is not None:
+            entry.caption = payload.caption
+        if payload.status is not None:
+            entry.status = payload.status
+        if payload.format_type is not None:
+            fmt = payload.format_type.lower()
+            entry.slot_kind = "reel" if "reel" in fmt else "story" if "story" in fmt else "carousel" if "carousel" in fmt else "poster"
 
-    try:
-        new_status = DeliverableStatus(payload.status)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid status: {payload.status}")
+        if entry.deliverable_id and payload.status:
+            deliv = await db.get(Deliverable, entry.deliverable_id)
+            if deliv:
+                if payload.status == "approved":
+                    deliv.status = DeliverableStatus.APPROVED
+                    deliv.approved_at = datetime.now(timezone.utc)
+                elif payload.status == "rejected":
+                    deliv.status = DeliverableStatus.REJECTED
+                    deliv.rejected_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {"message": "Calendar event updated successfully", "id": str(entry.id)}
 
-    deliverable.status = new_status
-    if new_status == DeliverableStatus.APPROVED:
-        deliverable.approved_at = datetime.now(timezone.utc)
+    deliv = await db.get(Deliverable, event_id)
+    if deliv:
+        if payload.publish_date is not None:
+            deliv.scheduled_at = datetime.combine(payload.publish_date, datetime.min.time().replace(hour=11), tzinfo=timezone.utc)
+        if payload.status is not None:
+            if payload.status == "approved":
+                deliv.status = DeliverableStatus.APPROVED
+                deliv.approved_at = datetime.now(timezone.utc)
+            elif payload.status == "rejected":
+                deliv.status = DeliverableStatus.REJECTED
+                deliv.rejected_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {"message": "Deliverable updated successfully", "id": str(deliv.id)}
 
-    # Sync corresponding Task in the pipeline
-    await deliverable_state.sync_task_with_deliverable(db, deliverable, new_status)
+    raise NotFound("Calendar entry not found")
 
-    await db.commit()
-    await db.refresh(deliverable)
 
-    return {
-        "id": str(deliverable.id),
-        "status": deliverable.status.value,
-        "task_id": str(deliverable.task_id) if deliverable.task_id else None,
-    }
+@router.delete("/calendar/events/{event_id}")
+async def admin_delete_calendar_event(
+    event_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    actor: Actor = AdminActor,
+) -> dict[str, Any]:
+    """Admin removes a scheduled event from the calendar."""
+    entry = await db.get(ContentCalendar, event_id)
+    if entry:
+        await db.delete(entry)
+        await db.commit()
+        return {"message": "Calendar event removed"}
+
+    deliv = await db.get(Deliverable, event_id)
+    if deliv:
+        deliv.scheduled_at = None
+        await db.commit()
+        return {"message": "Deliverable unscheduled"}
+
+    raise NotFound("Calendar event not found")
 
 
 # =========================================================================
@@ -3372,12 +4072,16 @@ class PodTaskReassignRequest(BaseModel):
 
 
 @router.get("/pod-dashboard")
+@dashboard_cached()
 async def get_pod_dashboard(
+    request: Request = None,  # type: ignore[assignment]  # injected by FastAPI; None in direct calls
     pod: str | None = None,
     db: AsyncSession = Depends(get_db),
     actor: Actor = StaffActor,
 ) -> dict[str, Any]:
     """Retrieve complete scoped pod dashboard data for Team Leads and Admins."""
+    from app.services import deliverable_workflow
+
     actor_email = (actor.email or "").lower().strip()
     is_team_lead = actor.role in (UserRole.TEAM_LEAD, "team_lead")
 
@@ -3392,7 +4096,7 @@ async def get_pod_dashboard(
             # Check by actor user_id matching any staff_profile lead
             selected_pod = POD_DEFINITIONS[1]  # Default to Pod Beta (Sarah Connor)
     else:
-        # Admin or super admin
+        # Admin, super admin, or creative team member
         if pod:
             pod_key = pod.lower().replace("pod-", "").replace("pod ", "").strip()
             for pdef in POD_DEFINITIONS:
@@ -3400,14 +4104,40 @@ async def get_pod_dashboard(
                     selected_pod = pdef
                     break
         if not selected_pod:
+            for pdef in POD_DEFINITIONS:
+                if actor_email in (pdef.get("lead_email"), pdef.get("lead_alias_email"), pdef.get("editor_email"), pdef.get("designer_email")):
+                    selected_pod = pdef
+                    break
+        if not selected_pod:
             selected_pod = POD_DEFINITIONS[0]  # Default to Pod Alpha
 
     # 2. Query all users and staff profiles
-    users_stmt = select(User, StaffProfile).outerjoin(StaffProfile, StaffProfile.user_id == User.id)
+    users_stmt = select(User, StaffProfile).outerjoin(StaffProfile, StaffProfile.user_id == User.id).where(User.role != UserRole.CLIENT)
+    if actor.role not in (UserRole.SUPER_ADMIN, "super_admin"):
+        users_stmt = users_stmt.where(User.agency_id == actor.agency_id)
+    if is_team_lead:
+        users_stmt = users_stmt.where(or_(User.id == actor.user_id, StaffProfile.team_lead_id == actor.user_id))
     all_users_res = await db.execute(users_stmt)
     all_users_map: dict[str, tuple[User, StaffProfile | None]] = {}
     for u, sp in all_users_res.all():
         all_users_map[u.email.lower()] = (u, sp)
+
+    # Resolve staff from persisted reporting lines; a non-admin may not select
+    # another pod through the query parameter or a missing-data fallback.
+    if actor.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN, "admin", "super_admin"):
+        actor_record = next(((u, sp) for u, sp in all_users_map.values() if u.id == actor.user_id), (None, None))
+        actor_user, actor_profile = actor_record
+        lead_id = actor.user_id if is_team_lead else (actor_profile.team_lead_id if actor_profile else None)
+        lead_record = next(((u, sp) for u, sp in all_users_map.values() if u.id == lead_id), (None, None))
+        actual_lead, _ = lead_record
+        selected_pod = next((p for p in POD_DEFINITIONS if actual_lead and actual_lead.email.lower() in (p.get("lead_email"), p.get("lead_alias_email"))), selected_pod)
+        if actual_lead and actual_lead.email.lower() not in (selected_pod.get("lead_email"), selected_pod.get("lead_alias_email")):
+            selected_pod = {**selected_pod, "id": str(actual_lead.id), "key": str(actual_lead.id), "name": f"{actual_lead.full_name or 'Creative'} Pod", "lead_email": actual_lead.email.lower(), "editor_email": "", "designer_email": ""}
+        allowed_ids = {actor.user_id}
+        if lead_id:
+            allowed_ids.add(lead_id)
+            allowed_ids.update(u.id for u, sp in all_users_map.values() if sp and sp.team_lead_id == lead_id)
+        all_users_map = {email: record for email, record in all_users_map.items() if record[0].id in allowed_ids}
 
     # 3. Resolve members of this pod
     pod_lead_user, pod_lead_sp = all_users_map.get(selected_pod["lead_email"], (None, None))
@@ -3448,6 +4178,9 @@ async def get_pod_dashboard(
             if sp and sp.team_lead_id == pod_lead_user.id and u.id not in member_ids:
                 pod_members_list.append(format_member(u, sp, "Creative Specialist"))
 
+    if not pod_members_list and actor.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN, "admin", "super_admin") and actor_user:
+        pod_members_list.append(format_member(actor_user, actor_profile, "Creative Specialist"))
+
     # 4. Assigned clients for this pod
     clients_stmt = (
         select(ClientAssignment, User, ClientProfile)
@@ -3472,37 +4205,25 @@ async def get_pod_dashboard(
                 "instagram": c_profile.instagram_username if c_profile else None,
             }
 
-    # If no clients explicitly assigned via ClientAssignment, find client by email pattern
-    if not assigned_clients_dict:
-        default_client_stmt = select(User, ClientProfile).outerjoin(ClientProfile, ClientProfile.user_id == User.id).where(User.role == UserRole.CLIENT).limit(2)
-        for c_user, c_profile in (await db.execute(default_client_stmt)).all():
-            cid_str = str(c_user.id)
-            client_ids.append(c_user.id)
-            assigned_clients_dict[cid_str] = {
-                "id": cid_str,
-                "name": c_profile.company_name if c_profile and c_profile.company_name else (c_user.full_name or c_user.email),
-                "email": c_user.email,
-                "brand_summary": c_profile.brand_summary if c_profile else "Active Content Retainer",
-                "brand_dna": c_profile.brand_dna if c_profile else {},
-                "instagram": c_profile.instagram_username if c_profile else None,
-            }
-
     # 5. Query tasks scoped to this pod
     now = datetime.now(timezone.utc)
     task_filter = or_(
         Task.assigned_to.in_(member_ids),
         Task.client_id.in_(client_ids) if client_ids else False,
     )
+    # One row per task version; ordering puts each task's newest live upload first.
     tasks_stmt = (
         select(Task, User, ClientProfile, Deliverable)
         .outerjoin(User, User.id == Task.assigned_to)
         .outerjoin(ClientProfile, ClientProfile.user_id == Task.client_id)
-        .outerjoin(Deliverable, Deliverable.task_id == Task.id)
+        .outerjoin(
+            Deliverable,
+            and_(Deliverable.task_id == Task.id, Deliverable.status != DeliverableStatus.ARCHIVED),
+        )
         .where(task_filter)
-        .order_by(Task.created_at.desc())
+        .order_by(Task.created_at.desc(), Task.id, Deliverable.version.desc().nulls_last())
     )
-    tasks_res = await db.execute(tasks_stmt)
-    tasks_rows = tasks_res.all()
+    tasks_rows = (await db.execute(tasks_stmt)).all()
 
     tasks_by_status: dict[str, list[dict[str, Any]]] = {
         "backlog": [],
@@ -3550,14 +4271,8 @@ async def get_pod_dashboard(
             "is_near_sla": is_near_sla,
             "effort_points": t.effort_points,
             "blueprint": t.blueprint or {},
-            "deliverable": {
-                "id": str(deliv.id),
-                "file_url": deliv.file_url,
-                "file_type": deliv.file_type,
-                "status": deliv.status.value if hasattr(deliv.status, "value") else str(deliv.status),
-                "revision_round": deliv.revision_round,
-                "rejection_comment": deliv.rejection_comment,
-            } if deliv else None,
+            "is_revision": t.is_revision,
+            "deliverable": deliverable_workflow.serialize_for_team(deliv, request) if deliv else None,
         }
         tasks_by_status[t_status].append(task_data)
 
@@ -3661,7 +4376,7 @@ async def get_pod_dashboard(
             "progressBg": selected_pod["progressBg"],
             "lead": {
                 "id": str(pod_lead_user.id) if pod_lead_user else None,
-                "name": pod_lead_user.full_name if pod_lead_user else "Sarah Connor",
+                "name": pod_lead_user.full_name if pod_lead_user else "Unassigned lead",
                 "email": pod_lead_user.email if pod_lead_user else selected_pod["lead_email"],
             },
             "stats": {
@@ -3688,54 +4403,43 @@ async def get_pod_dashboard(
 async def pod_task_qa_review(
     task_id: uuid.UUID,
     payload: PodQAReviewRequest,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     actor: Actor = StaffActor,
 ) -> dict[str, Any]:
-    """Team Lead QA Approval or Rejection for a deliverable."""
-    task = await db.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    """Team Lead QA approval (client notified) or rejection (creative notified) of a task's upload."""
+    from app.services import deliverable_workflow
 
-    deliv_stmt = select(Deliverable).where(Deliverable.task_id == task_id).order_by(Deliverable.created_at.desc())
-    deliv = (await db.execute(deliv_stmt)).scalars().first()
-
-    now = datetime.now(timezone.utc)
     decision = payload.decision.lower().strip()
-
-    if decision == "approve":
-        task.status = TaskStatus.CLIENT_REVIEW
-        if deliv:
-            deliv.status = DeliverableStatus.PENDING_APPROVAL
-            deliv.rejection_comment = None
-        message = "Deliverable approved by Lead QA and moved to Client Review."
-    elif decision == "reject":
-        task.status = TaskStatus.IN_PRODUCTION
-        if deliv:
-            deliv.status = DeliverableStatus.QA_REJECTED
-            deliv.rejection_comment = payload.comment or "QA feedback: Please refine pacing and visuals according to brand guide."
-        message = f"Deliverable returned to specialist for revisions: {payload.comment or 'Revisions requested.'}"
-    else:
+    if decision not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="Invalid QA decision. Must be 'approve' or 'reject'.")
 
-    # Audit log
-    audit = AuditLog(
-        actor_id=actor.user_id,
-        action=f"pod_qa_{decision}",
-        entity="task",
-        entity_id=task.id,
-        to_value={"decision": decision, "comment": payload.comment},
+    task = await deliverable_workflow.get_task_for_actor(db, actor, task_id)
+    deliv = await deliverable_workflow.latest_version(db, task.id)
+    if deliv is None or deliv.status != DeliverableStatus.PENDING_QA:
+        raise Conflict(
+            "There is no uploaded file waiting for QA on this task",
+            code="NOTHING_TO_REVIEW",
+        )
+    deliv, email = await deliverable_workflow.qa_decide(
+        db, actor, deliv, task, approve=decision == "approve", notes=payload.comment
     )
-    db.add(audit)
-
-    await db.commit()
+    if email:
+        background.add_task(deliverable_workflow.send_ready_for_review_email, **email)
     await db.refresh(task)
 
+    message = (
+        "Approved and sent to the client for review."
+        if decision == "approve"
+        else "Returned to the creative with your notes."
+    )
     return {
         "status": "success",
         "message": message,
         "task_id": str(task.id),
         "new_task_status": task.status.value,
-        "deliverable_status": deliv.status.value if deliv else None,
+        "deliverable_id": str(deliv.id),
+        "deliverable_status": deliv.status.value,
     }
 
 
@@ -3783,4 +4487,814 @@ async def pod_task_reassign(
         "assigned_to": str(new_assignee.id),
         "assignee_name": new_assignee.full_name or new_assignee.email,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PLAN NEGOTIATIONS (Client-submitted bargain / consultation requests)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from app.models.billing import PlanNegotiation  # noqa: E402
+
+
+@router.get("/negotiations", response_model=list[dict[str, Any]])
+async def list_plan_negotiations(
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """List all plan negotiation requests for admin review."""
+    stmt = select(PlanNegotiation).order_by(PlanNegotiation.created_at.desc())
+    if actor.role != UserRole.SUPER_ADMIN:
+        stmt = stmt.where(PlanNegotiation.agency_id == actor.agency_id)
+    stmt = stmt.limit(200)
+    res = await db.execute(stmt)
+    rows = res.scalars().all()
+
+    # Self-heal legacy negotiations missing client_id by email lookup
+    needs_commit = False
+    for n in rows:
+        if not n.client_id and n.client_email:
+            u_stmt = select(User).where(func.lower(User.email) == n.client_email.strip().lower())
+            u = (await db.execute(u_stmt)).scalar_one_or_none()
+            if u:
+                n.client_id = u.id
+                needs_commit = True
+    if needs_commit:
+        await db.commit()
+
+    return [
+        {
+            "id": str(n.id),
+            "clientName": n.client_name,
+            "clientId": str(n.client_id) if n.client_id else None,
+            "clientEmail": n.client_email,
+            "clientLogo": (n.client_name[:2].upper() if n.client_name else "??"),
+            "targetTopic": n.target_topic,
+            "proposedOffer": n.proposed_offer,
+            "phoneNumber": n.phone_number,
+            "preferredTime": n.preferred_time,
+            "notes": n.notes,
+            "status": n.status,
+            "counterPrice": n.counter_price or getattr(n, "agreed_amount", None),
+            "agreedAmount": getattr(n, "agreed_amount", None) or n.counter_price,
+            "reelQuota": getattr(n, "reel_quota", None) or 8,
+            "posterQuota": getattr(n, "poster_quota", None) or 12,
+            "storyQuota": getattr(n, "story_quota", None) or 15,
+            "counterNote": n.counter_note,
+            "declineReason": n.decline_reason,
+            "requestedAt": n.created_at.isoformat() if n.created_at else None,
+            "reviewedAt": n.reviewed_at.isoformat() if n.reviewed_at else None,
+        }
+        for n in rows
+    ]
+
+
+class CreateNegotiationPayload(BaseModel):
+    client_name: str
+    target_topic: str
+    proposed_offer: str | None = None
+    phone_number: str = "—"
+    preferred_time: str = "—"
+    notes: str | None = None
+    client_email: str | None = None
+    client_id: uuid.UUID | None = None
+
+
+@router.post("/negotiations", response_model=dict[str, Any])
+async def create_plan_negotiation_by_admin(
+    payload: CreateNegotiationPayload,
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Admin initiates a custom proposal/negotiation record."""
+    client = await db.get(User, payload.client_id) if payload.client_id else None
+    if not client and payload.client_email:
+        client = (await db.execute(select(User).where(func.lower(User.email) == payload.client_email.strip().lower()))).scalar_one_or_none()
+    if not client or client.role != UserRole.CLIENT:
+        raise HTTPException(status_code=422, detail="Select a registered client for this proposal")
+    if actor.agency_id and client.agency_id != actor.agency_id:
+        raise HTTPException(status_code=403, detail="Client belongs to another agency")
+    neg = PlanNegotiation(
+        agency_id=getattr(actor, "agency_id", None),
+        client_id=client.id,
+        client_name=client.full_name or client.email,
+        client_email=client.email,
+        target_topic=payload.target_topic,
+        proposed_offer=payload.proposed_offer,
+        phone_number=payload.phone_number,
+        preferred_time=payload.preferred_time,
+        notes=payload.notes,
+        status="Pending Review",
+    )
+    db.add(neg)
+    await db.commit()
+    await db.refresh(neg)
+
+    return {
+        "status": "success",
+        "id": str(neg.id),
+        "negotiation_id": str(neg.id),
+        "message": f"Custom proposal initiated for {neg.client_name}.",
+    }
+
+
+class NegotiationActionPayload(BaseModel):
+    action: str = "accept"  # "accept" | "decline" | "counter"
+    decline_reason: str | None = None
+    counter_price: int | None = None
+    counter_note: str | None = None
+    agreed_price: Decimal | None = None
+    agreed_amount: Decimal | None = None  # alias
+    reel_quota: int | None = None
+    poster_quota: int | None = None
+    story_quota: int | None = None
+
+
+@router.patch("/negotiations/{neg_id}", response_model=dict[str, Any])
+@router.post("/negotiations/{neg_id}", response_model=dict[str, Any])
+@router.patch("/negotiations/{neg_id}/approve", response_model=dict[str, Any])
+@router.post("/negotiations/{neg_id}/approve", response_model=dict[str, Any])
+async def update_plan_negotiation(
+    neg_id: uuid.UUID,
+    payload: NegotiationActionPayload,
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Accept, decline, or counter-offer a plan negotiation."""
+    neg = await db.get(PlanNegotiation, neg_id)
+    if not neg:
+        raise HTTPException(status_code=404, detail="Negotiation not found")
+    if actor.agency_id and getattr(neg, "agency_id", None) and neg.agency_id != actor.agency_id:
+        raise HTTPException(status_code=403, detail="Negotiation belongs to another agency")
+
+    # Link client if missing
+    if not neg.client_id and neg.client_email:
+        u_stmt = select(User).where(func.lower(User.email) == neg.client_email.strip().lower())
+        u = (await db.execute(u_stmt)).scalar_one_or_none()
+        if u:
+            neg.client_id = u.id
+
+    now = datetime.now(UTC)
+
+    if payload.action == "accept":
+        if not neg.client_id:
+            raise HTTPException(status_code=422, detail="A registered client account could not be found for this negotiation.")
+
+        # Determine authoritative agreed price
+        final_price = payload.agreed_price or payload.agreed_amount
+        if final_price is None and neg.proposed_offer:
+            digits = "".join(ch for ch in str(neg.proposed_offer) if ch.isdigit())
+            if digits and len(digits) >= 1:
+                try:
+                    final_price = Decimal(digits)
+                except Exception:
+                    pass
+        if final_price is None and neg.counter_price:
+            final_price = Decimal(neg.counter_price)
+        if final_price is None or final_price <= 0:
+            final_price = Decimal("35000.00")
+
+        current = (await db.execute(select(Plan).join(Subscription, Subscription.plan_id == Plan.id)
+            .where(Subscription.client_id == neg.client_id)
+            .order_by(Subscription.created_at.desc()).limit(1))).scalar_one_or_none()
+
+        reel_q = payload.reel_quota if payload.reel_quota is not None else (current.reel_quota if current else 8)
+        poster_q = payload.poster_quota if payload.poster_quota is not None else (current.poster_quota if current else 12)
+        story_q = payload.story_quota if payload.story_quota is not None else (current.story_quota if current else 15)
+
+        neg.status = "Accepted"
+        neg.counter_price = int(final_price)
+        neg.agreed_amount = int(final_price)
+        neg.counter_note = payload.counter_note or neg.counter_note
+        neg.reel_quota = reel_q
+        neg.poster_quota = poster_q
+        neg.story_quota = story_q
+        neg.reviewed_by = actor.user_id
+        neg.reviewed_at = now
+
+        # Update or create client-exclusive custom plan (custom_{client_id}) without changing global tiers
+        plan_key = f"custom_{neg.client_id.hex[:8]}"
+        plan_stmt = select(Plan).where(Plan.name == plan_key)
+        plan = (await db.execute(plan_stmt)).scalar_one_or_none()
+        display_name = f"Custom Negotiated Retainer ({neg.client_name or 'Client Retainer'})"
+        highlights = [
+            f"{reel_q} Custom Reels",
+            f"{poster_q} Static Posters",
+            f"{story_q} Stories / Carousels",
+            "Negotiated Strategy Agreement",
+            "Dedicated Creative Pod Lead",
+        ]
+        if plan:
+            plan.display_name = display_name
+            plan.monthly_price = final_price
+            plan.price_minor = int(final_price * 100)
+            plan.reel_quota = reel_q
+            plan.poster_quota = poster_q
+            plan.story_quota = story_q
+            plan.highlights = highlights
+            plan.is_active = True
+        else:
+            plan = Plan(
+                id=uuid.uuid4(),
+                agency_id=neg.agency_id or getattr(actor, "agency_id", None),
+                name=plan_key,
+                display_name=display_name,
+                monthly_price=final_price,
+                price_minor=int(final_price * 100),
+                currency="INR",
+                reel_quota=reel_q,
+                poster_quota=poster_q,
+                story_quota=story_q,
+                revision_rounds=2,
+                has_dedicated_manager=True,
+                highlights=highlights,
+                is_active=True,
+            )
+            db.add(plan)
+            await db.flush()
+
+        # Check existing subscription: keep incomplete if client hasn't paid yet, or update active if already paid
+        existing_sub = (await db.execute(
+            select(Subscription).where(
+                Subscription.client_id == neg.client_id,
+                Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]),
+            )
+        )).scalar_one_or_none()
+
+        if existing_sub:
+            existing_sub.plan_id = plan.id
+            existing_sub.amount = plan.monthly_price
+        else:
+            # Client has NOT paid yet! Ensure an INCOMPLETE subscription exists for Razorpay checkout in onboarding
+            incomp_sub = (await db.execute(
+                select(Subscription).where(
+                    Subscription.client_id == neg.client_id,
+                    Subscription.status == SubscriptionStatus.INCOMPLETE,
+                )
+            )).scalar_one_or_none()
+            if incomp_sub:
+                incomp_sub.plan_id = plan.id
+                incomp_sub.amount = plan.monthly_price
+            else:
+                db.add(Subscription(
+                    agency_id=neg.agency_id or getattr(actor, "agency_id", None),
+                    client_id=neg.client_id,
+                    plan_id=plan.id,
+                    status=SubscriptionStatus.INCOMPLETE,
+                    gateway=PaymentProvider.RAZORPAY,
+                    gateway_subscription_id=f"neg_order_{uuid.uuid4().hex[:12]}",
+                    amount=plan.monthly_price,
+                    current_period_start=now,
+                    current_period_end=now + timedelta(days=30),
+                ))
+
+        # Synchronize monthly deliverable usage counters to the exact negotiated quotas
+        period_start_date = now.date().replace(day=1)
+        if period_start_date.month == 12:
+            period_end_date = date(period_start_date.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            period_end_date = date(period_start_date.year, period_start_date.month + 1, 1) - timedelta(days=1)
+
+        for kind, quota in [
+            (DeliverableType.REEL, reel_q),
+            (DeliverableType.CAROUSEL, story_q),
+            (DeliverableType.STATIC_POST, poster_q),
+        ]:
+            uc_stmt = select(UsageCounter).where(
+                UsageCounter.client_id == neg.client_id,
+                UsageCounter.period_start == period_start_date,
+                UsageCounter.kind == kind,
+            )
+            uc = (await db.execute(uc_stmt)).scalar_one_or_none()
+            if uc:
+                uc.quota = quota
+                uc.period_end = period_end_date
+            else:
+                db.add(
+                    UsageCounter(
+                        agency_id=neg.agency_id or getattr(actor, "agency_id", None),
+                        client_id=neg.client_id,
+                        period_start=period_start_date,
+                        period_end=period_end_date,
+                        kind=kind,
+                        quota=quota,
+                        used=0,
+                    )
+                )
+
+        msg = f"Agreed retainer price of ₹{float(final_price):,.2f}/month ({reel_q} Reels, {poster_q} Posts, {story_q} Stories) applied exclusively for {neg.client_name}."
+    elif payload.action == "decline":
+        neg.status = "Declined"
+        neg.decline_reason = payload.decline_reason or "Proposal outside allowable retainer margin."
+        neg.reviewed_by = actor.user_id
+        neg.reviewed_at = now
+        msg = f"Plan negotiation DECLINED for {neg.client_name}."
+    elif payload.action == "counter":
+        if payload.counter_price is None or payload.counter_price <= 0:
+            raise HTTPException(status_code=422, detail="Enter a positive counter price")
+        counter_p = Decimal(payload.counter_price)
+        reel_q = payload.reel_quota if payload.reel_quota is not None else 8
+        poster_q = payload.poster_quota if payload.poster_quota is not None else 12
+        story_q = payload.story_quota if payload.story_quota is not None else 15
+
+        neg.status = "Counter Offered"
+        neg.counter_price = payload.counter_price
+        neg.agreed_amount = payload.counter_price
+        neg.counter_note = payload.counter_note
+        neg.reel_quota = reel_q
+        neg.poster_quota = poster_q
+        neg.story_quota = story_q
+        neg.reviewed_by = actor.user_id
+        neg.reviewed_at = now
+
+        if neg.client_id:
+            plan_key = f"custom_{neg.client_id.hex[:8]}"
+            plan_stmt = select(Plan).where(Plan.name == plan_key)
+            plan = (await db.execute(plan_stmt)).scalar_one_or_none()
+            display_name = f"Agency Counter Proposal ({neg.client_name or 'Client Retainer'})"
+            highlights = [
+                f"{reel_q} Custom Reels",
+                f"{poster_q} Static Posters",
+                f"{story_q} Stories / Carousels",
+                "Agency Executive Counter Scope",
+                "Dedicated Creative Pod Lead",
+            ]
+            if plan:
+                plan.display_name = display_name
+                plan.monthly_price = counter_p
+                plan.price_minor = int(counter_p * 100)
+                plan.reel_quota = reel_q
+                plan.poster_quota = poster_q
+                plan.story_quota = story_q
+                plan.highlights = highlights
+                plan.is_active = True
+            else:
+                plan = Plan(
+                    id=uuid.uuid4(),
+                    agency_id=neg.agency_id or getattr(actor, "agency_id", None),
+                    name=plan_key,
+                    display_name=display_name,
+                    monthly_price=counter_p,
+                    price_minor=int(counter_p * 100),
+                    currency="INR",
+                    reel_quota=reel_q,
+                    poster_quota=poster_q,
+                    story_quota=story_q,
+                    revision_rounds=2,
+                    has_dedicated_manager=True,
+                    highlights=highlights,
+                    is_active=True,
+                )
+                db.add(plan)
+                await db.flush()
+
+            # Ensure an INCOMPLETE subscription exists with this counter proposal for Razorpay checkout
+            incomp_sub = (await db.execute(
+                select(Subscription).where(
+                    Subscription.client_id == neg.client_id,
+                    Subscription.status == SubscriptionStatus.INCOMPLETE,
+                )
+            )).scalar_one_or_none()
+            if incomp_sub:
+                incomp_sub.plan_id = plan.id
+                incomp_sub.amount = counter_p
+            else:
+                db.add(Subscription(
+                    agency_id=neg.agency_id or getattr(actor, "agency_id", None),
+                    client_id=neg.client_id,
+                    plan_id=plan.id,
+                    status=SubscriptionStatus.INCOMPLETE,
+                    gateway=PaymentProvider.RAZORPAY,
+                    gateway_subscription_id=f"neg_counter_{uuid.uuid4().hex[:12]}",
+                    amount=counter_p,
+                    current_period_start=now,
+                    current_period_end=now + timedelta(days=30),
+                ))
+
+            # Synchronize monthly deliverable usage counters
+            period_start_date = now.date().replace(day=1)
+            if period_start_date.month == 12:
+                period_end_date = date(period_start_date.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                period_end_date = date(period_start_date.year, period_start_date.month + 1, 1) - timedelta(days=1)
+
+            for kind, quota in [
+                (DeliverableType.REEL, reel_q),
+                (DeliverableType.CAROUSEL, story_q),
+                (DeliverableType.STATIC_POST, poster_q),
+            ]:
+                uc_stmt = select(UsageCounter).where(
+                    UsageCounter.client_id == neg.client_id,
+                    UsageCounter.period_start == period_start_date,
+                    UsageCounter.kind == kind,
+                )
+                uc = (await db.execute(uc_stmt)).scalar_one_or_none()
+                if uc:
+                    uc.quota = quota
+                    uc.period_end = period_end_date
+                else:
+                    db.add(
+                        UsageCounter(
+                            agency_id=neg.agency_id or getattr(actor, "agency_id", None),
+                            client_id=neg.client_id,
+                            period_start=period_start_date,
+                            period_end=period_end_date,
+                            kind=kind,
+                            quota=quota,
+                            used=0,
+                        )
+                    )
+
+        msg = f"Counter-offer of ₹{payload.counter_price:,.2f}/mo ({reel_q} Reels, {poster_q} Posts, {story_q} Stories) sent to {neg.client_name}."
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use accept, decline, or counter.")
+
+    # Notify the client if client_id exists
+    if neg.client_id:
+        notif = Notification(
+            agency_id=getattr(actor, "agency_id", None),
+            user_id=neg.client_id,
+            title=f"Plan Negotiation Update: {neg.status}",
+            message=msg,
+            link="/portal/payments",
+        )
+        db.add(notif)
+
+    await db.commit()
+
+    return {"status": "success", "message": msg, "negotiation_id": str(neg.id), "new_status": neg.status}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MANUAL & OFFLINE PAYMENT BYPASS SYSTEM
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _activate_manual_subscription(
+    db: AsyncSession,
+    client_id: uuid.UUID,
+    plan_id: uuid.UUID,
+    payment_method: str,
+    amount: Decimal,
+    actor_id: uuid.UUID,
+    admin_notes: str | None = None,
+) -> Subscription:
+    """Helper to activate manual subscription, mark terms accepted, initialize usage quota, and notify client."""
+    now = datetime.now(UTC)
+    plan_stmt = select(Plan).where(Plan.id == plan_id)
+    plan_res = await db.execute(plan_stmt)
+    plan = plan_res.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    # Cancel any existing active subscriptions for this client
+    existing_sub_stmt = select(Subscription).where(
+        Subscription.client_id == client_id,
+        Subscription.status.in_([SubscriptionStatus.TRIALING, SubscriptionStatus.ACTIVE]),
+    )
+    existing_sub = (await db.execute(existing_sub_stmt)).scalar_one_or_none()
+    if existing_sub:
+        existing_sub.status = SubscriptionStatus.CANCELED
+
+    # Create new active manual subscription
+    sub = Subscription(
+        id=uuid.uuid4(),
+        client_id=client_id,
+        plan_id=plan.id,
+        status=SubscriptionStatus.ACTIVE,
+        gateway=PaymentProvider.MANUAL,
+        gateway_subscription_id=f"manual_{payment_method}_{uuid.uuid4().hex[:8]}",
+        amount=amount,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=30),
+    )
+    db.add(sub)
+    await db.flush()
+
+    # Ensure terms accepted so v_client_onboarding derives stage 3
+    cp_stmt = select(ClientProfile).where(ClientProfile.user_id == client_id)
+    cp = (await db.execute(cp_stmt)).scalar_one_or_none()
+    if not cp:
+        cp = ClientProfile(
+            user_id=client_id,
+            company_name="Client Workspace",
+            terms_accepted_at=now,
+        )
+        db.add(cp)
+    elif cp.terms_accepted_at is None:
+        cp.terms_accepted_at = now
+
+    # Initialize monthly UsageCounter
+    today = now.date()
+    m_start = date(today.year, today.month, 1)
+    if today.month == 12:
+        m_end = date(today.year + 1, 1, 1) - timedelta(days=1)
+    else:
+        m_end = date(today.year, today.month + 1, 1) - timedelta(days=1)
+
+    uc_stmt = select(UsageCounter).where(
+        UsageCounter.client_id == client_id,
+        UsageCounter.period_start == m_start,
+    )
+    uc = (await db.execute(uc_stmt)).scalar_one_or_none()
+    if not uc:
+        uc = UsageCounter(
+            id=uuid.uuid4(),
+            client_id=client_id,
+            subscription_id=sub.id,
+            period_start=m_start,
+            period_end=m_end,
+            posters_used=0,
+            reels_used=0,
+            stories_used=0,
+            revisions_used=0,
+        )
+        db.add(uc)
+
+    # Invalidate session caches
+    try:
+        await invalidate_user_session(client_id)
+    except Exception:
+        pass
+
+    # Notify client
+    notif = Notification(
+        user_id=client_id,
+        title="Payment Verified & Retainer Activated",
+        message=f"Your offline payment for {plan.display_name} has been approved by agency admin. Step 3 (Payment) has been bypassed! You can now proceed to your Brand Questionnaire.",
+        link="/onboarding?step=4",
+        is_read=False,
+    )
+    db.add(notif)
+
+    return sub
+
+
+@router.get("/manual-payments")
+async def list_manual_payment_requests(
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """List all client offline/manual payment requests with status, client details, and plan info."""
+    res = await db.execute(text("""
+        SELECT r.id, r.client_id, r.plan_id, r.payment_method, r.amount, r.reference_note,
+               r.status, r.reviewed_at, r.admin_notes, r.created_at,
+               p.name as plan_name, p.display_name as plan_display_name,
+               u.full_name, u.email,
+               reviewer.full_name as reviewer_name
+        FROM manual_payment_requests r
+        JOIN plans p ON p.id = r.plan_id
+        JOIN users u ON u.id = r.client_id
+        LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+        ORDER BY CASE WHEN r.status = 'PENDING' THEN 0 ELSE 1 END, r.created_at DESC
+    """))
+    items = []
+    for row in res.all():
+        items.append({
+            "id": str(row[0]),
+            "client_id": str(row[1]),
+            "plan_id": str(row[2]),
+            "payment_method": row[3],
+            "amount": float(row[4]),
+            "reference_note": row[5],
+            "status": row[6],
+            "reviewed_at": row[7].isoformat() if row[7] else None,
+            "admin_notes": row[8],
+            "created_at": row[9].isoformat() if row[9] else None,
+            "plan_name": row[10],
+            "plan_display_name": row[11],
+            "client_name": row[12] or "Client",
+            "client_email": row[13],
+            "reviewer_name": row[14],
+        })
+    return items
+
+
+@router.post("/manual-payments/{request_id}/approve")
+async def approve_manual_payment_request(
+    request_id: uuid.UUID,
+    payload: dict[str, Any] | None = None,
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Admin approves offline payment, activates manual subscription, and bypasses Step 3."""
+    res = await db.execute(text("""
+        SELECT id, client_id, plan_id, payment_method, amount, status
+        FROM manual_payment_requests
+        WHERE id = :rid
+    """), {"rid": request_id})
+    row = res.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Payment request not found")
+
+    client_id = row[1]
+    plan_id = row[2]
+    payment_method = row[3]
+    amount = Decimal(str(row[4]))
+    admin_notes = (payload or {}).get("admin_notes", "Approved by Agency Admin")
+
+    now = datetime.now(UTC)
+
+    # 1. Update manual_payment_requests status
+    await db.execute(text("""
+        UPDATE manual_payment_requests
+        SET status = 'APPROVED', reviewed_by = :aid, reviewed_at = :now, admin_notes = :notes, updated_at = :now
+        WHERE id = :rid
+    """), {
+        "aid": actor.user_id,
+        "now": now,
+        "notes": admin_notes,
+        "rid": request_id,
+    })
+
+    # 2. Activate subscription and advance client to Step 4
+    sub = await _activate_manual_subscription(
+        db, client_id, plan_id, payment_method, amount, actor.user_id, admin_notes,
+    )
+
+    # 3. Fetch client user and plan details for intimacy
+    client_res = await db.execute(select(User).where(User.id == client_id))
+    client_user = client_res.scalar_one_or_none()
+    plan_res = await db.execute(select(Plan).where(Plan.id == plan_id))
+    plan_obj = plan_res.scalar_one_or_none()
+    plan_display = plan_obj.display_name if plan_obj else "Creo Subscription"
+
+    # 4. In-App Notification for Client
+    approval_notif = Notification(
+        user_id=client_id,
+        title="🎉 Payment Verified & Approved",
+        message=f"Your offline payment for {plan_display} (₹{int(amount):,}) has been verified and approved by the agency admin! You can now proceed directly to Step 4 (Brand DNA).",
+        link="/onboarding?step=4",
+        is_read=False,
+    )
+    db.add(approval_notif)
+    await db.commit()
+
+    # 5. Intimate Client via Branded Email in background
+    if client_user and client_user.email:
+        from app.services.email_service import send_payment_approved_email
+        import asyncio
+        asyncio.create_task(
+            send_payment_approved_email(
+                to_email=client_user.email,
+                client_name=client_user.full_name or "Valued Client",
+                plan_name=plan_display,
+                amount=float(amount),
+                admin_notes=admin_notes,
+            )
+        )
+
+    return {
+        "status": "success",
+        "message": "Manual payment approved. Client subscription activated and Step 3 bypassed.",
+        "subscription_id": str(sub.id),
+        "client_id": str(client_id),
+    }
+
+
+@router.post("/manual-payments/{request_id}/reject")
+async def reject_manual_payment_request(
+    request_id: uuid.UUID,
+    payload: dict[str, Any] | None = None,
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Admin declines offline payment request."""
+    admin_notes = (payload or {}).get("admin_notes", "Declined by Agency Admin")
+    now = datetime.now(UTC)
+
+    res = await db.execute(text("""
+        SELECT r.id, r.client_id, r.plan_id, p.display_name, u.email, u.full_name
+        FROM manual_payment_requests r
+        LEFT JOIN plans p ON p.id = r.plan_id
+        LEFT JOIN users u ON u.id = r.client_id
+        WHERE r.id = :rid
+    """), {"rid": request_id})
+    row = res.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Payment request not found")
+
+    client_id = row[1]
+    plan_display = row[3] or "Selected Plan"
+    client_email = row[4]
+    client_name = row[5] or "Valued Client"
+
+    await db.execute(text("""
+        UPDATE manual_payment_requests
+        SET status = 'REJECTED', reviewed_by = :aid, reviewed_at = :now, admin_notes = :notes, updated_at = :now
+        WHERE id = :rid
+    """), {
+        "aid": actor.user_id,
+        "now": now,
+        "notes": admin_notes,
+        "rid": request_id,
+    })
+
+    # Notify client in-app
+    notif = Notification(
+        user_id=client_id,
+        title="Offline Payment Verification Declined",
+        message=f"Your offline payment request was declined: {admin_notes}. Please review or proceed with online checkout.",
+        link="/onboarding?step=3",
+        is_read=False,
+    )
+    db.add(notif)
+    await db.commit()
+
+    # Intimate client via email
+    if client_email:
+        from app.services.email_service import send_payment_rejected_email
+        import asyncio
+        asyncio.create_task(
+            send_payment_rejected_email(
+                to_email=client_email,
+                client_name=client_name,
+                plan_name=plan_display,
+                reason=admin_notes,
+            )
+        )
+
+    return {"status": "success", "message": "Manual payment request declined"}
+
+
+@router.post("/clients/{client_id}/bypass-payment")
+async def direct_bypass_client_payment(
+    client_id: uuid.UUID,
+    payload: dict[str, Any],
+    actor: Actor = AdminActor,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Direct Admin override to bypass payment for any client (assigns plan, activates manual sub, advances to Step 4)."""
+    raw_plan_id = payload.get("plan_id")
+    if not raw_plan_id:
+        raise HTTPException(status_code=422, detail="plan_id is required")
+    plan_id = uuid.UUID(str(raw_plan_id))
+    payment_method = payload.get("payment_method", "cash")
+    notes = payload.get("notes", "Directly bypassed by Agency Admin")
+
+    plan_stmt = select(Plan).where(Plan.id == plan_id)
+    plan_res = await db.execute(plan_stmt)
+    plan = plan_res.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Selected plan does not exist")
+
+    # Fetch client user
+    c_res = await db.execute(select(User).where(User.id == client_id))
+    client_user = c_res.scalar_one_or_none()
+
+    now = datetime.now(UTC)
+
+    # Record or update manual_payment_requests row
+    req_id = uuid.uuid4()
+    await db.execute(text("""
+        INSERT INTO manual_payment_requests (id, client_id, plan_id, payment_method, amount, reference_note, status, reviewed_by, reviewed_at, admin_notes, created_at, updated_at)
+        VALUES (:id, :cid, :pid, :pm, :amt, :rn, 'APPROVED', :aid, :now, :notes, :now, :now)
+    """), {
+        "id": req_id,
+        "cid": client_id,
+        "pid": plan.id,
+        "pm": payment_method,
+        "amt": float(plan.monthly_price),
+        "rn": notes,
+        "aid": actor.user_id,
+        "now": now,
+        "notes": notes,
+    })
+
+    sub = await _activate_manual_subscription(
+        db, client_id, plan.id, payment_method, plan.monthly_price, actor.user_id, notes,
+    )
+
+    # In-App notification
+    direct_notif = Notification(
+        user_id=client_id,
+        title="🎉 Account Activated by Agency Admin",
+        message=f"Payment for {plan.display_name} has been verified and approved by the agency admin! You can now start Brand Onboarding.",
+        link="/onboarding?step=4",
+        is_read=False,
+    )
+    db.add(direct_notif)
+    await db.commit()
+
+    # Intimate client via email
+    if client_user and client_user.email:
+        from app.services.email_service import send_payment_approved_email
+        import asyncio
+        asyncio.create_task(
+            send_payment_approved_email(
+                to_email=client_user.email,
+                client_name=client_user.full_name or "Valued Client",
+                plan_name=plan.display_name,
+                amount=float(plan.monthly_price),
+                admin_notes=notes,
+            )
+        )
+
+    return {
+        "status": "success",
+        "message": f"Payment successfully bypassed for client on {plan.display_name}. Subscription activated.",
+        "subscription_id": str(sub.id),
+        "client_id": str(client_id),
+    }
+
+
+
 

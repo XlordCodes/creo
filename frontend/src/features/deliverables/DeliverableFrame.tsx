@@ -111,12 +111,12 @@ export function DeliverableFrame({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: "#0A0D12",
+          backgroundColor: "var(--app-void)",
         }}
       >
         {isPlaying && isVideo ? (
           <video
-            src={deliverable.file_url}
+            src={deliverable.file_url ?? undefined}
             controls
             autoPlay
             playsInline
